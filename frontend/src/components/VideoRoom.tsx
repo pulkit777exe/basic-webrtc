@@ -71,7 +71,10 @@ function RecordingControls() {
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { mediaSource: "screen" } as any,
+        video: {
+          mediaSource: "screen",
+          preferCurrentTab: true,
+        } as MediaTrackConstraints,
         audio: true,
       });
 

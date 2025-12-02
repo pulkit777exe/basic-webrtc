@@ -5,7 +5,11 @@ import prisma from "../prisma";
 import { RegisterSchema, LoginSchema } from "../schemas/authSchemas";
 import { z } from "zod";
 
-const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
+interface JwtPayload {
+  userId: string;
+}
+
+const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 
 export const register = async (req: Request, res: Response) => {
   try {
@@ -89,7 +93,7 @@ export const me = async (req: Request, res: Response) => {
   if (!token) return res.status(401).json({ error: "Not authenticated" });
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
     });
@@ -100,5 +104,38 @@ export const me = async (req: Request, res: Response) => {
     });
   } catch (error) {
     res.status(401).json({ error: "Invalid token" });
+  }
+};
+
+export const logout = (req: Request, res: Response) => {
+  res.clearCookie("token");
+  res.json({ success: true });
+};
+
+export const updateProfile = async (req: Request, res: Response) => {
+  const token = req.cookies.token;
+  if (!token) return res.status(401).json({ error: "Not authenticated" });
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
+    const { name, password } = req.body;
+
+    const data: { name: string; password?: string } = { name };
+    if (password) {
+      data.password = await bcrypt.hash(password, 10);
+    }
+
+    const user = await prisma.user.update({
+      where: { id: decoded.userId },
+      data,
+    });
+
+    res.json({
+      success: true,
+      user: { id: user.id, username: user.username, name: user.name },
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to update profile" });
   }
 };
