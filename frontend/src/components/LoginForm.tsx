@@ -5,6 +5,7 @@ import { userAtom } from "../store/atoms";
 import { Button } from "./Button";
 import { Input } from "./Input";
 import { Lock } from "lucide-react";
+import { toast } from "sonner";
 
 // const LoginSchema = z.object({
 //   username: z.string().min(3, 'Username must be at least 3 characters'),
@@ -17,11 +18,9 @@ export const LoginForm: React.FC = () => {
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [name, setName] = React.useState("");
-  const [error, setError] = React.useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
 
     try {
       const endpoint = isLogin ? "/auth/login" : "/auth/register";
@@ -33,18 +32,21 @@ export const LoginForm: React.FC = () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-        credentials: "include", // Important for cookies
+        credentials: "include",
       });
 
       const data = await response.json();
 
       if (response.ok) {
         setUser(data.user);
+        toast.success(
+          isLogin ? "Welcome back!" : "Account created successfully!"
+        );
       } else {
-        setError(data.error || "Authentication failed");
+        toast.error(data.error || "Authentication failed");
       }
     } catch (err) {
-      setError(`An unexpected error occurred: ${err}`);
+      toast.error("An unexpected error occurred: "+ err);
     }
   };
 
@@ -69,12 +71,6 @@ export const LoginForm: React.FC = () => {
           onSubmit={handleSubmit}
           className="space-y-6 bg-neutral-900 p-8 rounded-2xl border border-neutral-800"
         >
-          {error && (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-500 text-sm">
-              {error}
-            </div>
-          )}
-
           <div className="space-y-4">
             <Input
               label="Username"

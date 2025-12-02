@@ -4,13 +4,13 @@ import { userAtom, tokenAtom, serverUrlAtom } from "./store/atoms";
 import { LoginForm } from "./components/LoginForm";
 import { LandingPage } from "./components/LandingPage";
 import { VideoRoom } from "./components/VideoRoom";
+import { Toaster, toast } from "sonner";
 
 function App() {
   const [user, setUser] = useAtom(userAtom);
   const [token, setToken] = useAtom(tokenAtom);
   const [serverUrl, setServerUrl] = useAtom(serverUrlAtom);
 
-  // Check for existing session
   useEffect(() => {
     const checkSession = async () => {
       try {
@@ -45,7 +45,7 @@ function App() {
       setServerUrl(data.url);
     } catch (error) {
       console.error("Failed to get token", error);
-      alert("Failed to join room");
+      toast.error("Failed to  join room");
     }
   };
 
@@ -54,13 +54,12 @@ function App() {
     setServerUrl(null);
   };
 
-  if (!user) {
-    return <LoginForm />;
-  }
-
   return (
     <>
-      {!token || !serverUrl ? (
+      <Toaster position="top-center" theme="dark" />
+      {!user ? (
+        <LoginForm />
+      ) : !token || !serverUrl ? (
         <LandingPage onJoin={handleJoin} />
       ) : (
         <VideoRoom

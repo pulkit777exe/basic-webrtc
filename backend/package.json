@@ -14,7 +14,9 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@prisma/adapter-pg": "^7.0.1",
     "@prisma/client": "^7.0.1",
+    "@types/pg": "^8.15.6",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -22,7 +24,7 @@
     "express": "^5.2.0",
     "jsonwebtoken": "^9.0.2",
     "livekit-server-sdk": "^2.14.2",
-    "prisma": "^7.0.1",
+    "pg": "^8.16.3",
     "zod": "^4.1.13"
   },
   "devDependencies": {
@@ -33,6 +35,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.10.1",
     "nodemon": "^3.1.11",
+    "prisma": "^7.0.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }

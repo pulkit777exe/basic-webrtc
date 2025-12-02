@@ -1,18 +1,21 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 import authRoutes from "./routes/authRoutes";
 import roomRoutes from "./routes/roomRoutes";
 
-dotenv.config();
-
 const app = express();
 const port = 3000;
 
+const APP_URL = process.env.FRONTEND_URL;
+console.log(APP_URL);
+
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: `${APP_URL}`,
     credentials: true,
   })
 );
