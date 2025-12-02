@@ -1,0 +1,22 @@
+backend:
+  - backend/**/*
+
+frontend:
+  - frontend/**/*
+
+documentation:
+  - "**/*.md"
+  - docs/**/*
+
+docker:
+  - "**/Dockerfile"
+  - docker-compose.yml
+  - .dockerignore
+
+ci/cd:
+  - .github/**/*
+
+dependencies:
+  - "**/package.json"
+  - "**/package-lock.json"
+  - "**/pnpm-lock.yaml"

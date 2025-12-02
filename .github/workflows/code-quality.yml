@@ -1,0 +1,91 @@
+name: Code Quality
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+jobs:
+  typescript-check:
+    name: TypeScript Check
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        workspace: [backend, frontend]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: ${{ matrix.workspace }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./${{ matrix.workspace }}
+        run: npm ci
+
+      - name: Generate Prisma Client (Backend only)
+        if: matrix.workspace == 'backend'
+        working-directory: ./backend
+        run: npx prisma generate
+
+      - name: TypeScript check
+        working-directory: ./${{ matrix.workspace }}
+        run: npx tsc --noEmit
+
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        workspace: [backend, frontend]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Run npm audit
+        working-directory: ./${{ matrix.workspace }}
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
+
+  code-coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Run backend tests with coverage
+        working-directory: ./backend
+        run: npm run test:coverage --if-present
+        continue-on-error: true
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Run frontend tests with coverage
+        working-directory: ./frontend
+        run: npm run test:coverage --if-present
+        continue-on-error: true
