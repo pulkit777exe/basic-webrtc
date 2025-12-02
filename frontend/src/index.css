@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+}
+
+body {
+  @apply bg-black text-white;
+}
+
+/* LiveKit Overrides for Monochrome Theme */
+[data-lk-theme="default"] {
+  --lk-bg: #000000;
+  --lk-control-bg: #171717; /* neutral-900 */
+  --lk-control-hover-bg: #262626; /* neutral-800 */
+  --lk-control-active-bg: #404040; /* neutral-700 */
+  --lk-accent-bg: #ffffff;
+  --lk-accent-fg: #000000;
+  --lk-danger-bg: #dc2626; /* red-600 */
+  --lk-text-muted: #a3a3a3; /* neutral-400 */
+}
