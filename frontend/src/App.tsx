@@ -6,6 +6,8 @@ import { LandingPage } from "./components/LandingPage";
 import { VideoRoom } from "./components/VideoRoom";
 import { Toaster, toast } from "sonner";
 
+const APP_BACKEND_URL = import.meta.env.VITE_APP_BACKEND_URL;
+
 function App() {
   const [user, setUser] = useAtom(userAtom);
   const [token, setToken] = useAtom(tokenAtom);
@@ -14,7 +16,7 @@ function App() {
   useEffect(() => {
     const checkSession = async () => {
       try {
-        const response = await fetch("http://localhost:3000/auth/me", {
+        const response = await fetch(`${APP_BACKEND_URL}/auth/me`, {
           credentials: "include",
         });
         if (response.ok) {
@@ -32,7 +34,7 @@ function App() {
     if (!user) return;
 
     try {
-      const response = await fetch("http://localhost:3000/getToken", {
+      const response = await fetch(`${APP_BACKEND_URL}/getToken`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

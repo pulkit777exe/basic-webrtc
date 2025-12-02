@@ -10,6 +10,8 @@ interface ProfileModalProps {
   onClose: () => void;
 }
 
+const APP_BACKEND_URL = import.meta.env.VITE_APP_BACKEND_URL;
+
 export const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
   const [user, setUser] = useAtom(userAtom);
   const [name, setName] = React.useState(user?.name || "");
@@ -26,7 +28,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
         body.password = password;
       }
 
-      const response = await fetch("http://localhost:3000/auth/profile", {
+      const response = await fetch(`${APP_BACKEND_URL}/auth/profile`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -51,7 +53,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
 
   const handleLogout = async () => {
     try {
-      await fetch("http://localhost:3000/auth/logout", {
+      await fetch(`${APP_BACKEND_URL}/auth/logout`, {
         method: "POST",
         credentials: "include",
       });

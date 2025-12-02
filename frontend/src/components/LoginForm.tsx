@@ -12,6 +12,8 @@ import { toast } from "sonner";
 //   password: z.string().min(3, 'Password must be at least 3 characters'),
 // });
 
+const APP_BACKEND_URL = import.meta.env.VITE_APP_BACKEND_URL;
+
 export const LoginForm: React.FC = () => {
   const setUser = useSetAtom(userAtom);
   const [isLogin, setIsLogin] = React.useState(true);
@@ -28,7 +30,7 @@ export const LoginForm: React.FC = () => {
         ? { username, password }
         : { username, password, name };
 
-      const response = await fetch(`http://localhost:3000${endpoint}`, {
+      const response = await fetch(`${APP_BACKEND_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -46,7 +48,7 @@ export const LoginForm: React.FC = () => {
         toast.error(data.error || "Authentication failed");
       }
     } catch (err) {
-      toast.error("An unexpected error occurred: "+ err);
+      toast.error("An unexpected error occurred: " + err);
     }
   };
 
