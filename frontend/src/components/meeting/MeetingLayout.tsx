@@ -25,10 +25,16 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
   const [showInviteModal, setShowInviteModal] = React.useState(false);
   const [user] = useAtom(userAtom);
   const participants = useParticipants();
-  const { chatMessages, newMessage, setNewMessage, sendMessage, retryMessage } = useChat({
+  const { chatMessages, newMessage, setNewMessage, sendMessage, retryMessage, isLoading, isSending, error, setError, isOffline } = useChat({
     roomName,
     currentUserId: user?.username,
   });
+
+  const handleRetryLoad = () => {
+    setError(null);
+    // Trigger reload by updating a dependency
+    window.location.reload();
+  };
 
   // Track room join
   useEffect(() => {
@@ -105,6 +111,11 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
                   onMessageChange={setNewMessage}
                   onSendMessage={sendMessage}
                   onRetryMessage={retryMessage}
+                  isLoading={isLoading}
+                  isSending={isSending}
+                  error={error}
+                  isOffline={isOffline}
+                  onRetryLoad={handleRetryLoad}
                 />
               ) : (
                 <ParticipantsPanel />

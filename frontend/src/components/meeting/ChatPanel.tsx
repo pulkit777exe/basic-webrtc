@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Send, Paperclip, Smile, Loader2, Check, CheckCheck, AlertCircle, RotateCcw } from "lucide-react";
+import { Send, Paperclip, Smile, Loader2, Check, CheckCheck, AlertCircle, RotateCcw, MessageSquare } from "lucide-react";
 import { useParticipants } from "@livekit/components-react";
 import type { ChatMessage } from "../../types";
 
@@ -9,6 +9,11 @@ interface ChatPanelProps {
   onMessageChange: (message: string) => void;
   onSendMessage: () => void;
   onRetryMessage?: (messageId: string, content: string) => void;
+  isLoading?: boolean;
+  isSending?: boolean;
+  error?: string | null;
+  isOffline?: boolean;
+  onRetryLoad?: () => void;
 }
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -17,6 +22,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   onMessageChange,
   onSendMessage,
   onRetryMessage,
+  isLoading = false,
+  isSending = false,
+  error = null,
+  isOffline = false,
+  onRetryLoad,
 }) => {
   const participants = useParticipants();
 
@@ -51,9 +61,48 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         </div>
       </div>
 
+      {/* Error Banner */}
+      {(error || isOffline) && (
+        <div className="px-4 py-2 bg-yellow-50 border-b border-yellow-200 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <AlertCircle className="w-4 h-4 text-yellow-600 shrink-0" />
+            <p className="text-xs text-yellow-800 truncate">
+              {isOffline ? "You're offline. Messages will be sent when connection is restored." : error}
+            </p>
+          </div>
+          {onRetryLoad && !isOffline && (
+            <button
+              onClick={onRetryLoad}
+              className="text-xs text-yellow-800 hover:text-yellow-900 underline shrink-0"
+            >
+              Retry
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Chat Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((msg) => {
+        {isLoading ? (
+          <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="flex gap-3 animate-pulse">
+                <div className="w-8 h-8 rounded-full bg-neutral-200 shrink-0" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 bg-neutral-200 rounded w-1/4" />
+                  <div className="h-12 bg-neutral-200 rounded w-3/4" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : messages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full text-center py-8">
+            <MessageSquare className="w-12 h-12 text-neutral-300 mb-3" />
+            <p className="text-sm font-medium text-neutral-600">No messages yet</p>
+            <p className="text-xs text-neutral-400 mt-1">Start the conversation!</p>
+          </div>
+        ) : (
+          messages.map((msg) => {
           const status = msg.status || "sent";
           const showStatus = msg.isOwn && status !== "sent";
           
@@ -108,7 +157,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               </div>
             </div>
           );
-        })}
+        })
+        )}
       </div>
 
       {/* Message Input */}
@@ -121,18 +171,24 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             type="text"
             value={newMessage}
             onChange={(e) => onMessageChange(e.target.value)}
-            onKeyPress={(e) => e.key === "Enter" && onSendMessage()}
-            placeholder="Type a message..."
-            className="flex-1 px-4 py-2 bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            onKeyPress={(e) => e.key === "Enter" && !isOffline && onSendMessage()}
+            placeholder={isOffline ? "Offline - messages queued..." : "Type a message..."}
+            disabled={isOffline}
+            className="flex-1 px-4 py-2 bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           />
           <button className="p-2 hover:bg-neutral-100 rounded-lg transition-colors">
             <Smile className="w-5 h-5 text-neutral-600" />
           </button>
           <button
             onClick={onSendMessage}
-            className="p-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+            disabled={isSending || !newMessage.trim() || isOffline}
+            className="p-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
           >
-            <Send className="w-5 h-5 text-white" />
+            {isSending ? (
+              <Loader2 className="w-5 h-5 text-white animate-spin" />
+            ) : (
+              <Send className="w-5 h-5 text-white" />
+            )}
           </button>
         </div>
       </div>

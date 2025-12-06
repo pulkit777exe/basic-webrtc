@@ -1,5 +1,6 @@
 import { useAtom } from "jotai";
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
+import * as React from "react";
 import { userAtom, tokenAtom, serverUrlAtom, roomAtom } from "./store/atoms";
 import { LoginForm } from "./components/LoginForm";
 import { LandingPage } from "./components/LandingPage";
@@ -14,11 +15,13 @@ function App() {
   const [token, setToken] = useAtom(tokenAtom);
   const [serverUrl, setServerUrl] = useAtom(serverUrlAtom);
   const [roomName, setRoomName] = useAtom(roomAtom);
+  const [isJoining, setIsJoining] = useState(false);
 
   const handleJoin = useCallback(
     async (roomName: string) => {
-      if (!user) return;
+      if (!user || isJoining) return;
 
+      setIsJoining(true);
       try {
         const data = await roomApi.getToken(roomName, user.name);
         setToken(data.token);
@@ -26,10 +29,18 @@ function App() {
         setRoomName(roomName);
       } catch (error) {
         console.error("Failed to get token", error);
-        toast.error("Failed to join room");
+        const errorMessage = error instanceof Error ? error.message : "Failed to join room";
+        toast.error(errorMessage, {
+          action: {
+            label: "Retry",
+            onClick: () => handleJoin(roomName),
+          },
+        });
+      } finally {
+        setIsJoining(false);
       }
     },
-    [user, setToken, setServerUrl, setRoomName]
+    [user, setToken, setServerUrl, setRoomName, isJoining]
   );
 
   useEffect(() => {
@@ -62,7 +73,7 @@ function App() {
       {!user ? (
         <LoginForm />
       ) : !token || !serverUrl ? (
-        <LandingPage onJoin={handleJoin} />
+        <LandingPage onJoin={handleJoin} isJoining={isJoining} />
       ) : (
         <VideoRoom
           token={token}

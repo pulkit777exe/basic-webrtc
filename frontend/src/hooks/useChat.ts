@@ -14,13 +14,36 @@ export const useChat = ({ roomName, currentUserId }: UseChatOptions) => {
   const [newMessage, setNewMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+
+  // Monitor online/offline status
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOffline(false);
+      setError(null);
+    };
+    const handleOffline = () => {
+      setIsOffline(true);
+      setError("You're offline. Messages will be sent when connection is restored.");
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
 
   // Load messages on mount and when room changes
   useEffect(() => {
     const loadMessages = async () => {
-      if (!roomName) return;
+      if (!roomName || isOffline) return;
 
       setIsLoading(true);
+      setError(null);
       try {
         const response = await messageApi.getMessages(roomName);
         const messages: ChatMessage[] = response.messages.map((msg) => ({
@@ -29,10 +52,13 @@ export const useChat = ({ roomName, currentUserId }: UseChatOptions) => {
           message: msg.content,
           timestamp: new Date(msg.timestamp),
           isOwn: msg.senderId === currentUserId,
+          status: "sent" as MessageStatus,
         }));
         setChatMessages(messages);
       } catch (error) {
         console.error("Failed to load messages:", error);
+        const errorMessage = error instanceof Error ? error.message : "Failed to load messages";
+        setError(errorMessage);
       } finally {
         setIsLoading(false);
       }
@@ -40,10 +66,12 @@ export const useChat = ({ roomName, currentUserId }: UseChatOptions) => {
 
     loadMessages();
 
-    // Poll for new messages every 2 seconds
-    const interval = setInterval(loadMessages, 2000);
-    return () => clearInterval(interval);
-  }, [roomName, currentUserId]);
+    // Poll for new messages every 2 seconds (only when online)
+    if (!isOffline) {
+      const interval = setInterval(loadMessages, 2000);
+      return () => clearInterval(interval);
+    }
+  }, [roomName, currentUserId, isOffline]);
 
   const sendMessage = useCallback(async () => {
     if (!newMessage.trim() || !roomName || isSending) return;
@@ -130,6 +158,8 @@ export const useChat = ({ roomName, currentUserId }: UseChatOptions) => {
       });
     } catch (error) {
       console.error("Failed to send message:", error);
+      const errorMessage = error instanceof Error ? error.message : "Failed to send message";
+      setError(errorMessage);
       if (tempId) {
         setChatMessages((prev) =>
           prev.map((msg) =>
@@ -195,6 +225,9 @@ export const useChat = ({ roomName, currentUserId }: UseChatOptions) => {
     retryMessage,
     isLoading,
     isSending,
+    error,
+    setError,
+    isOffline,
   };
 };
 

@@ -4,13 +4,14 @@ import { userAtom } from "../store/atoms";
 import { Button } from "./Button";
 import { Input } from "./Input";
 import { ProfileModal } from "./ProfileModal";
-import { Video, Users, User as UserIcon } from "lucide-react";
+import { Video, Users, User as UserIcon, Loader2 } from "lucide-react";
 
 interface LandingPageProps {
   onJoin: (roomName: string) => void;
+  isJoining?: boolean;
 }
 
-export const LandingPage: React.FC<LandingPageProps> = ({ onJoin }) => {
+export const LandingPage: React.FC<LandingPageProps> = ({ onJoin, isJoining = false }) => {
   const user = useAtomValue(userAtom);
   const [roomName, setRoomName] = React.useState("");
   const [showProfile, setShowProfile] = React.useState(false);
@@ -64,10 +65,20 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onJoin }) => {
 
             <Button
               type="submit"
-              className="w-full flex items-center justify-center gap-2"
+              disabled={isJoining}
+              className="w-full flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Users className="w-4 h-4" />
-              Join Room
+              {isJoining ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Joining Room...
+                </>
+              ) : (
+                <>
+                  <Users className="w-4 h-4" />
+                  Join Room
+                </>
+              )}
             </Button>
           </form>
         </div>
