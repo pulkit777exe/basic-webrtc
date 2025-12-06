@@ -15,6 +15,15 @@ const GetMessagesSchema = z.object({
   cursor: z.string().optional(),
 });
 
+const EditMessageSchema = z.object({
+  content: z.string().min(1).max(5000),
+});
+
+const MessageParamsSchema = z.object({
+  roomName: z.string().min(1),
+  messageId: z.string().min(1),
+});
+
 export const createMessage = async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.userId;
@@ -142,6 +151,116 @@ export const getMessages = async (req: AuthRequest, res: Response) => {
     }
     console.error("Error fetching messages:", error);
     res.status(500).json({ error: "Failed to fetch messages" });
+  }
+};
+
+export const editMessage = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { roomName, messageId } = MessageParamsSchema.parse(req.params);
+    const { content } = EditMessageSchema.parse(req.body);
+
+    // Find room
+    const room = await prisma.room.findUnique({
+      where: { name: roomName },
+    });
+
+    if (!room) {
+      return res.status(404).json({ error: "Room not found" });
+    }
+
+    // Find message and verify ownership
+    const message = await prisma.message.findFirst({
+      where: {
+        id: messageId,
+        roomId: room.id,
+        userId,
+      },
+    });
+
+    if (!message) {
+      return res.status(404).json({ error: "Message not found or you don't have permission to edit it" });
+    }
+
+    // Update message
+    const updatedMessage = await prisma.message.update({
+      where: { id: messageId },
+      data: { content },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    res.json({
+      id: updatedMessage.id,
+      content: updatedMessage.content,
+      sender: updatedMessage.user.name,
+      senderId: updatedMessage.user.id,
+      timestamp: updatedMessage.createdAt,
+      updatedAt: updatedMessage.updatedAt,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: error.issues });
+    }
+    console.error("Error editing message:", error);
+    res.status(500).json({ error: "Failed to edit message" });
+  }
+};
+
+export const deleteMessage = async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { roomName, messageId } = MessageParamsSchema.parse(req.params);
+
+    // Find room
+    const room = await prisma.room.findUnique({
+      where: { name: roomName },
+    });
+
+    if (!room) {
+      return res.status(404).json({ error: "Room not found" });
+    }
+
+    // Find message and verify ownership
+    const message = await prisma.message.findFirst({
+      where: {
+        id: messageId,
+        roomId: room.id,
+        userId,
+      },
+    });
+
+    if (!message) {
+      return res.status(404).json({ error: "Message not found or you don't have permission to delete it" });
+    }
+
+    // Delete message
+    await prisma.message.delete({
+      where: { id: messageId },
+    });
+
+    res.status(204).send();
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: error.issues });
+    }
+    console.error("Error deleting message:", error);
+    res.status(500).json({ error: "Failed to delete message" });
   }
 };
 
