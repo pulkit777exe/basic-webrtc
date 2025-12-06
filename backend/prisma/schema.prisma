@@ -7,18 +7,54 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  username  String   @unique
+  id        String     @id @default(uuid())
+  username  String     @unique
   password  String
   name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  messages  Message[]
+  analytics Analytics[]
 }
 
 model Room {
   id        String   @id @default(uuid())
   joined    String[] @default([])
-  name      String
+  name      String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  messages  Message[]
+  analytics Analytics[]
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  roomId    String
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([roomId])
+  @@index([createdAt])
+}
+
+model Analytics {
+  id            String   @id @default(uuid())
+  roomId        String?
+  room          Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  eventType     String   // 'page_view', 'room_join', 'room_leave', 'message_sent', etc.
+  browserInfo   Json     // Browser, OS, device info
+  sessionId      String
+  timestamp      DateTime @default(now())
+  metadata       Json?    // Additional event-specific data
+
+  @@index([roomId])
+  @@index([userId])
+  @@index([eventType])
+  @@index([timestamp])
 }

@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { AccessToken } from "livekit-server-sdk";
 import { z } from "zod";
+import prisma from "../prisma";
 
 const GetTokenSchema = z.object({
   roomName: z.string().min(1),
@@ -19,13 +20,34 @@ const createToken = async (roomName: string, participantName: string) => {
   const at = new AccessToken(apiKey, apiSecret, {
     identity: participantName,
   });
-  at.addGrant({ roomJoin: true, room: roomName });
+  
+  at.ttl = "6h";
+  
+  at.addGrant({
+    roomJoin: true,
+    room: roomName,
+    canPublish: true,
+    canSubscribe: true,
+    canPublishData: true,
+  });
+  
   return await at.toJwt();
 };
 
 export const getToken = async (req: Request, res: Response) => {
   try {
     const { roomName, participantName } = GetTokenSchema.parse(req.body);
+
+    // Ensure room exists in database
+    let room = await prisma.room.findFirst({
+      where: { name: roomName },
+    });
+
+    if (!room) {
+      room = await prisma.room.create({
+        data: { name: roomName },
+      });
+    }
 
     const token = await createToken(roomName, participantName);
     res.json({

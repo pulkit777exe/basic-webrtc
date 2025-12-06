@@ -1,151 +1,61 @@
 import * as React from "react";
-import {
-  LiveKitRoom,
-  GridLayout,
-  ParticipantTile,
-  RoomAudioRenderer,
-  ControlBar,
-  useTracks,
-} from "@livekit/components-react";
+import { LiveKitRoom, RoomAudioRenderer } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { Track } from "livekit-client";
-import { Button } from "./Button";
-import { Circle, Square } from "lucide-react";
-import { toast } from "sonner";
-
-interface VideoRoomProps {
-  token: string;
-  serverUrl: string;
-  onDisconnected: () => void;
-}
+import type { VideoRoomProps } from "../types";
+import { useMediaDevices } from "../hooks/useMediaDevices";
+import { useRoomConnection } from "../hooks/useRoomConnection";
+import { MeetingLayout } from "./meeting/MeetingLayout";
 
 export const VideoRoom: React.FC<VideoRoomProps> = ({
   token,
   serverUrl,
+  roomName,
   onDisconnected,
 }) => {
+  const { videoEnabled, audioEnabled, mediaError, setMediaError } = useMediaDevices();
+  const { connectionError, setConnectionError, handleError, handleDisconnected } =
+    useRoomConnection(onDisconnected);
+
   return (
     <LiveKitRoom
-      video={true}
-      audio={true}
+      video={videoEnabled}
+      audio={audioEnabled}
       token={token}
       serverUrl={serverUrl}
-      onDisconnected={onDisconnected}
+      onDisconnected={handleDisconnected}
+      onError={handleError}
+      connect={true}
+      options={{
+        adaptiveStream: true,
+        dynacast: true,
+      }}
       data-lk-theme="default"
-      style={{ height: "100vh" }}
+      style={{ height: "100vh", width: "100vw" }}
     >
-      <MyVideoConference />
+      {connectionError && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-50 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg">
+          {connectionError}
+          <button
+            onClick={() => {
+              setConnectionError(null);
+              window.location.reload();
+            }}
+            className="ml-4 underline"
+          >
+            Reload
+          </button>
+        </div>
+      )}
+      {mediaError && (
+        <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-50 bg-yellow-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2">
+          <span>{mediaError}</span>
+          <button onClick={() => setMediaError(null)} className="underline">
+            Dismiss
+          </button>
+        </div>
+      )}
+      <MeetingLayout roomName={roomName} />
       <RoomAudioRenderer />
-      <ControlBar />
     </LiveKitRoom>
   );
 };
-
-function MyVideoConference() {
-  const tracks = useTracks(
-    [
-      { source: Track.Source.Camera, withPlaceholder: true },
-      { source: Track.Source.ScreenShare, withPlaceholder: false },
-    ],
-    { onlySubscribed: false }
-  );
-
-  return (
-    <div className="relative h-full">
-      <GridLayout
-        tracks={tracks}
-        style={{ height: "calc(100vh - var(--lk-control-bar-height))" }}
-      >
-        <ParticipantTile />
-      </GridLayout>
-      <RecordingControls />
-    </div>
-  );
-}
-
-function RecordingControls() {
-  const [isRecording, setIsRecording] = React.useState(false);
-  const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
-  const chunksRef = React.useRef<Blob[]>([]);
-
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          mediaSource: "screen",
-          preferCurrentTab: true,
-        } as MediaTrackConstraints,
-        audio: true,
-      });
-
-      // Use high quality options if supported
-      const options = { mimeType: "video/webm;codecs=vp9,opus" };
-      const mediaRecorder = new MediaRecorder(
-        stream,
-        MediaRecorder.isTypeSupported(options.mimeType) ? options : undefined
-      );
-      mediaRecorderRef.current = mediaRecorder;
-      chunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          chunksRef.current.push(e.data);
-        }
-      };
-
-      mediaRecorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: "video/webm" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        document.body.appendChild(a);
-        a.style.display = "none";
-        a.href = url;
-        a.download = `recording-${new Date().toISOString()}.webm`;
-        a.click();
-        window.URL.revokeObjectURL(url);
-      };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-      toast.success("Recording started. Make sure to share audio!");
-
-      // Stop recording if user stops sharing via browser UI
-      stream.getVideoTracks()[0].onended = () => {
-        stopRecording();
-      };
-    } catch (e) {
-      console.error("Error starting recording:", e);
-      toast.error("Could not start recording");
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      toast.success("Recording stopped. Downloading file...");
-    }
-  };
-
-  return (
-    <div className="absolute top-4 right-4 z-50">
-      {!isRecording ? (
-        <Button
-          onClick={startRecording}
-          className="flex items-center gap-2 bg-red-600 hover:bg-red-700"
-        >
-          <Circle className="w-4 h-4 fill-current" />
-          Start Recording
-        </Button>
-      ) : (
-        <Button
-          onClick={stopRecording}
-          className="flex items-center gap-2 bg-neutral-800 hover:bg-neutral-700 animate-pulse border border-red-500"
-        >
-          <Square className="w-4 h-4 fill-red-500 text-red-500" />
-          Stop Recording
-        </Button>
-      )}
-    </div>
-  );
-}
