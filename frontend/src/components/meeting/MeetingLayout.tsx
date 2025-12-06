@@ -56,15 +56,30 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
     setShowOnboarding(false);
     localStorage.setItem("hasSeenMeetingOnboarding", "true");
   };
-  const { chatMessages, newMessage, setNewMessage, sendMessage, retryMessage, isLoading, isSending, error, setError, isOffline } = useChat({
+  const { 
+    chatMessages, 
+    newMessage, 
+    setNewMessage, 
+    sendMessage, 
+    retryMessage, 
+    editMessage,
+    deleteMessage,
+    isLoading, 
+    isSending, 
+    error, 
+    setError, 
+    isOffline,
+    connectionStatus,
+    pendingCount,
+    loadMessages,
+  } = useChat({
     roomName,
     currentUserId: user?.username,
   });
 
   const handleRetryLoad = () => {
     setError(null);
-    // Trigger reload by updating a dependency
-    window.location.reload();
+    loadMessages(true);
   };
 
   // Track room join
@@ -142,10 +157,14 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
                   onMessageChange={setNewMessage}
                   onSendMessage={sendMessage}
                   onRetryMessage={retryMessage}
+                  onEditMessage={editMessage}
+                  onDeleteMessage={deleteMessage}
                   isLoading={isLoading}
                   isSending={isSending}
                   error={error}
                   isOffline={isOffline}
+                  connectionStatus={connectionStatus}
+                  pendingCount={pendingCount}
                   onRetryLoad={handleRetryLoad}
                 />
               ) : (

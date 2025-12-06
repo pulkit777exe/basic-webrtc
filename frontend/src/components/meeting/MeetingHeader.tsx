@@ -41,7 +41,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({ onInviteClick, roo
               className="flex items-center gap-3 hover:bg-neutral-100 rounded-lg px-3 py-2 transition-all duration-200 hover:scale-[1.02]"
             >
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-sm font-medium">
+                <div className="w-8 h-8 rounded-full bg-linear-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-sm font-medium">
                   {user?.name?.charAt(0).toUpperCase() || "U"}
                 </div>
                 <div className="text-left">
