@@ -27,10 +27,10 @@ const ControlButton: React.FC<{
   return (
     <button
       onClick={onClick}
-      className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${
+      className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 ${
         active
-          ? "bg-neutral-100 hover:bg-neutral-200 text-neutral-700"
-          : "bg-red-100 hover:bg-red-200 text-red-600"
+          ? "bg-neutral-100 hover:bg-neutral-200 text-neutral-700 hover:scale-110 active:scale-95"
+          : "bg-red-100 hover:bg-red-200 text-red-600 hover:scale-110 active:scale-95"
       }`}
     >
       {icon}
@@ -132,7 +132,7 @@ export const ControlBar: React.FC = () => {
         />
         <button
           onClick={handleLeave}
-          className="w-12 h-12 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center transition-colors"
+          className="w-12 h-12 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center transition-all duration-200 hover:scale-110 active:scale-95"
         >
           <PhoneOff className="w-5 h-5 text-white" />
         </button>

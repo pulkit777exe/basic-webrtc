@@ -109,7 +109,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           return (
             <div
               key={msg.id}
-              className={`flex gap-3 ${msg.isOwn ? "flex-row-reverse" : ""} animate-in fade-in slide-in-from-bottom-2 duration-300`}
+              className={`flex gap-3 ${msg.isOwn ? "flex-row-reverse" : ""} animate-slide-in-up`}
             >
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-medium shrink-0">
                 {msg.sender.charAt(0).toUpperCase()}
@@ -164,7 +164,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       {/* Message Input */}
       <div className="p-4 border-t border-neutral-200">
         <div className="flex items-center gap-2">
-          <button className="p-2 hover:bg-neutral-100 rounded-lg transition-colors">
+          <button className="p-2 hover:bg-neutral-100 rounded-lg transition-all duration-200 hover:scale-110 active:scale-95">
             <Paperclip className="w-5 h-5 text-neutral-600" />
           </button>
           <input
@@ -174,15 +174,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             onKeyPress={(e) => e.key === "Enter" && !isOffline && onSendMessage()}
             placeholder={isOffline ? "Offline - messages queued..." : "Type a message..."}
             disabled={isOffline}
-            className="flex-1 px-4 py-2 bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 px-4 py-2 bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
           />
-          <button className="p-2 hover:bg-neutral-100 rounded-lg transition-colors">
+          <button className="p-2 hover:bg-neutral-100 rounded-lg transition-all duration-200 hover:scale-110 active:scale-95">
             <Smile className="w-5 h-5 text-neutral-600" />
           </button>
           <button
             onClick={onSendMessage}
             disabled={isSending || !newMessage.trim() || isOffline}
-            className="p-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
+            className="p-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-all duration-200 hover:scale-110 active:scale-95"
           >
             {isSending ? (
               <Loader2 className="w-5 h-5 text-white animate-spin" />

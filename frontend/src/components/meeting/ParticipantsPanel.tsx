@@ -55,7 +55,7 @@ export const ParticipantsPanel: React.FC = () => {
           participants.map((participant) => (
             <div
               key={participant.identity}
-              className="flex items-center gap-3 p-3 hover:bg-neutral-50 rounded-lg transition-colors animate-in fade-in slide-in-from-left-2 duration-300"
+              className="flex items-center gap-3 p-3 hover:bg-neutral-50 rounded-lg transition-all duration-200 hover:scale-[1.02] animate-slide-in-up"
             >
               <div className="w-10 h-10 rounded-full bg-black flex items-center justify-center text-white font-medium">
                 {participant.name?.charAt(0).toUpperCase() || "P"}

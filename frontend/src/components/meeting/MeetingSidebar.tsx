@@ -18,16 +18,16 @@ const SidebarIcon: React.FC<SidebarIconProps> = ({ icon, active = false, badge }
   return (
     <div className="relative">
       <button
-        className={`p-3 rounded-lg transition-colors ${
+        className={`p-3 rounded-lg transition-all duration-200 ${
           active
             ? "bg-blue-100 text-blue-600"
             : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
-        }`}
+        } hover:scale-110 active:scale-95`}
       >
         {icon}
       </button>
       {badge && badge > 0 && (
-        <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
+        <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center animate-scale-in">
           {badge}
         </span>
       )}

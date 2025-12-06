@@ -70,18 +70,26 @@ function App() {
   return (
     <>
       <Toaster position={TOAST_POSITION} theme={TOAST_THEME} />
-      {!user ? (
-        <LoginForm />
-      ) : !token || !serverUrl ? (
-        <LandingPage onJoin={handleJoin} isJoining={isJoining} />
-      ) : (
-        <VideoRoom
-          token={token}
-          serverUrl={serverUrl}
-          roomName={roomName || ""}
-          onDisconnected={handleDisconnected}
-        />
-      )}
+      <div className="relative w-full h-full">
+        {!user ? (
+          <div className="page-enter-active animate-fade-in">
+            <LoginForm />
+          </div>
+        ) : !token || !serverUrl ? (
+          <div className="page-enter-active animate-fade-in">
+            <LandingPage onJoin={handleJoin} isJoining={isJoining} />
+          </div>
+        ) : (
+          <div className="page-enter-active animate-fade-in">
+            <VideoRoom
+              token={token}
+              serverUrl={serverUrl}
+              roomName={roomName || ""}
+              onDisconnected={handleDisconnected}
+            />
+          </div>
+        )}
+      </div>
     </>
   );
 }

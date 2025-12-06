@@ -83,20 +83,20 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
             <div className="flex border-b border-neutral-200">
               <button
                 onClick={() => setActiveTab("chat")}
-                className={`flex-1 px-4 py-3 text-sm font-medium relative ${
+                className={`flex-1 px-4 py-3 text-sm font-medium relative transition-all duration-200 ${
                   activeTab === "chat"
-                    ? "text-blue-600 border-b-2 border-blue-600"
-                    : "text-neutral-600 hover:text-neutral-900"
+                    ? "text-blue-600 border-b-2 border-blue-600 bg-blue-50/50"
+                    : "text-neutral-600 hover:text-neutral-900 hover:bg-neutral-50"
                 }`}
               >
                 Chat
               </button>
               <button
                 onClick={() => setActiveTab("participants")}
-                className={`flex-1 px-4 py-3 text-sm font-medium ${
+                className={`flex-1 px-4 py-3 text-sm font-medium transition-all duration-200 ${
                   activeTab === "participants"
-                    ? "text-blue-600 border-b-2 border-blue-600"
-                    : "text-neutral-600 hover:text-neutral-900"
+                    ? "text-blue-600 border-b-2 border-blue-600 bg-blue-50/50"
+                    : "text-neutral-600 hover:text-neutral-900 hover:bg-neutral-50"
                 }`}
               >
                 Participants {participants.length}
