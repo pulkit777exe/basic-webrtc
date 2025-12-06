@@ -61,13 +61,21 @@ export const ParticipantsPanel: React.FC = () => {
                 {participant.name?.charAt(0).toUpperCase() || "P"}
               </div>
               <div className="flex-1">
-                <p className="text-sm font-medium text-neutral-900">
-                  {participant.name}
-                  {participant.identity === localParticipant?.identity && " (You)"}
-                </p>
-                <p className="text-xs text-neutral-500">
-                  {participant.isSpeaking ? "Speaking" : "Listening"}
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-neutral-900">
+                    {participant.name}
+                    {participant.identity === localParticipant?.identity && " (You)"}
+                  </p>
+                  {participant.isSpeaking && (
+                    <div className="flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 rounded-full">
+                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                      <span className="text-xs font-medium">Speaking</span>
+                    </div>
+                  )}
+                </div>
+                {!participant.isSpeaking && (
+                  <p className="text-xs text-neutral-500">Listening</p>
+                )}
               </div>
               <div className="flex gap-2">
                 {!participant.isMicrophoneEnabled && (

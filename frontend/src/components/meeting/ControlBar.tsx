@@ -11,6 +11,8 @@ import {
   Users,
   Grid3x3,
   MoreVertical,
+  Keyboard,
+  X,
 } from "lucide-react";
 import { useLocalParticipant, useRoomContext } from "@livekit/components-react";
 import { toast } from "sonner";
@@ -44,6 +46,7 @@ export const ControlBar: React.FC = () => {
   const [isVideoOff, setIsVideoOff] = React.useState(false);
   const [isSpeakerOff, setIsSpeakerOff] = React.useState(false);
   const [isToggling, setIsToggling] = React.useState(false);
+  const [showShortcuts, setShowShortcuts] = React.useState(false);
   const room = useRoomContext();
   const [roomName] = useAtom(roomAtom);
 
@@ -112,9 +115,31 @@ export const ControlBar: React.FC = () => {
     room?.disconnect();
   };
 
+  // Keyboard shortcuts
+  React.useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return; // Don't trigger shortcuts when typing
+      }
+
+      if (e.key === "m" || e.key === "M") {
+        toggleMute();
+      } else if (e.key === "v" || e.key === "V") {
+        toggleVideo();
+      } else if (e.key === "Escape") {
+        setShowShortcuts(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyPress);
+    return () => window.removeEventListener("keydown", handleKeyPress);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMuted, isVideoOff]);
+
   return (
-    <div className="h-20 bg-white border-t border-neutral-200 flex items-center justify-center px-6">
-      <div className="flex items-center gap-2">
+    <>
+      <div className="h-20 bg-white border-t border-neutral-200 flex items-center justify-center px-6 relative">
+        <div className="flex items-center gap-2">
         <ControlButton
           icon={isSpeakerOff ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
           onClick={toggleSpeaker}
@@ -140,8 +165,43 @@ export const ControlBar: React.FC = () => {
         <ControlButton icon={<Users className="w-5 h-5" />} />
         <ControlButton icon={<Grid3x3 className="w-5 h-5" />} />
         <ControlButton icon={<MoreVertical className="w-5 h-5" />} />
+        <button
+          onClick={() => setShowShortcuts(!showShortcuts)}
+          className="w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 hover:bg-neutral-100 hover:scale-110 active:scale-95 text-neutral-600"
+          title="Keyboard Shortcuts"
+        >
+          <Keyboard className="w-5 h-5" />
+        </button>
       </div>
-    </div>
+        {showShortcuts && (
+          <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-4 bg-white rounded-lg shadow-xl border border-neutral-200 p-4 w-64 z-50 animate-scale-in">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-neutral-900">Keyboard Shortcuts</h3>
+              <button
+                onClick={() => setShowShortcuts(false)}
+                className="p-1 hover:bg-neutral-100 rounded transition-colors"
+              >
+                <X className="w-4 h-4 text-neutral-600" />
+              </button>
+            </div>
+            <div className="space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-neutral-600">Toggle Mute</span>
+                <kbd className="px-2 py-1 bg-neutral-100 rounded text-neutral-900 font-mono">M</kbd>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-neutral-600">Toggle Video</span>
+                <kbd className="px-2 py-1 bg-neutral-100 rounded text-neutral-900 font-mono">V</kbd>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-neutral-600">Close</span>
+                <kbd className="px-2 py-1 bg-neutral-100 rounded text-neutral-900 font-mono">Esc</kbd>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   );
 };
 

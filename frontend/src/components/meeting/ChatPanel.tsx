@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Send, Paperclip, Smile, Loader2, Check, CheckCheck, AlertCircle, RotateCcw, MessageSquare } from "lucide-react";
+import { Send, Paperclip, Smile, Loader2, CheckCheck, AlertCircle, RotateCcw, MessageSquare } from "lucide-react";
 import { useParticipants } from "@livekit/components-react";
 import type { ChatMessage } from "../../types";
 
@@ -104,12 +104,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         ) : (
           messages.map((msg) => {
           const status = msg.status || "sent";
-          const showStatus = msg.isOwn && status !== "sent";
           
           return (
             <div
               key={msg.id}
-              className={`flex gap-3 ${msg.isOwn ? "flex-row-reverse" : ""} animate-slide-in-up`}
+              className={`flex gap-3 ${msg.isOwn ? "flex-row-reverse" : ""} animate-slide-in-up group`}
             >
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-medium shrink-0">
                 {msg.sender.charAt(0).toUpperCase()}
@@ -125,8 +124,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   <p className="text-sm">{msg.message}</p>
                 </div>
                 <div className={`flex items-center gap-2 mt-1 ${msg.isOwn ? "flex-row-reverse" : ""}`}>
-                  <p className="text-xs text-neutral-500">{formatTime(msg.timestamp)}</p>
-                  {showStatus && (
+                  <p 
+                    className="text-xs text-neutral-500 group-hover:text-neutral-700 transition-colors"
+                    title={msg.timestamp.toLocaleString()}
+                  >
+                    {formatTime(msg.timestamp)}
+                  </p>
+                  {msg.isOwn && (
                     <div className="flex items-center gap-1">
                       {status === "sending" && (
                         <Loader2 className="w-3 h-3 text-neutral-400 animate-spin" />
@@ -149,9 +153,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         </div>
                       )}
                     </div>
-                  )}
-                  {msg.isOwn && status === "sent" && (
-                    <CheckCheck className="w-3 h-3 text-blue-500" />
                   )}
                 </div>
               </div>

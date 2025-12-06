@@ -12,10 +12,22 @@ export const VideoConference: React.FC = () => {
   );
 
   return (
-    <div className="relative h-full w-full">
-      <GridLayout tracks={tracks} style={{ height: "100%", width: "100%" }}>
-        <ParticipantTile />
-      </GridLayout>
+    <div className="relative h-full w-full bg-neutral-900">
+      {tracks.length === 0 ? (
+        <div className="flex items-center justify-center h-full">
+          <div className="text-center text-neutral-400">
+            <p className="text-sm">Waiting for participants...</p>
+          </div>
+        </div>
+      ) : (
+        <GridLayout 
+          tracks={tracks} 
+          style={{ height: "100%", width: "100%" }}
+          className="p-2 gap-2"
+        >
+          <ParticipantTile />
+        </GridLayout>
+      )}
     </div>
   );
 };

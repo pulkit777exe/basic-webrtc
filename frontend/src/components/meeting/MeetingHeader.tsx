@@ -6,9 +6,10 @@ import { ProfileModal } from "../ProfileModal";
 
 interface MeetingHeaderProps {
   onInviteClick: () => void;
+  roomName?: string;
 }
 
-export const MeetingHeader: React.FC<MeetingHeaderProps> = ({ onInviteClick }) => {
+export const MeetingHeader: React.FC<MeetingHeaderProps> = ({ onInviteClick, roomName }) => {
   const [user] = useAtom(userAtom);
   const [showProfileDropdown, setShowProfileDropdown] = React.useState(false);
   const [showProfileModal, setShowProfileModal] = React.useState(false);
@@ -17,7 +18,14 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({ onInviteClick }) =
     <>
       <div className="h-16 bg-white border-b border-neutral-200 flex items-center justify-between px-6">
         <div className="flex items-center gap-4">
-          <h1 className="text-xl font-semibold text-neutral-900">Meeting</h1>
+          {roomName ? (
+            <div className="flex flex-col">
+              <h1 className="text-xl font-bold text-neutral-900">{roomName}</h1>
+              <p className="text-xs text-neutral-500">In meeting</p>
+            </div>
+          ) : (
+            <h1 className="text-xl font-semibold text-neutral-900">Meeting</h1>
+          )}
           <button
             onClick={onInviteClick}
             className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-all duration-200 hover:scale-105 active:scale-95"
