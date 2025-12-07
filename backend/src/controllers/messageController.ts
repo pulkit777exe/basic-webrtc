@@ -1,28 +1,18 @@
 import { Response } from "express";
 import { z } from "zod";
-import prisma from "../prisma";
+import prisma, { Prisma } from "../utils/prisma";
 import { extractBrowserInfo } from "../utils/browserInfo";
 import { AuthRequest } from "../middleware/auth";
-
-const CreateMessageSchema = z.object({
-  roomName: z.string().min(1),
-  content: z.string().min(1).max(5000),
-});
-
-const GetMessagesSchema = z.object({
-  roomName: z.string().min(1),
-  limit: z.coerce.number().int().positive().max(100).optional().default(50),
-  cursor: z.string().optional(),
-});
-
-const EditMessageSchema = z.object({
-  content: z.string().min(1).max(5000),
-});
-
-const MessageParamsSchema = z.object({
-  roomName: z.string().min(1),
-  messageId: z.string().min(1),
-});
+import {
+  CreateMessageSchema,
+  GetMessagesSchema,
+  EditMessageSchema,
+  MessageParamsSchema,
+  type CreateMessageInput,
+  type GetMessagesInput,
+  type EditMessageInput,
+  type MessageParamsInput,
+} from "../utils/types";
 
 export const createMessage = async (req: AuthRequest, res: Response) => {
   try {
@@ -69,12 +59,12 @@ export const createMessage = async (req: AuthRequest, res: Response) => {
         roomId: room.id,
         userId,
         eventType: "message_sent",
-        browserInfo: browserInfo as any,
+        browserInfo: browserInfo as unknown as Prisma.InputJsonValue,
         sessionId: req.body.sessionId || "unknown",
         metadata: {
           messageLength: content.length,
           roomName,
-        },
+        } as Prisma.InputJsonValue,
       },
     });
 
@@ -102,7 +92,7 @@ export const getMessages = async (req: AuthRequest, res: Response) => {
     });
 
     // Find room
-    const room = await prisma.room.findUnique({
+    const room = await prisma.room.findFirst({
       where: { name: roomName },
     });
 
@@ -110,8 +100,8 @@ export const getMessages = async (req: AuthRequest, res: Response) => {
       return res.json({ messages: [], nextCursor: null });
     }
 
-    // Build query
-    const where: any = { roomId: room.id };
+    // Build query with proper typing
+    const where: Prisma.MessageWhereInput = { roomId: room.id };
     if (cursor) {
       where.id = { lt: cursor };
     }
@@ -134,15 +124,13 @@ export const getMessages = async (req: AuthRequest, res: Response) => {
     const nextCursor = messages.length === limit ? messages[messages.length - 1].id : null;
 
     res.json({
-      messages: messages
-        .reverse()
-        .map((msg) => ({
-          id: msg.id,
-          content: msg.content,
-          sender: msg.user.name,
-          senderId: msg.user.id,
-          timestamp: msg.createdAt,
-        })),
+      messages: messages.reverse().map((msg) => ({
+        id: msg.id,
+        content: msg.content,
+        sender: msg.user.name,
+        senderId: msg.user.id,
+        timestamp: msg.createdAt,
+      })),
       nextCursor,
     });
   } catch (error) {
@@ -165,7 +153,7 @@ export const editMessage = async (req: AuthRequest, res: Response) => {
     const { content } = EditMessageSchema.parse(req.body);
 
     // Find room
-    const room = await prisma.room.findUnique({
+    const room = await prisma.room.findFirst({
       where: { name: roomName },
     });
 
@@ -228,7 +216,7 @@ export const deleteMessage = async (req: AuthRequest, res: Response) => {
     const { roomName, messageId } = MessageParamsSchema.parse(req.params);
 
     // Find room
-    const room = await prisma.room.findUnique({
+    const room = await prisma.room.findFirst({
       where: { name: roomName },
     });
 
@@ -263,4 +251,3 @@ export const deleteMessage = async (req: AuthRequest, res: Response) => {
     res.status(500).json({ error: "Failed to delete message" });
   }
 };
-

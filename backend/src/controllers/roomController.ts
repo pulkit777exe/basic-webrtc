@@ -1,12 +1,10 @@
 import { Request, Response } from "express";
 import { AccessToken } from "livekit-server-sdk";
 import { z } from "zod";
-import prisma from "../prisma";
-
-const GetTokenSchema = z.object({
-  roomName: z.string().min(1),
-  participantName: z.string().min(1),
-});
+import prisma from "../utils/prisma";
+import {
+  GetTokenSchema,
+} from "../utils/types";
 
 const createToken = async (roomName: string, participantName: string) => {
   const apiKey = process.env.LIVEKIT_API_KEY;

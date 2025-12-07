@@ -1,5 +1,6 @@
 generator client {
   provider = "prisma-client-js"
+  output = "./generated/client"
 }
 
 datasource db {
@@ -48,10 +49,10 @@ model Analytics {
   userId        String?
   user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   eventType     String   // 'page_view', 'room_join', 'room_leave', 'message_sent', etc.
-  browserInfo   Json     // Browser, OS, device info
-  sessionId      String
-  timestamp      DateTime @default(now())
-  metadata       Json?    // Additional event-specific data
+  browserInfo   Json     
+  sessionId     String
+  timestamp     DateTime @default(now())
+  metadata      Json?    // Additional event-specific data
 
   @@index([roomId])
   @@index([userId])
