@@ -1,6 +1,6 @@
 import { Response } from "express";
 import { z } from "zod";
-import prisma, { Prisma } from "../utils/prisma";
+import prisma from "../utils/prisma";
 import { extractBrowserInfo } from "../utils/browserInfo";
 import { AuthRequest } from "../middleware/auth";
 import {
@@ -59,12 +59,12 @@ export const createMessage = async (req: AuthRequest, res: Response) => {
         roomId: room.id,
         userId,
         eventType: "message_sent",
-        browserInfo: browserInfo as unknown as Prisma.InputJsonValue,
+        browserInfo: browserInfo as unknown as typeof prisma.InputJsonValue,
         sessionId: req.body.sessionId || "unknown",
         metadata: {
           messageLength: content.length,
           roomName,
-        } as Prisma.InputJsonValue,
+        } as typeof prisma.InputJsonValue,
       },
     });
 
@@ -101,7 +101,7 @@ export const getMessages = async (req: AuthRequest, res: Response) => {
     }
 
     // Build query with proper typing
-    const where: Prisma.MessageWhereInput = { roomId: room.id };
+    const where: typeof prisma.MessageWhereInput = { roomId: room.id };
     if (cursor) {
       where.id = { lt: cursor };
     }
@@ -124,7 +124,7 @@ export const getMessages = async (req: AuthRequest, res: Response) => {
     const nextCursor = messages.length === limit ? messages[messages.length - 1].id : null;
 
     res.json({
-      messages: messages.reverse().map((msg) => ({
+      messages: messages.reverse().map((msg: { id: string; content: string; user: { name: string; id: string }; createdAt: Date }) => ({
         id: msg.id,
         content: msg.content,
         sender: msg.user.name,

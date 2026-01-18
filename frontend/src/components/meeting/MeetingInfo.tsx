@@ -1,17 +1,12 @@
 import * as React from "react";
-import { Circle, Wifi, WifiOff } from "lucide-react";
-import { useParticipants, useRoomContext, useLocalParticipant } from "@livekit/components-react";
-import { ConnectionQuality } from "livekit-client";
+import { Circle, Wifi } from "lucide-react";
+import { useWebRTCContext } from "../../contexts/useWebRTCContext";
+import { ConnectionState } from "../../types/webrtc";
 
 export const MeetingInfo: React.FC = () => {
-  const participants = useParticipants();
-  const room = useRoomContext();
-  const { localParticipant } = useLocalParticipant();
+  const { participants, connectionState } = useWebRTCContext();
   const [isRecording] = React.useState(true);
   const [recordingTime, setRecordingTime] = React.useState(0);
-  const [connectionQuality, setConnectionQuality] = React.useState<ConnectionQuality>(
-    ConnectionQuality.Unknown
-  );
 
   React.useEffect(() => {
     if (isRecording) {
@@ -22,26 +17,6 @@ export const MeetingInfo: React.FC = () => {
     }
   }, [isRecording]);
 
-  // Monitor connection quality
-  React.useEffect(() => {
-    if (!localParticipant) return;
-
-    const updateConnectionQuality = () => {
-      const quality = localParticipant.connectionQuality;
-      setConnectionQuality(quality);
-    };
-
-    updateConnectionQuality();
-    const interval = setInterval(updateConnectionQuality, 1000);
-
-    localParticipant.on("connectionQualityChanged", updateConnectionQuality);
-
-    return () => {
-      clearInterval(interval);
-      localParticipant.off("connectionQualityChanged", updateConnectionQuality);
-    };
-  }, [localParticipant]);
-
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -50,15 +25,14 @@ export const MeetingInfo: React.FC = () => {
   };
 
   const getConnectionQualityInfo = () => {
-    switch (connectionQuality) {
-      case ConnectionQuality.Excellent:
-        return { label: "Excellent", color: "text-green-500", bgColor: "bg-green-500/20", icon: Wifi };
-      case ConnectionQuality.Good:
-        return { label: "Good", color: "text-green-400", bgColor: "bg-green-400/20", icon: Wifi };
-      case ConnectionQuality.Poor:
-        return { label: "Poor", color: "text-yellow-500", bgColor: "bg-yellow-500/20", icon: Wifi };
-      case ConnectionQuality.Lost:
-        return { label: "Disconnected", color: "text-red-500", bgColor: "bg-red-500/20", icon: WifiOff };
+    switch (connectionState) {
+      case ConnectionState.CONNECTED:
+        return { label: "Connected", color: "text-green-500", bgColor: "bg-green-500/20", icon: Wifi };
+      case ConnectionState.CONNECTING:
+      case ConnectionState.RECONNECTING:
+        return { label: "Connecting", color: "text-yellow-500", bgColor: "bg-yellow-500/20", icon: Wifi };
+      case ConnectionState.DISCONNECTED:
+        return { label: "Disconnected", color: "text-red-500", bgColor: "bg-red-500/20", icon: Wifi };
       default:
         return { label: "Unknown", color: "text-neutral-400", bgColor: "bg-neutral-400/20", icon: Wifi };
     }
@@ -69,35 +43,28 @@ export const MeetingInfo: React.FC = () => {
 
   return (
     <div className="absolute top-4 left-4 z-10 flex items-center gap-4">
-      <div className="bg-white/90 backdrop-blur-sm rounded-lg px-4 py-2 shadow-lg">
-        <p className="text-sm text-neutral-600">
-          Invited to the call{" "}
-          <span className="font-semibold text-neutral-900">{participants.length}</span>
+      <div className="bg-card/90 backdrop-blur-sm rounded-lg px-4 py-2 shadow-lg border border-border">
+        <p className="text-sm text-muted-foreground">
+          Participants{" "}
+          <span className="font-semibold text-foreground">{participants.length + 1}</span>
         </p>
       </div>
       <div
-        className={`${qualityInfo.bgColor} backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg flex items-center gap-2 group relative`}
+        className={`${qualityInfo.bgColor} backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg flex items-center gap-2 group relative border border-border`}
         title={`Connection: ${qualityInfo.label}`}
       >
         <QualityIcon className={`w-4 h-4 ${qualityInfo.color}`} />
         <span className={`text-xs font-medium ${qualityInfo.color} hidden sm:inline`}>
           {qualityInfo.label}
         </span>
-        {room && (
-          <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 hidden group-hover:block bg-neutral-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-20">
-            <div>Connection: {qualityInfo.label}</div>
-            <div className="text-neutral-400">Room: {room.name}</div>
-          </div>
-        )}
       </div>
       {isRecording && (
-        <div className="bg-red-500/90 backdrop-blur-sm rounded-lg px-4 py-2 shadow-lg flex items-center gap-2">
-          <Circle className="w-3 h-3 fill-white text-white" />
-          <span className="text-sm font-medium text-white">Recording</span>
-          <span className="text-sm font-mono text-white">{formatTime(recordingTime)}</span>
+        <div className="bg-destructive/90 backdrop-blur-sm rounded-lg px-4 py-2 shadow-lg flex items-center gap-2 border border-destructive">
+          <Circle className="w-3 h-3 fill-destructive-foreground text-destructive-foreground" />
+          <span className="text-sm font-medium text-destructive-foreground">Recording</span>
+          <span className="text-sm font-mono text-destructive-foreground">{formatTime(recordingTime)}</span>
         </div>
       )}
     </div>
   );
 };
-

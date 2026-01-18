@@ -10,8 +10,7 @@ export interface ChatMessage {
 }
 
 export interface VideoRoomProps {
-  token: string;
-  serverUrl: string;
+  wsUrl: string;
   roomName: string;
   onDisconnected: () => void;
 }

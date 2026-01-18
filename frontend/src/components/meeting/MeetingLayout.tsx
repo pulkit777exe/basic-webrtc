@@ -10,11 +10,14 @@ import { ParticipantsPanel } from "./ParticipantsPanel";
 import { InviteModal } from "./InviteModal";
 import { useChat } from "../../hooks/useChat";
 import { useAtom } from "jotai";
-import { useParticipants } from "@livekit/components-react";
+import { useWebRTCContext } from "../../contexts/useWebRTCContext";
 import { userAtom } from "../../store/atoms";
 import { generateInviteLink } from "../../utils/inviteLink";
 import { analyticsApi } from "../../services/analyticsApi";
 import { getBrowserInfo, getSessionId } from "../../utils/browserInfo";
+import { cn } from "@/lib/utils";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Button } from "../ui/button";
 
 interface MeetingLayoutProps {
   roomName: string;
@@ -26,7 +29,7 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
   const [showOnboarding, setShowOnboarding] = React.useState(false);
   const [onboardingStep, setOnboardingStep] = React.useState(0);
   const [user] = useAtom(userAtom);
-  const participants = useParticipants();
+  const { participants } = useWebRTCContext();
 
   // Check if this is first meeting
   React.useEffect(() => {
@@ -110,14 +113,14 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
   const inviteLink = generateInviteLink(roomName);
 
   return (
-    <div className="flex h-screen bg-neutral-50 text-neutral-900">
+    <div className="flex h-screen bg-background text-foreground">
       <MeetingSidebar />
 
       <div className="flex-1 flex flex-col">
         <MeetingHeader onInviteClick={() => setShowInviteModal(true)} roomName={roomName} />
 
         <div className="flex-1 flex overflow-hidden">
-          <div className="flex-1 flex flex-col bg-neutral-50">
+          <div className="flex-1 flex flex-col bg-background">
             <div className="flex-1 relative">
               <VideoConference />
               <MeetingInfo />
@@ -125,25 +128,27 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
             <ControlBar />
           </div>
 
-          <div className="w-80 bg-white border-l border-neutral-200 flex flex-col">
-            <div className="flex border-b border-neutral-200">
+          <div className="w-80 bg-card border-l border-border flex flex-col">
+            <div className="flex border-b border-border">
               <button
                 onClick={() => setActiveTab("chat")}
-                className={`flex-1 px-4 py-3 text-sm font-medium relative transition-all duration-200 ${
+                className={cn(
+                  "flex-1 px-4 py-3 text-sm font-medium relative transition-all duration-200",
                   activeTab === "chat"
-                    ? "text-blue-600 border-b-2 border-blue-600 bg-blue-50/50"
-                    : "text-neutral-600 hover:text-neutral-900 hover:bg-neutral-50"
-                }`}
+                    ? "text-foreground border-b-2 border-foreground bg-accent"
+                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                )}
               >
                 Chat
               </button>
               <button
                 onClick={() => setActiveTab("participants")}
-                className={`flex-1 px-4 py-3 text-sm font-medium transition-all duration-200 ${
+                className={cn(
+                  "flex-1 px-4 py-3 text-sm font-medium transition-all duration-200",
                   activeTab === "participants"
-                    ? "text-blue-600 border-b-2 border-blue-600 bg-blue-50/50"
-                    : "text-neutral-600 hover:text-neutral-900 hover:bg-neutral-50"
-                }`}
+                    ? "text-foreground border-b-2 border-foreground bg-accent"
+                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                )}
               >
                 Participants {participants.length}
               </button>
@@ -185,46 +190,50 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
 
       {showOnboarding && onboardingSteps[onboardingStep] && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-          <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm mx-4 animate-scale-in">
-            <div className="mb-4">
-              <h3 className="text-lg font-semibold text-neutral-900 mb-2">Welcome to your meeting!</h3>
-              <p className="text-sm text-neutral-600">{onboardingSteps[onboardingStep].text}</p>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <button
-                onClick={handleOnboardingSkip}
-                className="text-sm text-neutral-500 hover:text-neutral-700 transition-colors"
-              >
-                Skip tour
-              </button>
-              <div className="flex gap-2">
-                {onboardingStep > 0 && (
-                  <button
-                    onClick={() => setOnboardingStep(onboardingStep - 1)}
-                    className="px-3 py-1.5 text-sm bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors"
-                  >
-                    Previous
-                  </button>
-                )}
+          <Card className="max-w-sm mx-4 animate-scale-in">
+            <CardHeader>
+              <CardTitle>Welcome to your meeting!</CardTitle>
+              <CardDescription>{onboardingSteps[onboardingStep].text}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between gap-2 mb-4">
                 <button
-                  onClick={handleOnboardingNext}
-                  className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                  onClick={handleOnboardingSkip}
+                  className="text-sm text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  {onboardingStep === onboardingSteps.length - 1 ? "Got it!" : "Next"}
+                  Skip tour
                 </button>
+                <div className="flex gap-2">
+                  {onboardingStep > 0 && (
+                    <Button
+                      onClick={() => setOnboardingStep(onboardingStep - 1)}
+                      variant="outline"
+                      size="sm"
+                    >
+                      Previous
+                    </Button>
+                  )}
+                  <Button
+                    onClick={handleOnboardingNext}
+                    size="sm"
+                  >
+                    {onboardingStep === onboardingSteps.length - 1 ? "Got it!" : "Next"}
+                  </Button>
+                </div>
               </div>
-            </div>
-            <div className="mt-4 flex gap-1 justify-center">
-              {onboardingSteps.map((_, index) => (
-                <div
-                  key={index}
-                  className={`h-1.5 rounded-full transition-all ${
-                    index === onboardingStep ? "w-6 bg-blue-600" : "w-1.5 bg-neutral-300"
-                  }`}
-                />
-              ))}
-            </div>
-          </div>
+              <div className="flex gap-1 justify-center">
+                {onboardingSteps.map((_, index) => (
+                  <div
+                    key={index}
+                    className={cn(
+                      "h-1.5 rounded-full transition-all",
+                      index === onboardingStep ? "w-6 bg-foreground" : "w-1.5 bg-muted"
+                    )}
+                  />
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
     </div>

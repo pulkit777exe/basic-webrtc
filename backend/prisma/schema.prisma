@@ -1,6 +1,6 @@
 generator client {
   provider = "prisma-client-js"
-  output = "./generated/client"
+  output   = "./generated/client"
 }
 
 datasource db {
@@ -8,24 +8,30 @@ datasource db {
 }
 
 model User {
-  id        String     @id @default(uuid())
-  username  String     @unique
-  password  String
-  name      String
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  messages  Message[]
-  analytics Analytics[]
+  id           String            @id @default(uuid())
+  username     String            @unique
+  password     String
+  name         String
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  messages     Message[]
+  analytics    Analytics[]
+  hostedRooms  Room[]            @relation("RoomHost")
+  participants RoomParticipant[]
 }
 
 model Room {
-  id        String   @id @default(uuid())
-  joined    String[] @default([])
-  name      String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  messages  Message[]
-  analytics Analytics[]
+  id           String            @id @default(uuid())
+  name         String            @unique
+  maxPeers     Int               @default(50)
+  isLocked     Boolean           @default(false)
+  hostId       String?
+  host         User?             @relation("RoomHost", fields: [hostId], references: [id])
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  messages     Message[]
+  analytics    Analytics[]
+  participants RoomParticipant[]
 }
 
 model Message {
@@ -43,19 +49,38 @@ model Message {
 }
 
 model Analytics {
-  id            String   @id @default(uuid())
-  roomId        String?
-  room          Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
-  userId        String?
-  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  eventType     String   // 'page_view', 'room_join', 'room_leave', 'message_sent', etc.
-  browserInfo   Json     
-  sessionId     String
-  timestamp     DateTime @default(now())
-  metadata      Json?    // Additional event-specific data
+  id          String   @id @default(uuid())
+  roomId      String?
+  room        Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  eventType   String // 'page_view', 'room_join', 'room_leave', 'message_sent', etc.
+  browserInfo Json
+  sessionId   String
+  timestamp   DateTime @default(now())
+  metadata    Json? // Additional event-specific data
 
   @@index([roomId])
   @@index([userId])
   @@index([eventType])
   @@index([timestamp])
+}
+
+model RoomParticipant {
+  id           String   @id @default(uuid())
+  roomId       String
+  room         Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  socketId     String   @unique
+  peerRole     String   @default("participant") // "host", "moderator", "participant"
+  isAudioMuted Boolean  @default(false)
+  isVideoMuted Boolean  @default(false)
+  joinedAt     DateTime @default(now())
+  lastSeenAt   DateTime @default(now())
+
+  @@unique([roomId, userId])
+  @@index([roomId])
+  @@index([userId])
+  @@index([socketId])
 }

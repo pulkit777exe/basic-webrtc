@@ -1,7 +1,7 @@
 import { Response } from "express";
 import { z } from "zod";
 import { extractBrowserInfo } from "../utils/browserInfo";
-import prisma, { Prisma } from "../utils/prisma";
+import prisma from "../utils/prisma";
 import { AuthRequest } from "../middleware/auth";
 import {
   TrackEventSchema,
@@ -20,8 +20,8 @@ async function isSameState(
   roomId: string | null,
   userId: string | null,
   sessionId: string,
-  metadata: Prisma.InputJsonValue | null,
-  browserInfo: Prisma.InputJsonValue
+  metadata: typeof prisma.InputJsonValue | null,
+  browserInfo: typeof prisma.InputJsonValue
 ): Promise<boolean> {
   // Always store join/leave events
   if (ALWAYS_STORE_EVENTS.includes(eventType)) {
@@ -29,7 +29,7 @@ async function isSameState(
   }
 
   // Find the most recent event for this user/session with the same eventType and roomId
-  const where: Prisma.AnalyticsWhereInput = {
+  const where: typeof prisma.AnalyticsWhereInput = {
     eventType,
     sessionId,
     ...(roomId ? { roomId } : { roomId: null }),
@@ -95,8 +95,8 @@ export const trackEvent = async (req: AuthRequest, res: Response) => {
     }
 
     const browserInfo = extractBrowserInfo(req, clientBrowserInfo);
-    const metadataValue = (metadata || {}) as Prisma.InputJsonValue;
-    const browserInfoValue = browserInfo as unknown as Prisma.InputJsonValue;
+    const metadataValue = (metadata || {}) as typeof prisma.InputJsonValue;
+    const browserInfoValue = browserInfo as unknown as typeof prisma.InputJsonValue;
 
     // Check if state is the same as previous (skip if same, unless it's join/leave)
     const sameState = await isSameState(
@@ -210,9 +210,9 @@ export const trackBatch = async (req: AuthRequest, res: Response) => {
         const metadataValue = {
           ...(event.metadata || {}),
           retryCount: event.retryCount || 0,
-        } as Prisma.InputJsonValue;
+        } as typeof prisma.InputJsonValue;
 
-        const browserInfoValue = browserInfo as Prisma.InputJsonValue;
+        const browserInfoValue = browserInfo as typeof prisma.InputJsonValue;
 
         // Check if state is the same (always store join/leave events)
         const sameState = await isSameState(
@@ -307,7 +307,7 @@ export const getAnalytics = async (req: AuthRequest, res: Response) => {
 
     const { roomName, startDate, endDate, eventType } = req.query;
 
-    const where: Prisma.AnalyticsWhereInput = {};
+    const where: typeof prisma.AnalyticsWhereInput = {};
     if (roomName) {
       const room = await prisma.room.findFirst({
         where: { name: roomName as string },

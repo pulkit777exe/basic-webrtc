@@ -14,12 +14,15 @@ import {
   Keyboard,
   X,
 } from "lucide-react";
-import { useLocalParticipant, useRoomContext } from "@livekit/components-react";
 import { toast } from "sonner";
 import { analyticsApi } from "../../services/analyticsApi";
 import { getBrowserInfo, getSessionId } from "../../utils/browserInfo";
 import { useAtom } from "jotai";
 import { roomAtom } from "../../store/atoms";
+import { useWebRTCContext } from "../../contexts/useWebRTCContext";
+import { Button } from "../ui/button";
+import { Card } from "../ui/card";
+import { cn } from "@/lib/utils";
 
 const ControlButton: React.FC<{
   icon: React.ReactNode;
@@ -27,35 +30,26 @@ const ControlButton: React.FC<{
   active?: boolean;
 }> = ({ icon, onClick, active = true }) => {
   return (
-    <button
+    <Button
       onClick={onClick}
-      className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 ${
-        active
-          ? "bg-neutral-100 hover:bg-neutral-200 text-neutral-700 hover:scale-110 active:scale-95"
-          : "bg-red-100 hover:bg-red-200 text-red-600 hover:scale-110 active:scale-95"
-      }`}
+      variant={active ? "secondary" : "destructive"}
+      size="icon"
+      className={cn(
+        "rounded-full transition-all duration-200",
+        active && "hover:scale-110 active:scale-95"
+      )}
     >
       {icon}
-    </button>
+    </Button>
   );
 };
 
 export const ControlBar: React.FC = () => {
-  const { localParticipant } = useLocalParticipant();
-  const [isMuted, setIsMuted] = React.useState(false);
-  const [isVideoOff, setIsVideoOff] = React.useState(false);
+  const { isAudioMuted, isVideoMuted, muteAudio, muteVideo, disconnect } = useWebRTCContext();
   const [isSpeakerOff, setIsSpeakerOff] = React.useState(false);
   const [isToggling, setIsToggling] = React.useState(false);
   const [showShortcuts, setShowShortcuts] = React.useState(false);
-  const room = useRoomContext();
   const [roomName] = useAtom(roomAtom);
-
-  React.useEffect(() => {
-    if (localParticipant) {
-      setIsMuted(!localParticipant.isMicrophoneEnabled);
-      setIsVideoOff(!localParticipant.isCameraEnabled);
-    }
-  }, [localParticipant, localParticipant?.isMicrophoneEnabled, localParticipant?.isCameraEnabled]);
 
   const trackMediaEvent = async (eventType: "audio_enabled" | "audio_disabled" | "video_enabled" | "video_disabled") => {
     if (roomName) {
@@ -70,13 +64,12 @@ export const ControlBar: React.FC = () => {
   };
 
   const toggleMute = async () => {
-    if (!localParticipant || isToggling) return;
+    if (isToggling) return;
 
     setIsToggling(true);
     try {
-      const newState = !isMuted;
-      await localParticipant.setMicrophoneEnabled(newState);
-      setIsMuted(!newState);
+      const newState = !isAudioMuted;
+      muteAudio(newState);
       
       // Track analytics
       await trackMediaEvent(newState ? "audio_enabled" : "audio_disabled");
@@ -89,13 +82,12 @@ export const ControlBar: React.FC = () => {
   };
 
   const toggleVideo = async () => {
-    if (!localParticipant || isToggling) return;
+    if (isToggling) return;
 
     setIsToggling(true);
     try {
-      const newState = !isVideoOff;
-      await localParticipant.setCameraEnabled(newState);
-      setIsVideoOff(!newState);
+      const newState = !isVideoMuted;
+      muteVideo(newState);
       
       // Track analytics
       await trackMediaEvent(newState ? "video_enabled" : "video_disabled");
@@ -112,7 +104,7 @@ export const ControlBar: React.FC = () => {
   };
 
   const handleLeave = () => {
-    room?.disconnect();
+    disconnect();
   };
 
   // Keyboard shortcuts
@@ -134,11 +126,11 @@ export const ControlBar: React.FC = () => {
     window.addEventListener("keydown", handleKeyPress);
     return () => window.removeEventListener("keydown", handleKeyPress);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMuted, isVideoOff]);
+  }, [isAudioMuted, isVideoMuted]);
 
   return (
     <>
-      <div className="h-20 bg-white border-t border-neutral-200 flex items-center justify-center px-6 relative">
+      <div className="h-20 bg-card border-t border-border flex items-center justify-center px-6 relative">
         <div className="flex items-center gap-2">
         <ControlButton
           icon={isSpeakerOff ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
@@ -146,62 +138,67 @@ export const ControlBar: React.FC = () => {
           active={!isSpeakerOff}
         />
         <ControlButton
-          icon={isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+          icon={isAudioMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           onClick={toggleMute}
-          active={!isMuted}
+          active={!isAudioMuted}
         />
         <ControlButton
-          icon={isVideoOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
+          icon={isVideoMuted ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
           onClick={toggleVideo}
-          active={!isVideoOff}
+          active={!isVideoMuted}
         />
-        <button
+        <Button
           onClick={handleLeave}
-          className="w-12 h-12 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center transition-all duration-200 hover:scale-110 active:scale-95"
+          variant="destructive"
+          size="icon"
+          className="rounded-full hover:scale-110 active:scale-95"
         >
-          <PhoneOff className="w-5 h-5 text-white" />
-        </button>
+          <PhoneOff className="w-5 h-5" />
+        </Button>
         <ControlButton icon={<MessageSquare className="w-5 h-5" />} />
         <ControlButton icon={<Users className="w-5 h-5" />} />
         <ControlButton icon={<Grid3x3 className="w-5 h-5" />} />
         <ControlButton icon={<MoreVertical className="w-5 h-5" />} />
-        <button
+        <Button
           onClick={() => setShowShortcuts(!showShortcuts)}
-          className="w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 hover:bg-neutral-100 hover:scale-110 active:scale-95 text-neutral-600"
+          variant="ghost"
+          size="icon"
+          className="rounded-full hover:scale-110 active:scale-95"
           title="Keyboard Shortcuts"
         >
           <Keyboard className="w-5 h-5" />
-        </button>
+        </Button>
       </div>
         {showShortcuts && (
-          <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-4 bg-white rounded-lg shadow-xl border border-neutral-200 p-4 w-64 z-50 animate-scale-in">
+          <Card className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-4 p-4 w-64 z-50 animate-scale-in">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-neutral-900">Keyboard Shortcuts</h3>
-              <button
+              <h3 className="text-sm font-semibold text-foreground">Keyboard Shortcuts</h3>
+              <Button
                 onClick={() => setShowShortcuts(false)}
-                className="p-1 hover:bg-neutral-100 rounded transition-colors"
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
               >
-                <X className="w-4 h-4 text-neutral-600" />
-              </button>
+                <X className="w-4 h-4" />
+              </Button>
             </div>
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-between">
-                <span className="text-neutral-600">Toggle Mute</span>
-                <kbd className="px-2 py-1 bg-neutral-100 rounded text-neutral-900 font-mono">M</kbd>
+                <span className="text-muted-foreground">Toggle Mute</span>
+                <kbd className="px-2 py-1 bg-secondary rounded text-foreground font-mono">M</kbd>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-neutral-600">Toggle Video</span>
-                <kbd className="px-2 py-1 bg-neutral-100 rounded text-neutral-900 font-mono">V</kbd>
+                <span className="text-muted-foreground">Toggle Video</span>
+                <kbd className="px-2 py-1 bg-secondary rounded text-foreground font-mono">V</kbd>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-neutral-600">Close</span>
-                <kbd className="px-2 py-1 bg-neutral-100 rounded text-neutral-900 font-mono">Esc</kbd>
+                <span className="text-muted-foreground">Close</span>
+                <kbd className="px-2 py-1 bg-secondary rounded text-foreground font-mono">Esc</kbd>
               </div>
             </div>
-          </div>
+          </Card>
         )}
       </div>
     </>
   );
 };
-

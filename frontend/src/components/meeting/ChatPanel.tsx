@@ -1,9 +1,12 @@
 import * as React from "react";
 import { List, useListRef } from "react-window";
 import { Send, Paperclip, Smile, Loader2, CheckCheck, AlertCircle, RotateCcw, MessageSquare, Edit2, Trash2, X, Check, Wifi, WifiOff, Clock } from "lucide-react";
-import { useParticipants } from "@livekit/components-react";
 import type { ChatMessage } from "../../types";
 import type { ConnectionStatus } from "../../services/realtimeMessageService";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
+import { Badge } from "../ui/badge";
+import { cn } from "@/lib/utils";
 
 interface ChatPanelProps {
   messages: ChatMessage[];
@@ -80,14 +83,14 @@ const MessageItem = ({ index, style, messages, formatTime, onRetryMessage, onEdi
 
   return (
     <div style={style}>
-      <div className={`flex gap-3 ${msg.isOwn ? "flex-row-reverse" : ""} group px-4 py-2`}>
-        <div className="w-8 h-8 rounded-full bg-linear-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-medium shrink-0">
+      <div className={cn("flex gap-3", msg.isOwn ? "flex-row-reverse" : "", "group px-4 py-2")}>
+        <div className="w-8 h-8 rounded-full bg-foreground flex items-center justify-center text-background text-xs font-medium shrink-0">
           {msg.sender.charAt(0).toUpperCase()}
         </div>
-        <div className={`flex-1 ${msg.isOwn ? "items-end flex flex-col" : ""}`}>
+        <div className={cn("flex-1", msg.isOwn ? "items-end flex flex-col" : "")}>
           {isEditing ? (
             <div className="flex items-center gap-2 w-full">
-              <input
+              <Input
                 ref={editInputRef}
                 type="text"
                 value={editContent}
@@ -100,40 +103,42 @@ const MessageItem = ({ index, style, messages, formatTime, onRetryMessage, onEdi
                     setEditContent(msg.message);
                   }
                 }}
-                className="flex-1 px-3 py-2 bg-white border border-blue-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="flex-1"
               />
-              <button
+              <Button
                 onClick={handleEdit}
-                className="p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                size="icon"
                 title="Save"
               >
                 <Check className="w-4 h-4" />
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={() => {
                   setIsEditing(false);
                   setEditContent(msg.message);
                 }}
-                className="p-2 bg-neutral-200 hover:bg-neutral-300 rounded-lg transition-colors"
+                variant="outline"
+                size="icon"
                 title="Cancel"
               >
                 <X className="w-4 h-4" />
-              </button>
+              </Button>
             </div>
           ) : (
             <>
               <div
-                className={`inline-block px-4 py-2 rounded-lg ${
+                className={cn(
+                  "inline-block px-4 py-2 rounded-lg",
                   msg.isOwn
-                    ? "bg-blue-600 text-white"
-                    : "bg-neutral-100 text-neutral-900"
-                }`}
+                    ? "bg-foreground text-background"
+                    : "bg-muted text-foreground"
+                )}
               >
                 <p className="text-sm">{msg.message}</p>
               </div>
-              <div className={`flex items-center gap-2 mt-1 ${msg.isOwn ? "flex-row-reverse" : ""}`}>
+              <div className={cn("flex items-center gap-2 mt-1", msg.isOwn ? "flex-row-reverse" : "")}>
                 <p 
-                  className="text-xs text-neutral-500 group-hover:text-neutral-700 transition-colors"
+                  className="text-xs text-muted-foreground group-hover:text-foreground transition-colors"
                   title={msg.timestamp.toLocaleString()}
                 >
                   {formatTime(msg.timestamp)}
@@ -141,44 +146,50 @@ const MessageItem = ({ index, style, messages, formatTime, onRetryMessage, onEdi
                 {msg.isOwn && (
                   <div className="flex items-center gap-1">
                     {status === "sending" && (
-                      <Loader2 className="w-3 h-3 text-neutral-400 animate-spin" />
+                      <Loader2 className="w-3 h-3 text-muted-foreground animate-spin" />
                     )}
                     {status === "sent" && (
-                      <CheckCheck className="w-3 h-3 text-blue-500" />
+                      <CheckCheck className="w-3 h-3 text-foreground" />
                     )}
                     {status === "failed" && (
                       <div className="flex items-center gap-1">
-                        <AlertCircle className="w-3 h-3 text-red-500" />
+                        <AlertCircle className="w-3 h-3 text-destructive" />
                         {onRetryMessage && (
-                          <button
+                          <Button
                             onClick={() => onRetryMessage(msg.id, msg.message)}
-                            className="p-1 hover:bg-red-50 rounded transition-colors"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
                             title="Retry sending message"
                           >
-                            <RotateCcw className="w-3 h-3 text-red-500" />
-                          </button>
+                            <RotateCcw className="w-3 h-3 text-destructive" />
+                          </Button>
                         )}
                       </div>
                     )}
                     {status === "sent" && (
                       <>
                         {onEditMessage && (
-                          <button
+                          <Button
                             onClick={() => setIsEditing(true)}
-                            className="p-1 hover:bg-neutral-100 rounded transition-colors opacity-0 group-hover:opacity-100"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 opacity-0 group-hover:opacity-100"
                             title="Edit message"
                           >
-                            <Edit2 className="w-3 h-3 text-neutral-500" />
-                          </button>
+                            <Edit2 className="w-3 h-3" />
+                          </Button>
                         )}
                         {onDeleteMessage && (
-                          <button
+                          <Button
                             onClick={handleDelete}
-                            className="p-1 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive"
                             title="Delete message"
                           >
-                            <Trash2 className="w-3 h-3 text-red-500" />
-                          </button>
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
                         )}
                       </>
                     )}
@@ -209,7 +220,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   pendingCount = 0,
   onRetryLoad,
 }) => {
-  const participants = useParticipants();
+  // Participants are no longer displayed in chat panel (moved to VideoConference)
+  // const { participants } = useWebRTCContext();
   const listRef = useListRef(null);
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -248,15 +260,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const getConnectionStatusColor = () => {
     switch (connectionStatus) {
       case "connected":
-        return "text-green-600";
+        return "text-foreground";
       case "connecting":
       case "reconnecting":
-        return "text-yellow-600";
+        return "text-muted-foreground";
       case "disconnected":
       case "offline":
-        return "text-red-600";
+        return "text-destructive";
       default:
-        return "text-neutral-600";
+        return "text-muted-foreground";
     }
   };
 
@@ -290,61 +302,42 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
   return (
     <>
-      {/* Participant Video Grid */}
-      <div className="p-4 border-b border-neutral-200 overflow-y-auto">
-        <div className="space-y-2">
-          {participants.slice(0, 4).map((participant) => (
-            <div
-              key={participant.identity}
-              className="relative aspect-video bg-neutral-100 rounded-lg overflow-hidden"
-            >
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="w-12 h-12 rounded-full bg-linear-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-medium">
-                  {participant.name?.charAt(0).toUpperCase() || "P"}
-                </div>
-              </div>
-              <div className="absolute bottom-2 left-2 text-xs text-white bg-black/50 px-2 py-1 rounded">
-                {participant.name}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
       {/* Connection Status & Offline Queue */}
-      <div className="px-4 py-2 border-b border-neutral-200 bg-neutral-50 flex items-center justify-between gap-2">
+      <div className="px-4 py-2 border-b border-border bg-muted flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           {connectionStatus === "offline" || isOffline ? (
-            <WifiOff className={`w-4 h-4 ${getConnectionStatusColor()}`} />
+            <WifiOff className={cn("w-4 h-4", getConnectionStatusColor())} />
           ) : (
-            <Wifi className={`w-4 h-4 ${getConnectionStatusColor()}`} />
+            <Wifi className={cn("w-4 h-4", getConnectionStatusColor())} />
           )}
-          <span className={`text-xs font-medium ${getConnectionStatusColor()}`}>
+          <span className={cn("text-xs font-medium", getConnectionStatusColor())}>
             {getConnectionStatusText()}
           </span>
         </div>
         {pendingCount > 0 && (
-          <div className="flex items-center gap-1 text-xs text-yellow-600">
-            <Clock className="w-3 h-3" />
-            <span>{pendingCount} pending</span>
-          </div>
+          <Badge variant="outline" className="text-xs">
+            <Clock className="w-3 h-3 mr-1" />
+            {pendingCount} pending
+          </Badge>
         )}
       </div>
 
       {/* Error Banner */}
       {error && (
-        <div className="px-4 py-2 bg-yellow-50 border-b border-yellow-200 flex items-center justify-between gap-2">
+        <div className="px-4 py-2 bg-destructive/10 border-b border-destructive flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <AlertCircle className="w-4 h-4 text-yellow-600 shrink-0" />
-            <p className="text-xs text-yellow-800 truncate">{error}</p>
+            <AlertCircle className="w-4 h-4 text-destructive shrink-0" />
+            <p className="text-xs text-destructive truncate">{error}</p>
           </div>
           {onRetryLoad && (
-            <button
+            <Button
               onClick={onRetryLoad}
-              className="text-xs text-yellow-800 hover:text-yellow-900 underline shrink-0"
+              variant="ghost"
+              size="sm"
+              className="text-xs shrink-0"
             >
               Retry
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -356,10 +349,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             <div className="space-y-4 w-full px-4">
               {[1, 2, 3].map((i) => (
                 <div key={i} className="flex gap-3 animate-pulse">
-                  <div className="w-8 h-8 rounded-full bg-neutral-200 shrink-0" />
+                  <div className="w-8 h-8 rounded-full bg-muted shrink-0" />
                   <div className="flex-1 space-y-2">
-                    <div className="h-4 bg-neutral-200 rounded w-1/4" />
-                    <div className="h-12 bg-neutral-200 rounded w-3/4" />
+                    <div className="h-4 bg-muted rounded w-1/4" />
+                    <div className="h-12 bg-muted rounded w-3/4" />
                   </div>
                 </div>
               ))}
@@ -367,9 +360,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </div>
         ) : messages.length === 0 ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-center py-8">
-            <MessageSquare className="w-12 h-12 text-neutral-300 mb-3" />
-            <p className="text-sm font-medium text-neutral-600">No messages yet</p>
-            <p className="text-xs text-neutral-400 mt-1">Start the conversation!</p>
+            <MessageSquare className="w-12 h-12 text-muted-foreground mb-3" />
+            <p className="text-sm font-medium text-foreground">No messages yet</p>
+            <p className="text-xs text-muted-foreground mt-1">Start the conversation!</p>
           </div>
         ) : (
           <List
@@ -387,34 +380,35 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       </div>
 
       {/* Message Input */}
-      <div className="p-4 border-t border-neutral-200">
+      <div className="p-4 border-t border-border">
         <div className="flex items-center gap-2">
-          <button className="p-2 hover:bg-neutral-100 rounded-lg transition-all duration-200 hover:scale-110 active:scale-95">
-            <Paperclip className="w-5 h-5 text-neutral-600" />
-          </button>
-          <input
+          <Button variant="ghost" size="icon" className="rounded-lg">
+            <Paperclip className="w-5 h-5" />
+          </Button>
+          <Input
             type="text"
             value={newMessage}
             onChange={(e) => onMessageChange(e.target.value)}
-            onKeyPress={(e) => e.key === "Enter" && !isOffline && onSendMessage()}
+            onKeyDown={(e) => e.key === "Enter" && !isOffline && onSendMessage()}
             placeholder={isOffline ? "Offline - messages queued..." : "Type a message..."}
             disabled={isOffline}
-            className="flex-1 px-4 py-2 bg-neutral-50 border border-neutral-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+            className="flex-1"
           />
-          <button className="p-2 hover:bg-neutral-100 rounded-lg transition-all duration-200 hover:scale-110 active:scale-95">
-            <Smile className="w-5 h-5 text-neutral-600" />
-          </button>
-          <button
+          <Button variant="ghost" size="icon" className="rounded-lg">
+            <Smile className="w-5 h-5" />
+          </Button>
+          <Button
             onClick={onSendMessage}
             disabled={isSending || !newMessage.trim() || isOffline}
-            className="p-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-all duration-200 hover:scale-110 active:scale-95"
+            size="icon"
+            className="rounded-lg"
           >
             {isSending ? (
-              <Loader2 className="w-5 h-5 text-white animate-spin" />
+              <Loader2 className="w-5 h-5 animate-spin" />
             ) : (
-              <Send className="w-5 h-5 text-white" />
+              <Send className="w-5 h-5" />
             )}
-          </button>
+          </Button>
         </div>
       </div>
     </>

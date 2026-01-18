@@ -53,25 +53,25 @@ export const LoginForm: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-black p-4">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-background p-4">
       <div className="w-full max-w-md space-y-8">
         <div className="text-center space-y-2">
           <div className="flex justify-center">
-            <div className="p-3 bg-white/10 rounded-xl">
-              <Lock className="w-10 h-10 text-white" />
+            <div className="p-3 bg-foreground/10 rounded-xl">
+              <Lock className="w-10 h-10 text-foreground" />
             </div>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight text-white">
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">
             {isLogin ? "Welcome Back" : "Create Account"}
           </h1>
-          <p className="text-neutral-400">
+          <p className="text-muted-foreground">
             {isLogin ? "Sign in to continue" : "Sign up to get started"}
           </p>
         </div>
 
         <form
           onSubmit={handleSubmit}
-          className="space-y-6 bg-neutral-900 p-8 rounded-2xl border border-neutral-800"
+          className="space-y-6 bg-card p-8 rounded-2xl border border-border shadow-lg"
         >
           <div className="space-y-4">
             <Input
@@ -100,7 +100,7 @@ export const LoginForm: React.FC = () => {
             />
           </div>
 
-          <Button type="submit" className="w-full">
+          <Button type="submit" className="w-full bg-black text-white hover:bg-gray-700 cursor-pointer">
             {isLogin ? "Sign In" : "Sign Up"}
           </Button>
 
@@ -108,7 +108,7 @@ export const LoginForm: React.FC = () => {
             <button
               type="button"
               onClick={() => setIsLogin(!isLogin)}
-              className="text-sm text-neutral-400 hover:text-white transition-colors"
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
               {isLogin
                 ? "Don't have an account? Sign up"

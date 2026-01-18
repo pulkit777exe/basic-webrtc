@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { getToken } from "../controllers/roomController";
 
 const router = Router();
 
-router.post("/getToken", getToken);
+// LiveKit token endpoint removed
+// Room management is now handled by webrtcRoutes
 
 export default router;

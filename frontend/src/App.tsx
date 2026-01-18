@@ -1,20 +1,18 @@
 import { useAtom } from "jotai";
 import { useEffect, useCallback, useState } from "react";
-import * as React from "react";
-import { userAtom, tokenAtom, serverUrlAtom, roomAtom } from "./store/atoms";
+import { userAtom, roomAtom } from "./store/atoms";
 import { LoginForm } from "./components/LoginForm";
 import { LandingPage } from "./components/LandingPage";
 import { VideoRoom } from "./components/VideoRoom";
 import { Toaster, toast } from "sonner";
-import { authApi, roomApi } from "./services/api";
+import { authApi, webrtcApi } from "./services/api";
 import { getRoomFromUrl, clearRoomFromUrl } from "./utils/inviteLink";
 import { TOAST_POSITION, TOAST_THEME } from "./constants";
 
 function App() {
   const [user, setUser] = useAtom(userAtom);
-  const [token, setToken] = useAtom(tokenAtom);
-  const [serverUrl, setServerUrl] = useAtom(serverUrlAtom);
   const [roomName, setRoomName] = useAtom(roomAtom);
+  const [wsUrl, setWsUrl] = useState<string | null>(null);
   const [isJoining, setIsJoining] = useState(false);
 
   const handleJoin = useCallback(
@@ -23,12 +21,11 @@ function App() {
 
       setIsJoining(true);
       try {
-        const data = await roomApi.getToken(roomName, user.name);
-        setToken(data.token);
-        setServerUrl(data.url);
+        const data = await webrtcApi.joinRoom(roomName);
+        setWsUrl(data.wsUrl);
         setRoomName(roomName);
       } catch (error) {
-        console.error("Failed to get token", error);
+        console.error("Failed to join room", error);
         const errorMessage = error instanceof Error ? error.message : "Failed to join room";
         toast.error(errorMessage, {
           action: {
@@ -40,7 +37,7 @@ function App() {
         setIsJoining(false);
       }
     },
-    [user, setToken, setServerUrl, setRoomName, isJoining]
+    [user, setRoomName, isJoining]
   );
 
   useEffect(() => {
@@ -55,15 +52,14 @@ function App() {
 
   useEffect(() => {
     const roomParam = getRoomFromUrl();
-    if (roomParam && user && !token) {
+    if (roomParam && user && !wsUrl) {
       handleJoin(roomParam);
       clearRoomFromUrl();
     }
-  }, [user, token, handleJoin]);
+  }, [user, wsUrl, handleJoin]);
 
   const handleDisconnected = () => {
-    setToken(null);
-    setServerUrl(null);
+    setWsUrl(null);
     setRoomName(null);
   };
 
@@ -75,16 +71,15 @@ function App() {
           <div className="page-enter-active animate-fade-in">
             <LoginForm />
           </div>
-        ) : !token || !serverUrl ? (
+        ) : !wsUrl || !roomName ? (
           <div className="page-enter-active animate-fade-in">
             <LandingPage onJoin={handleJoin} isJoining={isJoining} />
           </div>
         ) : (
           <div className="page-enter-active animate-fade-in">
             <VideoRoom
-              token={token}
-              serverUrl={serverUrl}
-              roomName={roomName || ""}
+              wsUrl={wsUrl}
+              roomName={roomName}
               onDisconnected={handleDisconnected}
             />
           </div>
