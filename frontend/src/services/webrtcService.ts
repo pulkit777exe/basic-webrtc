@@ -3,8 +3,16 @@ import type {
   ServerMessage,
   Participant,
   RTCIceServer,
+  SdpData,
+  IceCandidateData,
 } from "../types/webrtc";
-import { ConnectionState } from "../types/webrtc";
+import {
+  ConnectionState,
+  toSdpData,
+  fromSdpData,
+  toIceCandidateData,
+  fromIceCandidateData,
+} from "../types/webrtc";
 
 export interface WebRTCServiceCallbacks {
   onConnectionStateChange?: (state: ConnectionState) => void;
@@ -34,14 +42,14 @@ export class WebRTCService {
     this.callbacks = callbacks;
   }
 
-  /**
-   * Initialize ICE servers from backend
-   */
   async initializeIceServers(): Promise<void> {
     try {
-      const response = await fetch(`${import.meta.env.VITE_APP_BACKEND_URL}/api/webrtc/ice-servers`, {
-        credentials: "include",
-      });
+      const response = await fetch(
+        `${import.meta.env.VITE_APP_BACKEND_URL}/api/webrtc/ice-servers`,
+        {
+          credentials: "include",
+        },
+      );
       if (!response.ok) {
         throw new Error("Failed to get ICE servers");
       }
@@ -49,17 +57,13 @@ export class WebRTCService {
       this.iceServers = data.iceServers || [];
     } catch (error) {
       console.error("Failed to initialize ICE servers:", error);
-      // Fallback to default STUN
       this.iceServers = [{ urls: "stun:stun.l.google.com:19302" }];
     }
   }
 
-  /**
-   * Get local media stream
-   */
   async getLocalStream(
     audio: boolean = true,
-    video: boolean = true
+    video: boolean = true,
   ): Promise<MediaStream> {
     try {
       this.localStream = await navigator.mediaDevices.getUserMedia({
@@ -73,9 +77,6 @@ export class WebRTCService {
     }
   }
 
-  /**
-   * Stop local media stream
-   */
   stopLocalStream(): void {
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => track.stop());
@@ -83,9 +84,6 @@ export class WebRTCService {
     }
   }
 
-  /**
-   * Connect to WebSocket signaling server
-   */
   async connect(wsUrl: string, token: string): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       return;
@@ -131,9 +129,6 @@ export class WebRTCService {
     });
   }
 
-  /**
-   * Handle reconnection
-   */
   private async handleReconnect(wsUrl: string, token: string): Promise<void> {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.error("Max reconnection attempts reached");
@@ -145,7 +140,7 @@ export class WebRTCService {
     this.callbacks.onConnectionStateChange?.(this.connectionState);
 
     await new Promise((resolve) =>
-      setTimeout(resolve, this.reconnectDelay * this.reconnectAttempts)
+      setTimeout(resolve, this.reconnectDelay * this.reconnectAttempts),
     );
 
     try {
@@ -158,10 +153,10 @@ export class WebRTCService {
     }
   }
 
-  /**
-   * Join a room
-   */
-  async joinRoom(roomName: string, metadata?: Record<string, unknown>): Promise<void> {
+  async joinRoom(
+    roomName: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
     this.roomName = roomName;
     this.sendMessage({
       type: "join-room",
@@ -170,9 +165,6 @@ export class WebRTCService {
     });
   }
 
-  /**
-   * Leave current room
-   */
   async leaveRoom(): Promise<void> {
     if (this.roomName) {
       this.sendMessage({
@@ -181,7 +173,6 @@ export class WebRTCService {
       });
     }
 
-    // Close all peer connections
     for (const peerId of this.peerConnections.keys()) {
       this.closePeerConnection(peerId);
     }
@@ -191,33 +182,27 @@ export class WebRTCService {
     this.roomName = null;
   }
 
-  /**
-   * Create peer connection for a peer
-   */
   private createPeerConnection(peerId: string): RTCPeerConnection {
     const pc = new RTCPeerConnection({
       iceServers: this.iceServers,
     });
 
-    // Add local stream tracks
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => {
         pc.addTrack(track, this.localStream!);
       });
     }
 
-    // Handle ICE candidates
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         this.sendMessage({
           type: "ice-candidate",
           to: peerId,
-          candidate: event.candidate.toJSON(),
+          candidate: toIceCandidateData(event.candidate),
         });
       }
     };
 
-    // Handle remote stream
     pc.ontrack = (event) => {
       const stream = event.streams[0];
       if (stream) {
@@ -226,9 +211,11 @@ export class WebRTCService {
       }
     };
 
-    // Handle connection state changes
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
+      if (
+        pc.connectionState === "failed" ||
+        pc.connectionState === "disconnected"
+      ) {
         this.closePeerConnection(peerId);
       }
     };
@@ -237,9 +224,6 @@ export class WebRTCService {
     return pc;
   }
 
-  /**
-   * Close peer connection
-   */
   private closePeerConnection(peerId: string): void {
     const pc = this.peerConnections.get(peerId);
     if (pc) {
@@ -250,15 +234,13 @@ export class WebRTCService {
     }
   }
 
-  /**
-   * Handle server messages
-   */
   private async handleServerMessage(message: ServerMessage): Promise<void> {
     switch (message.type) {
       case "room-joined":
-        this.socketId = message.participants.find(
-          (p) => p.userId === this.participants.get(p.socketId)?.userId
-        )?.socketId || null;
+        this.socketId =
+          message.participants.find(
+            (p) => p.userId === this.participants.get(p.socketId)?.userId,
+          )?.socketId || null;
         message.participants.forEach((p) => {
           this.participants.set(p.socketId, p);
           if (p.socketId !== this.socketId) {
@@ -305,14 +287,10 @@ export class WebRTCService {
         break;
 
       case "pong":
-        // Heartbeat response
         break;
     }
   }
 
-  /**
-   * Create peer connection and send offer
-   */
   private async createPeerConnectionForPeer(peerId: string): Promise<void> {
     if (this.peerConnections.has(peerId)) {
       return;
@@ -327,7 +305,7 @@ export class WebRTCService {
       this.sendMessage({
         type: "offer",
         to: peerId,
-        sdp: offer,
+        sdp: toSdpData(offer),
       });
     } catch (error) {
       console.error("Failed to create offer:", error);
@@ -335,24 +313,23 @@ export class WebRTCService {
     }
   }
 
-  /**
-   * Handle incoming offer
-   */
-  private async handleOffer(from: string, sdp: RTCSessionDescriptionInit): Promise<void> {
+  private async handleOffer(from: string, sdp: SdpData): Promise<void> {
     let pc = this.peerConnections.get(from);
     if (!pc) {
       pc = this.createPeerConnection(from);
     }
 
     try {
-      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      await pc.setRemoteDescription(
+        new RTCSessionDescription(fromSdpData(sdp)),
+      );
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
       this.sendMessage({
         type: "answer",
         to: from,
-        sdp: answer,
+        sdp: toSdpData(answer),
       });
     } catch (error) {
       console.error("Failed to handle offer:", error);
@@ -360,10 +337,7 @@ export class WebRTCService {
     }
   }
 
-  /**
-   * Handle incoming answer
-   */
-  private async handleAnswer(from: string, sdp: RTCSessionDescriptionInit): Promise<void> {
+  private async handleAnswer(from: string, sdp: SdpData): Promise<void> {
     const pc = this.peerConnections.get(from);
     if (!pc) {
       console.error("No peer connection for answer from:", from);
@@ -371,19 +345,18 @@ export class WebRTCService {
     }
 
     try {
-      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      await pc.setRemoteDescription(
+        new RTCSessionDescription(fromSdpData(sdp)),
+      );
     } catch (error) {
       console.error("Failed to handle answer:", error);
       this.closePeerConnection(from);
     }
   }
 
-  /**
-   * Handle ICE candidate
-   */
   private async handleIceCandidate(
     from: string,
-    candidate: RTCIceCandidateInit
+    candidate: IceCandidateData,
   ): Promise<void> {
     const pc = this.peerConnections.get(from);
     if (!pc) {
@@ -392,15 +365,14 @@ export class WebRTCService {
     }
 
     try {
-      await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      await pc.addIceCandidate(
+        new RTCIceCandidate(fromIceCandidateData(candidate)),
+      );
     } catch (error) {
       console.error("Failed to handle ICE candidate:", error);
     }
   }
 
-  /**
-   * Send message to server
-   */
   private sendMessage(message: ClientMessage): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
@@ -409,9 +381,6 @@ export class WebRTCService {
     }
   }
 
-  /**
-   * Mute/unmute audio
-   */
   muteAudio(muted: boolean): void {
     if (this.localStream) {
       this.localStream.getAudioTracks().forEach((track) => {
@@ -421,9 +390,6 @@ export class WebRTCService {
     this.sendMessage({ type: "mute-audio", muted });
   }
 
-  /**
-   * Mute/unmute video
-   */
   muteVideo(muted: boolean): void {
     if (this.localStream) {
       this.localStream.getVideoTracks().forEach((track) => {
@@ -433,37 +399,22 @@ export class WebRTCService {
     this.sendMessage({ type: "mute-video", muted });
   }
 
-  /**
-   * Get local stream
-   */
   getLocalMediaStream(): MediaStream | null {
     return this.localStream;
   }
 
-  /**
-   * Get remote stream for a peer
-   */
   getRemoteStream(peerId: string): MediaStream | undefined {
     return this.remoteStreams.get(peerId);
   }
 
-  /**
-   * Get all participants
-   */
   getParticipants(): Participant[] {
     return Array.from(this.participants.values());
   }
 
-  /**
-   * Get connection state
-   */
   getConnectionState(): ConnectionState {
     return this.connectionState;
   }
 
-  /**
-   * Disconnect
-   */
   disconnect(): void {
     this.leaveRoom();
     this.stopLocalStream();

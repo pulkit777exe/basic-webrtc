@@ -164,11 +164,34 @@ export type ServerMessage =
   | ErrorMessage
   | PongMessage;
 
+export interface RedisPeerJoinedEvent {
+  type: "peer-joined";
+  socketId: string;
+  roomName: string;
+}
+
+export interface RedisPeerLeftEvent {
+  type: "peer-left";
+  socketId: string;
+  roomName: string;
+}
+
+export type RedisRoomEvent = RedisPeerJoinedEvent | RedisPeerLeftEvent;
+
+export interface RedisSignalingMessage {
+  type: "offer" | "answer" | "ice-candidate";
+  from: string;
+  to: string;
+  sdp?: SdpData;
+  candidate?: IceCandidateData;
+}
+
 export const isJoinRoomMessage = (msg: ClientMessage): msg is JoinRoomMessage =>
   msg.type === "join-room";
 
-export const isLeaveRoomMessage = (msg: ClientMessage): msg is LeaveRoomMessage =>
-  msg.type === "leave-room";
+export const isLeaveRoomMessage = (
+  msg: ClientMessage,
+): msg is LeaveRoomMessage => msg.type === "leave-room";
 
 export const isOfferMessage = (msg: ClientMessage): msg is OfferMessage =>
   msg.type === "offer";
@@ -176,17 +199,21 @@ export const isOfferMessage = (msg: ClientMessage): msg is OfferMessage =>
 export const isAnswerMessage = (msg: ClientMessage): msg is AnswerMessage =>
   msg.type === "answer";
 
-export const isIceCandidateMessage = (msg: ClientMessage): msg is IceCandidateMessage =>
-  msg.type === "ice-candidate";
+export const isIceCandidateMessage = (
+  msg: ClientMessage,
+): msg is IceCandidateMessage => msg.type === "ice-candidate";
 
-export const isMuteAudioMessage = (msg: ClientMessage): msg is MuteAudioMessage =>
-  msg.type === "mute-audio";
+export const isMuteAudioMessage = (
+  msg: ClientMessage,
+): msg is MuteAudioMessage => msg.type === "mute-audio";
 
-export const isMuteVideoMessage = (msg: ClientMessage): msg is MuteVideoMessage =>
-  msg.type === "mute-video";
+export const isMuteVideoMessage = (
+  msg: ClientMessage,
+): msg is MuteVideoMessage => msg.type === "mute-video";
 
-export const isHeartbeatMessage = (msg: ClientMessage): msg is HeartbeatMessage =>
-  msg.type === "heartbeat";
+export const isHeartbeatMessage = (
+  msg: ClientMessage,
+): msg is HeartbeatMessage => msg.type === "heartbeat";
 
 export const validateRoomName = (roomName: string): boolean => {
   return roomName.length >= 1 && roomName.length <= 100;
@@ -196,7 +223,9 @@ export const validateSocketId = (socketId: string): boolean => {
   return socketId.length >= 1 && socketId.length <= 100;
 };
 
-export const validateParticipant = (participant: unknown): participant is Participant => {
+export const validateParticipant = (
+  participant: unknown,
+): participant is Participant => {
   if (!participant || typeof participant !== "object") {
     return false;
   }
