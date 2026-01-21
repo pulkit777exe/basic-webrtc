@@ -9,8 +9,8 @@ import {
   setupHeartbeat,
   initializeConnectionMetadata,
   updateConnectionRoom,
-  ExtendedWebSocket,
   cleanupConnection,
+  ExtendedWebSocket,
 } from "./connectionManager";
 import { validateClientMessage } from "./messageValidator";
 import {
@@ -24,6 +24,7 @@ import {
 } from "./participantManager";
 import {
   publishToRoom,
+  publishRoomEvent,
   subscribeToRoomMessages,
   subscribeToRoomEvents,
   unsubscribeFromRoomMessages,
@@ -41,66 +42,138 @@ import {
   MuteVideoMessage,
 } from "../../utils/webrtcTypes";
 
-// Rate limiting per connection
-const messageRateLimit = new Map<string, { count: number; resetTime: number }>();
-const RATE_LIMIT_WINDOW = 60000; // 1 minute
-const RATE_LIMIT_MAX_MESSAGES = 100; // 100 messages per minute
+const RATE_LIMIT_WINDOW = 60000;
+const RATE_LIMIT_MAX_MESSAGES = 100;
 
-function checkRateLimit(socketId: string): boolean {
-  const now = Date.now();
-  const record = messageRateLimit.get(socketId);
+interface RateLimitRecord {
+  count: number;
+  resetTime: number;
+}
 
-  if (!record || record.resetTime < now) {
-    messageRateLimit.set(socketId, {
-      count: 1,
-      resetTime: now + RATE_LIMIT_WINDOW,
-    });
+class RateLimiter {
+  private records = new Map<string, RateLimitRecord>();
+
+  check(socketId: string): boolean {
+    const now = Date.now();
+    const record = this.records.get(socketId);
+
+    if (!record || record.resetTime < now) {
+      this.records.set(socketId, {
+        count: 1,
+        resetTime: now + RATE_LIMIT_WINDOW,
+      });
+      return true;
+    }
+
+    if (record.count >= RATE_LIMIT_MAX_MESSAGES) {
+      return false;
+    }
+
+    record.count++;
     return true;
   }
 
-  if (record.count >= RATE_LIMIT_MAX_MESSAGES) {
-    return false;
+  cleanup(socketId: string): void {
+    this.records.delete(socketId);
   }
 
-  record.count++;
-  messageRateLimit.set(socketId, record);
-  return true;
+  clear(): void {
+    this.records.clear();
+  }
 }
 
-function sendMessage(ws: ExtendedWebSocket, message: ServerMessage): void {
-  if (ws.readyState === WebSocket.OPEN) {
-    try {
-      ws.send(JSON.stringify(message));
-    } catch (error) {
-      console.error("Error sending message:", error);
+class MessageHandler {
+  static send(ws: ExtendedWebSocket, message: ServerMessage): void {
+    if (ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify(message));
+      } catch (error) {
+        console.error("Error sending message:", error);
+      }
     }
   }
+
+  static sendError(ws: ExtendedWebSocket, message: string, code?: string): void {
+    this.send(ws, { type: "error", message, code });
+  }
 }
 
-function sendError(ws: ExtendedWebSocket, message: string, code?: string): void {
-  sendMessage(ws, { type: "error", message, code });
-}
+class RedisEventHandler {
+  constructor(private clients: Map<string, ExtendedWebSocket>) {}
 
-function findPeerSocket(socketId: string): ExtendedWebSocket | null {
-  // This will be set by the WebSocket server's clients
-  // For now, we'll need to track this in the server instance
-  return null; // Will be implemented with server reference
+  handleMessage(roomName: string, message: unknown): void {
+    try {
+      const msg = message as {
+        type: string;
+        from: string;
+        to: string;
+        [key: string]: unknown;
+      };
+
+      if (
+        msg.type === "offer" ||
+        msg.type === "answer" ||
+        msg.type === "ice-candidate"
+      ) {
+        const targetWs = this.clients.get(msg.to);
+        if (targetWs) {
+          MessageHandler.send(targetWs, msg as ServerMessage);
+        }
+      }
+    } catch (error) {
+      console.error("Error handling Redis message:", error);
+    }
+  }
+
+  handleEvent(roomName: string, event: unknown): void {
+    try {
+      const evt = event as {
+        type: string;
+        socketId: string;
+        roomName: string;
+      };
+
+      const participants = getRoomParticipants(roomName);
+      let eventMessage: ServerMessage | null = null;
+
+      if (evt.type === "peer-joined") {
+        const participant = getParticipant(evt.socketId);
+        if (participant) {
+          eventMessage = { type: "peer-joined", peer: participant };
+        }
+      } else if (evt.type === "peer-left") {
+        eventMessage = { type: "peer-left", peerId: evt.socketId };
+      }
+
+      if (eventMessage) {
+        for (const participant of participants) {
+          const ws = this.clients.get(participant.socketId);
+          if (ws) {
+            MessageHandler.send(ws, eventMessage);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error handling Redis event:", error);
+    }
+  }
 }
 
 export class SignalingServer {
   private wss: WebSocketServer;
   private server: Server;
   private clients = new Map<string, ExtendedWebSocket>();
+  private rateLimiter = new RateLimiter();
+  private redisHandler: RedisEventHandler;
 
   constructor(server: Server, path: string = "/ws") {
     this.server = server;
+    this.redisHandler = new RedisEventHandler(this.clients);
+
     this.wss = new WebSocketServer({
       server,
       path,
-      verifyClient: (_info: { origin: string; secure: boolean; req: IncomingMessage }) => {
-        // Authentication happens in upgrade handler
-        return true;
-      },
+      verifyClient: () => true,
     });
 
     this.setupUpgradeHandler();
@@ -128,85 +201,76 @@ export class SignalingServer {
     this.wss.on("connection", (ws: WebSocket, request: IncomingMessage) => {
       const authRequest = request as AuthenticatedRequest;
       const user = authRequest.user!;
-
       const socketId = randomUUID();
       const extendedWs = ws as ExtendedWebSocket;
 
-      // Initialize connection
       initializeConnectionMetadata(extendedWs, user.userId, user.username, socketId);
       setupHeartbeat(extendedWs);
       this.clients.set(socketId, extendedWs);
 
       console.log(`WebSocket connected: ${socketId} (user: ${user.username})`);
 
-      // Handle messages
       extendedWs.on("message", async (data: Buffer) => {
-        try {
-          if (!checkRateLimit(socketId)) {
-            sendError(extendedWs, "Rate limit exceeded", "RATE_LIMIT");
-            return;
-          }
-
-          const message = validateClientMessage(data);
-          await this.handleMessage(extendedWs, socketId, message);
-        } catch (error) {
-          console.error("Error handling message:", error);
-          sendError(
-            extendedWs,
-            error instanceof Error ? error.message : "Invalid message",
-            "INVALID_MESSAGE"
-          );
-        }
+        await this.handleIncomingMessage(extendedWs, socketId, data);
       });
 
-      // Handle close
       extendedWs.on("close", async () => {
         console.log(`WebSocket disconnected: ${socketId}`);
         await this.handleDisconnect(socketId);
       });
 
-      // Handle errors
       extendedWs.on("error", (error) => {
         console.error(`WebSocket error for ${socketId}:`, error);
       });
 
-      // Send pong for heartbeat
       extendedWs.on("pong", () => {
-        sendMessage(extendedWs, { type: "pong" });
+        MessageHandler.send(extendedWs, { type: "pong" });
       });
     });
   }
 
-  private async handleMessage(
+  private async handleIncomingMessage(
+    ws: ExtendedWebSocket,
+    socketId: string,
+    data: Buffer
+  ): Promise<void> {
+    try {
+      if (!this.rateLimiter.check(socketId)) {
+        MessageHandler.sendError(ws, "Rate limit exceeded", "RATE_LIMIT");
+        return;
+      }
+
+      const message = validateClientMessage(data);
+      await this.routeMessage(ws, socketId, message);
+    } catch (error) {
+      console.error("Error handling message:", error);
+      MessageHandler.sendError(
+        ws,
+        error instanceof Error ? error.message : "Invalid message",
+        "INVALID_MESSAGE"
+      );
+    }
+  }
+
+  private async routeMessage(
     ws: ExtendedWebSocket,
     socketId: string,
     message: ClientMessage
   ): Promise<void> {
-    switch (message.type) {
-      case "join-room":
-        await this.handleJoinRoom(ws, socketId, message);
-        break;
-      case "leave-room":
-        await this.handleLeaveRoom(ws, socketId, message);
-        break;
-      case "offer":
-        await this.handleOffer(ws, socketId, message);
-        break;
-      case "answer":
-        await this.handleAnswer(ws, socketId, message);
-        break;
-      case "ice-candidate":
-        await this.handleIceCandidate(ws, socketId, message);
-        break;
-      case "mute-audio":
-        await this.handleMuteAudio(ws, socketId, message);
-        break;
-      case "mute-video":
-        await this.handleMuteVideo(ws, socketId, message);
-        break;
-      case "heartbeat":
-        sendMessage(ws, { type: "pong" });
-        break;
+    const handlers: Record<string, () => Promise<void>> = {
+      "join-room": () => this.handleJoinRoom(ws, socketId, message as JoinRoomMessage),
+      "leave-room": () => this.handleLeaveRoom(ws, socketId, message as LeaveRoomMessage),
+      offer: () => this.handleOffer(ws, socketId, message as OfferMessage),
+      answer: () => this.handleAnswer(ws, socketId, message as AnswerMessage),
+      "ice-candidate": () => this.handleIceCandidate(ws, socketId, message as IceCandidateMessage),
+      "mute-audio": () => this.handleMuteAudio(ws, socketId, message as MuteAudioMessage),
+      "mute-video": () => this.handleMuteVideo(ws, socketId, message as MuteVideoMessage),
+      heartbeat: () => this.handleHeartbeat(ws),
+    };
+
+    const handler = handlers[message.type];
+    if (handler) {
+      await handler();
     }
   }
 
@@ -224,35 +288,40 @@ export class SignalingServer {
     );
 
     if (!result.success) {
-      sendError(ws, result.error || "Failed to join room", "JOIN_FAILED");
+      MessageHandler.sendError(ws, result.error || "Failed to join room", "JOIN_FAILED");
       return;
     }
 
     updateConnectionRoom(ws, message.roomName);
 
-    // Subscribe to Redis channels for cross-server communication
-    // Note: In a single-server setup, this may not be necessary
-    // but it's included for horizontal scaling support
+    await Promise.all([
+      subscribeToRoomMessages(message.roomName, (msg) =>
+        this.redisHandler.handleMessage(message.roomName, msg)
+      ),
+      subscribeToRoomEvents(message.roomName, (evt) =>
+        this.redisHandler.handleEvent(message.roomName, evt)
+      ),
+    ]);
 
-    // Notify current participant
-    sendMessage(ws, {
+    MessageHandler.send(ws, {
       type: "room-joined",
       roomName: message.roomName,
       participants: result.participants,
     });
 
-    // Notify other participants
     const peerJoinedMessage: ServerMessage = {
       type: "peer-joined",
       peer: result.participants.find((p) => p.socketId === socketId)!,
     };
 
-    await this.broadcastToRoom(message.roomName, peerJoinedMessage, socketId);
-    await publishRoomEvent(message.roomName, {
-      type: "peer-joined",
-      socketId,
-      roomName: message.roomName,
-    });
+    await Promise.all([
+      this.broadcastToRoom(message.roomName, peerJoinedMessage, socketId),
+      publishRoomEvent(message.roomName, {
+        type: "peer-joined",
+        socketId,
+        roomName: message.roomName,
+      }),
+    ]);
   }
 
   private async handleLeaveRoom(
@@ -265,24 +334,25 @@ export class SignalingServer {
       return;
     }
 
-    await leaveRoom(socketId, message.roomName);
+    await Promise.all([
+      leaveRoom(socketId, message.roomName),
+      unsubscribeFromRoomMessages(message.roomName),
+      unsubscribeFromRoomEvents(message.roomName),
+    ]);
 
-    // Unsubscribe from Redis
-    await unsubscribeFromRoomMessages(message.roomName);
-    await unsubscribeFromRoomEvents(message.roomName);
-
-    // Notify other participants
     const peerLeftMessage: ServerMessage = {
       type: "peer-left",
       peerId: socketId,
     };
 
-    await this.broadcastToRoom(message.roomName, peerLeftMessage, socketId);
-    await publishRoomEvent(message.roomName, {
-      type: "peer-left",
-      socketId,
-      roomName: message.roomName,
-    });
+    await Promise.all([
+      this.broadcastToRoom(message.roomName, peerLeftMessage, socketId),
+      publishRoomEvent(message.roomName, {
+        type: "peer-left",
+        socketId,
+        roomName: message.roomName,
+      }),
+    ]);
   }
 
   private async handleOffer(
@@ -291,33 +361,21 @@ export class SignalingServer {
     message: OfferMessage
   ): Promise<void> {
     const metadata = ws.metadata;
-    if (!metadata || !metadata.roomName) {
-      sendError(ws, "Not in a room", "NOT_IN_ROOM");
+    if (!metadata?.roomName) {
+      MessageHandler.sendError(ws, "Not in a room", "NOT_IN_ROOM");
       return;
     }
 
     if (!isParticipantInRoom(socketId, metadata.roomName)) {
-      sendError(ws, "Not a participant in this room", "NOT_PARTICIPANT");
+      MessageHandler.sendError(ws, "Not a participant", "NOT_PARTICIPANT");
       return;
     }
 
-    // Relay to target peer
-    const targetWs = this.clients.get(message.to);
-    if (targetWs && targetWs.metadata?.roomName === metadata.roomName) {
-      sendMessage(targetWs, {
-        type: "offer",
-        from: socketId,
-        sdp: message.sdp,
-      });
-    } else {
-      // Try Redis pub/sub for cross-server
-      await publishToRoom(metadata.roomName, {
-        type: "offer",
-        from: socketId,
-        to: message.to,
-        sdp: message.sdp,
-      });
-    }
+    await this.relayToTarget(metadata.roomName, message.to, {
+      type: "offer",
+      from: socketId,
+      sdp: message.sdp,
+    });
   }
 
   private async handleAnswer(
@@ -326,28 +384,16 @@ export class SignalingServer {
     message: AnswerMessage
   ): Promise<void> {
     const metadata = ws.metadata;
-    if (!metadata || !metadata.roomName) {
-      sendError(ws, "Not in a room", "NOT_IN_ROOM");
+    if (!metadata?.roomName) {
+      MessageHandler.sendError(ws, "Not in a room", "NOT_IN_ROOM");
       return;
     }
 
-    // Relay to target peer
-    const targetWs = this.clients.get(message.to);
-    if (targetWs && targetWs.metadata?.roomName === metadata.roomName) {
-      sendMessage(targetWs, {
-        type: "answer",
-        from: socketId,
-        sdp: message.sdp,
-      });
-    } else {
-      // Try Redis pub/sub for cross-server
-      await publishToRoom(metadata.roomName, {
-        type: "answer",
-        from: socketId,
-        to: message.to,
-        sdp: message.sdp,
-      });
-    }
+    await this.relayToTarget(metadata.roomName, message.to, {
+      type: "answer",
+      from: socketId,
+      sdp: message.sdp,
+    });
   }
 
   private async handleIceCandidate(
@@ -356,28 +402,16 @@ export class SignalingServer {
     message: IceCandidateMessage
   ): Promise<void> {
     const metadata = ws.metadata;
-    if (!metadata || !metadata.roomName) {
-      sendError(ws, "Not in a room", "NOT_IN_ROOM");
+    if (!metadata?.roomName) {
+      MessageHandler.sendError(ws, "Not in a room", "NOT_IN_ROOM");
       return;
     }
 
-    // Relay to target peer
-    const targetWs = this.clients.get(message.to);
-    if (targetWs && targetWs.metadata?.roomName === metadata.roomName) {
-      sendMessage(targetWs, {
-        type: "ice-candidate",
-        from: socketId,
-        candidate: message.candidate,
-      });
-    } else {
-      // Try Redis pub/sub for cross-server
-      await publishToRoom(metadata.roomName, {
-        type: "ice-candidate",
-        from: socketId,
-        to: message.to,
-        candidate: message.candidate,
-      });
-    }
+    await this.relayToTarget(metadata.roomName, message.to, {
+      type: "ice-candidate",
+      from: socketId,
+      candidate: message.candidate,
+    });
   }
 
   private async handleMuteAudio(
@@ -385,22 +419,7 @@ export class SignalingServer {
     socketId: string,
     message: MuteAudioMessage
   ): Promise<void> {
-    const metadata = ws.metadata;
-    if (!metadata || !metadata.roomName) {
-      return;
-    }
-
-    const participant = await updateMuteState(socketId, message.muted, undefined);
-    if (participant) {
-      const peerMutedMessage: ServerMessage = {
-        type: "peer-muted",
-        peerId: socketId,
-        audioMuted: participant.isAudioMuted,
-        videoMuted: participant.isVideoMuted,
-      };
-
-      await this.broadcastToRoom(metadata.roomName, peerMutedMessage, socketId);
-    }
+    await this.handleMuteStateChange(ws, socketId, message.muted, undefined);
   }
 
   private async handleMuteVideo(
@@ -408,22 +427,35 @@ export class SignalingServer {
     socketId: string,
     message: MuteVideoMessage
   ): Promise<void> {
+    await this.handleMuteStateChange(ws, socketId, undefined, message.muted);
+  }
+
+  private async handleMuteStateChange(
+    ws: ExtendedWebSocket,
+    socketId: string,
+    audioMuted?: boolean,
+    videoMuted?: boolean
+  ): Promise<void> {
     const metadata = ws.metadata;
-    if (!metadata || !metadata.roomName) {
+    if (!metadata?.roomName) {
       return;
     }
 
-    const participant = await updateMuteState(socketId, undefined, message.muted);
+    const participant = await updateMuteState(socketId, audioMuted, videoMuted);
     if (participant) {
-      const peerMutedMessage: ServerMessage = {
+      const message: ServerMessage = {
         type: "peer-muted",
         peerId: socketId,
         audioMuted: participant.isAudioMuted,
         videoMuted: participant.isVideoMuted,
       };
 
-      await this.broadcastToRoom(metadata.roomName, peerMutedMessage, socketId);
+      await this.broadcastToRoom(metadata.roomName, message, socketId);
     }
+  }
+
+  private async handleHeartbeat(ws: ExtendedWebSocket): Promise<void> {
+    MessageHandler.send(ws, { type: "pong" });
   }
 
   private async handleDisconnect(socketId: string): Promise<void> {
@@ -434,23 +466,38 @@ export class SignalingServer {
 
     const metadata = ws.metadata;
     if (metadata?.roomName) {
-      await leaveRoom(socketId, metadata.roomName);
-      await unsubscribeFromRoomMessages(metadata.roomName);
-      await unsubscribeFromRoomEvents(metadata.roomName);
+      await Promise.all([
+        leaveRoom(socketId, metadata.roomName),
+        unsubscribeFromRoomMessages(metadata.roomName),
+        unsubscribeFromRoomEvents(metadata.roomName),
+      ]);
 
-      // Notify other participants
-      const peerLeftMessage: ServerMessage = {
+      const message: ServerMessage = {
         type: "peer-left",
         peerId: socketId,
       };
 
-      await this.broadcastToRoom(metadata.roomName, peerLeftMessage, socketId);
+      await this.broadcastToRoom(metadata.roomName, message, socketId);
     }
 
     await cleanupParticipant(socketId);
     cleanupConnection(ws);
     this.clients.delete(socketId);
-    messageRateLimit.delete(socketId);
+    this.rateLimiter.cleanup(socketId);
+  }
+
+  private async relayToTarget(
+    roomName: string,
+    targetId: string,
+    message: ServerMessage
+  ): Promise<void> {
+    const targetWs = this.clients.get(targetId);
+    
+    if (targetWs && targetWs.metadata?.roomName === roomName) {
+      MessageHandler.send(targetWs, message);
+    } else {
+      await publishToRoom(roomName, message);
+    }
   }
 
   private async broadcastToRoom(
@@ -459,6 +506,7 @@ export class SignalingServer {
     excludeSocketId?: string
   ): Promise<void> {
     const participants = getRoomParticipants(roomName);
+    
     for (const participant of participants) {
       if (excludeSocketId && participant.socketId === excludeSocketId) {
         continue;
@@ -466,47 +514,8 @@ export class SignalingServer {
 
       const ws = this.clients.get(participant.socketId);
       if (ws) {
-        sendMessage(ws, message);
+        MessageHandler.send(ws, message);
       }
-    }
-  }
-
-  private handleRedisMessage(roomName: string, message: unknown): void {
-    // Handle messages from other server instances via Redis pub/sub
-    // Parse message and relay to local clients if needed
-    try {
-      const msg = message as { type: string; from: string; to: string; [key: string]: unknown };
-      if (msg.type === "offer" || msg.type === "answer" || msg.type === "ice-candidate") {
-        const targetWs = this.clients.get(msg.to);
-        if (targetWs) {
-          sendMessage(targetWs, msg as ServerMessage);
-        }
-      }
-    } catch (error) {
-      console.error("Error handling Redis message:", error);
-    }
-  }
-
-  private handleRedisEvent(roomName: string, event: unknown): void {
-    // Handle events from other server instances via Redis pub/sub
-    try {
-      const evt = event as { type: string; socketId: string; roomName: string };
-      if (evt.type === "peer-joined" || evt.type === "peer-left") {
-        // Broadcast to all local clients in the room
-        const participants = getRoomParticipants(roomName);
-        const eventMessage: ServerMessage = evt.type === "peer-joined"
-          ? { type: "peer-joined", peer: getParticipant(evt.socketId)! }
-          : { type: "peer-left", peerId: evt.socketId };
-        
-        for (const participant of participants) {
-          const ws = this.clients.get(participant.socketId);
-          if (ws) {
-            sendMessage(ws, eventMessage);
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Error handling Redis event:", error);
     }
   }
 
@@ -516,8 +525,6 @@ export class SignalingServer {
 
   public close(): void {
     this.wss.close();
+    this.rateLimiter.clear();
   }
 }
-
-// Import Redis functions
-import { publishRoomEvent } from "./redisManager";

@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-// Participant interface
 export interface Participant {
   userId: string;
   socketId: string;
@@ -11,15 +10,33 @@ export interface Participant {
   peerRole?: string;
 }
 
+export enum ConnectionState {
+  CONNECTING = "connecting",
+  CONNECTED = "connected",
+  DISCONNECTED = "disconnected",
+  RECONNECTING = "reconnecting",
+}
+
+export interface SdpData {
+  type: "offer" | "answer";
+  sdp: string;
+}
+
+export interface IceCandidateData {
+  candidate: string;
+  sdpMLineIndex?: number | null;
+  sdpMid?: string | null;
+}
+
 export const JoinRoomMessageSchema = z.object({
   type: z.literal("join-room"),
-  roomName: z.string().min(1),
+  roomName: z.string().min(1).max(100),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const LeaveRoomMessageSchema = z.object({
   type: z.literal("leave-room"),
-  roomName: z.string().min(1),
+  roomName: z.string().min(1).max(100),
 });
 
 export const OfferMessageSchema = z.object({
@@ -27,7 +44,7 @@ export const OfferMessageSchema = z.object({
   to: z.string().min(1),
   sdp: z.object({
     type: z.literal("offer"),
-    sdp: z.string(),
+    sdp: z.string().min(1).max(100000),
   }),
 });
 
@@ -36,7 +53,7 @@ export const AnswerMessageSchema = z.object({
   to: z.string().min(1),
   sdp: z.object({
     type: z.literal("answer"),
-    sdp: z.string(),
+    sdp: z.string().min(1).max(100000),
   }),
 });
 
@@ -44,8 +61,8 @@ export const IceCandidateMessageSchema = z.object({
   type: z.literal("ice-candidate"),
   to: z.string().min(1),
   candidate: z.object({
-    candidate: z.string(),
-    sdpMLineIndex: z.number().nullable().optional(),
+    candidate: z.string().min(1).max(5000),
+    sdpMLineIndex: z.number().int().nonnegative().nullable().optional(),
     sdpMid: z.string().nullable().optional(),
   }),
 });
@@ -64,7 +81,7 @@ export const HeartbeatMessageSchema = z.object({
   type: z.literal("heartbeat"),
 });
 
-export const ClientMessageSchema = z.union([
+export const ClientMessageSchema = z.discriminatedUnion("type", [
   JoinRoomMessageSchema,
   LeaveRoomMessageSchema,
   OfferMessageSchema,
@@ -85,7 +102,6 @@ export type MuteAudioMessage = z.infer<typeof MuteAudioMessageSchema>;
 export type MuteVideoMessage = z.infer<typeof MuteVideoMessageSchema>;
 export type HeartbeatMessage = z.infer<typeof HeartbeatMessageSchema>;
 
-// Server -> Client Message Types
 export interface RoomJoinedMessage {
   type: "room-joined";
   roomName: string;
@@ -105,19 +121,19 @@ export interface PeerLeftMessage {
 export interface ServerOfferMessage {
   type: "offer";
   from: string;
-  sdp: RTCSessionDescriptionInit;
+  sdp: SdpData;
 }
 
 export interface ServerAnswerMessage {
   type: "answer";
   from: string;
-  sdp: RTCSessionDescriptionInit;
+  sdp: SdpData;
 }
 
 export interface ServerIceCandidateMessage {
   type: "ice-candidate";
   from: string;
-  candidate: RTCIceCandidateInit;
+  candidate: IceCandidateData;
 }
 
 export interface PeerMutedMessage {
@@ -148,10 +164,69 @@ export type ServerMessage =
   | ErrorMessage
   | PongMessage;
 
-// Connection state
-export enum ConnectionState {
-  CONNECTING = "connecting",
-  CONNECTED = "connected",
-  DISCONNECTED = "disconnected",
-  RECONNECTING = "reconnecting",
+export const isJoinRoomMessage = (msg: ClientMessage): msg is JoinRoomMessage =>
+  msg.type === "join-room";
+
+export const isLeaveRoomMessage = (msg: ClientMessage): msg is LeaveRoomMessage =>
+  msg.type === "leave-room";
+
+export const isOfferMessage = (msg: ClientMessage): msg is OfferMessage =>
+  msg.type === "offer";
+
+export const isAnswerMessage = (msg: ClientMessage): msg is AnswerMessage =>
+  msg.type === "answer";
+
+export const isIceCandidateMessage = (msg: ClientMessage): msg is IceCandidateMessage =>
+  msg.type === "ice-candidate";
+
+export const isMuteAudioMessage = (msg: ClientMessage): msg is MuteAudioMessage =>
+  msg.type === "mute-audio";
+
+export const isMuteVideoMessage = (msg: ClientMessage): msg is MuteVideoMessage =>
+  msg.type === "mute-video";
+
+export const isHeartbeatMessage = (msg: ClientMessage): msg is HeartbeatMessage =>
+  msg.type === "heartbeat";
+
+export const validateRoomName = (roomName: string): boolean => {
+  return roomName.length >= 1 && roomName.length <= 100;
+};
+
+export const validateSocketId = (socketId: string): boolean => {
+  return socketId.length >= 1 && socketId.length <= 100;
+};
+
+export const validateParticipant = (participant: unknown): participant is Participant => {
+  if (!participant || typeof participant !== "object") {
+    return false;
+  }
+
+  const p = participant as Record<string, unknown>;
+
+  return (
+    typeof p.userId === "string" &&
+    typeof p.socketId === "string" &&
+    typeof p.name === "string" &&
+    typeof p.isAudioMuted === "boolean" &&
+    typeof p.isVideoMuted === "boolean" &&
+    typeof p.joinedAt === "string"
+  );
+};
+
+export enum WebRTCErrorCode {
+  INVALID_MESSAGE = "INVALID_MESSAGE",
+  RATE_LIMIT = "RATE_LIMIT",
+  NOT_IN_ROOM = "NOT_IN_ROOM",
+  NOT_PARTICIPANT = "NOT_PARTICIPANT",
+  JOIN_FAILED = "JOIN_FAILED",
+  ROOM_FULL = "ROOM_FULL",
+  ROOM_NOT_FOUND = "ROOM_NOT_FOUND",
+  USER_NOT_FOUND = "USER_NOT_FOUND",
+  UNAUTHORIZED = "UNAUTHORIZED",
+  INTERNAL_ERROR = "INTERNAL_ERROR",
 }
+
+export const MAX_ROOM_NAME_LENGTH = 100;
+export const MAX_SDP_LENGTH = 100000;
+export const MAX_ICE_CANDIDATE_LENGTH = 5000;
+export const MAX_METADATA_SIZE = 10000;

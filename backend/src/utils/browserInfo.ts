@@ -1,4 +1,14 @@
 import { Request } from "express";
+import { z } from "zod";
+
+export const DeviceType = {
+  DESKTOP: "desktop",
+  MOBILE: "mobile",
+  TABLET: "tablet",
+  UNKNOWN: "unknown",
+} as const;
+
+export type DeviceTypeValue = typeof DeviceType[keyof typeof DeviceType];
 
 export interface BrowserInfo {
   userAgent: string;
@@ -7,7 +17,7 @@ export interface BrowserInfo {
   os: string;
   osVersion: string;
   device: string;
-  deviceType: "desktop" | "mobile" | "tablet" | "unknown";
+  deviceType: DeviceTypeValue;
   screenResolution: string;
   language: string;
   timezone: string;
@@ -21,97 +31,272 @@ export interface BrowserInfo {
   hardwareConcurrency?: number;
 }
 
-export const parseUserAgent = (userAgent: string) => {
-  let browser = "Unknown";
-  let browserVersion = "Unknown";
-  let os = "Unknown";
-  let osVersion = "Unknown";
-  let device = "Unknown";
-  let deviceType: "desktop" | "mobile" | "tablet" | "unknown" = "unknown";
+interface ParsedUserAgent {
+  browser: string;
+  browserVersion: string;
+  os: string;
+  osVersion: string;
+  device: string;
+  deviceType: DeviceTypeValue;
+}
 
-  // Browser detection
-  if (userAgent.includes("Chrome") && !userAgent.includes("Edg")) {
-    const match = userAgent.match(/Chrome\/(\d+)/);
-    browser = "Chrome";
-    browserVersion = match ? match[1] : "Unknown";
-  } else if (userAgent.includes("Firefox")) {
-    const match = userAgent.match(/Firefox\/(\d+)/);
-    browser = "Firefox";
-    browserVersion = match ? match[1] : "Unknown";
-  } else if (userAgent.includes("Safari") && !userAgent.includes("Chrome")) {
-    const match = userAgent.match(/Version\/(\d+)/);
-    browser = "Safari";
-    browserVersion = match ? match[1] : "Unknown";
-  } else if (userAgent.includes("Edg")) {
-    const match = userAgent.match(/Edg\/(\d+)/);
-    browser = "Edge";
-    browserVersion = match ? match[1] : "Unknown";
-  }
+const ClientInfoSchema = z.object({
+  userAgent: z.string().optional(),
+  screenResolution: z.string().optional(),
+  viewport: z.string().optional(),
+  language: z.string().optional(),
+  timezone: z.string().optional(),
+  platform: z.string().optional(),
+  cookieEnabled: z.boolean().optional(),
+  online: z.boolean().optional(),
+  referrer: z.string().optional(),
+  connection: z.string().optional(),
+  deviceMemory: z.number().optional(),
+  hardwareConcurrency: z.number().optional(),
+}).strict();
 
-  // OS detection
-  if (userAgent.includes("Windows")) {
-    os = "Windows";
-    if (userAgent.includes("Windows NT 10.0")) osVersion = "10/11";
-    else if (userAgent.includes("Windows NT 6.3")) osVersion = "8.1";
-    else if (userAgent.includes("Windows NT 6.2")) osVersion = "8";
-    else if (userAgent.includes("Windows NT 6.1")) osVersion = "7";
-  } else if (userAgent.includes("Mac OS X")) {
-    os = "macOS";
-    const match = userAgent.match(/Mac OS X (\d+[._]\d+)/);
-    osVersion = match ? match[1].replace("_", ".") : "Unknown";
-  } else if (userAgent.includes("Linux")) {
-    os = "Linux";
-  } else if (userAgent.includes("Android")) {
-    os = "Android";
-    const match = userAgent.match(/Android (\d+\.\d+)/);
-    osVersion = match ? match[1] : "Unknown";
-    deviceType = "mobile";
-  } else if (userAgent.includes("iPhone") || userAgent.includes("iPad")) {
-    os = "iOS";
-    const match = userAgent.match(/OS (\d+[._]\d+)/);
-    osVersion = match ? match[1].replace("_", ".") : "Unknown";
-    deviceType = userAgent.includes("iPad") ? "tablet" : "mobile";
-  }
+interface BrowserPattern {
+  regex: RegExp;
+  includes?: readonly string[];
+  excludes?: readonly string[];
+}
 
-  // Device detection
-  if (userAgent.includes("Mobile")) {
-    deviceType = "mobile";
-  } else if (userAgent.includes("Tablet") || userAgent.includes("iPad")) {
-    deviceType = "tablet";
-  } else if (deviceType === "unknown") {
-    deviceType = "desktop";
-  }
-
-  return { browser, browserVersion, os, osVersion, device, deviceType };
+const BROWSER_PATTERNS: Record<string, BrowserPattern> = {
+  Chrome: { regex: /Chrome\/(\d+)/, excludes: ["Edg"] },
+  Firefox: { regex: /Firefox\/(\d+)/ },
+  Safari: { regex: /Version\/(\d+)/, includes: ["Safari"], excludes: ["Chrome"] },
+  Edge: { regex: /Edg\/(\d+)/ },
+  Opera: { regex: /OPR\/(\d+)/ },
 };
 
-export const extractBrowserInfo = (req: Request, additionalInfo?: Record<string, any>): BrowserInfo => {
-  const userAgent = req.headers["user-agent"] || "Unknown";
-  const parsed = parseUserAgent(userAgent);
+const OS_PATTERNS = {
+  Windows: {
+    identifier: "Windows",
+    versions: {
+      "Windows NT 10.0": "10/11",
+      "Windows NT 6.3": "8.1",
+      "Windows NT 6.2": "8",
+      "Windows NT 6.1": "7",
+    },
+  },
+  macOS: {
+    identifier: "Mac OS X",
+    versionRegex: /Mac OS X (\d+[._]\d+)/,
+  },
+  Linux: {
+    identifier: "Linux",
+  },
+  Android: {
+    identifier: "Android",
+    versionRegex: /Android (\d+\.\d+)/,
+    deviceType: DeviceType.MOBILE,
+  },
+  iOS: {
+    identifiers: ["iPhone", "iPad"],
+    versionRegex: /OS (\d+[._]\d+)/,
+  },
+} as const;
 
-  // Merge server-side info with client-side info (client info takes precedence)
-  const clientInfo = additionalInfo || {};
+const UNKNOWN = "Unknown";
+const DEFAULT_LANGUAGE = "en-US";
+const DEFAULT_TIMEZONE = "UTC";
 
+const detectBrowser = (userAgent: string): Pick<ParsedUserAgent, "browser" | "browserVersion"> => {
+  for (const [name, pattern] of Object.entries(BROWSER_PATTERNS)) {
+    const { regex, includes, excludes } = pattern;
+    
+    if (excludes?.some(exclude => userAgent.includes(exclude))) {
+      continue;
+    }
+    
+    if (includes && !includes.some(include => userAgent.includes(include))) {
+      continue;
+    }
+    
+    if (regex.test(userAgent)) {
+      const match = userAgent.match(regex);
+      return {
+        browser: name,
+        browserVersion: match?.[1] || UNKNOWN,
+      };
+    }
+  }
+  
+  return { browser: UNKNOWN, browserVersion: UNKNOWN };
+};
+
+const detectOS = (userAgent: string): Pick<ParsedUserAgent, "os" | "osVersion" | "deviceType"> => {
+  if (OS_PATTERNS.iOS.identifiers.some(id => userAgent.includes(id))) {
+    const match = userAgent.match(OS_PATTERNS.iOS.versionRegex);
+    return {
+      os: "iOS",
+      osVersion: match?.[1].replace("_", ".") || UNKNOWN,
+      deviceType: userAgent.includes("iPad") ? DeviceType.TABLET : DeviceType.MOBILE,
+    };
+  }
+  
+  if (userAgent.includes(OS_PATTERNS.Android.identifier)) {
+    const match = userAgent.match(OS_PATTERNS.Android.versionRegex);
+    return {
+      os: "Android",
+      osVersion: match?.[1] || UNKNOWN,
+      deviceType: DeviceType.MOBILE,
+    };
+  }
+  
+  if (userAgent.includes(OS_PATTERNS.Windows.identifier)) {
+    const versionEntry = Object.entries(OS_PATTERNS.Windows.versions)
+      .find(([key]) => userAgent.includes(key));
+    
+    return {
+      os: "Windows",
+      osVersion: versionEntry?.[1] || UNKNOWN,
+      deviceType: DeviceType.DESKTOP,
+    };
+  }
+  
+  if (userAgent.includes(OS_PATTERNS.macOS.identifier)) {
+    const match = userAgent.match(OS_PATTERNS.macOS.versionRegex);
+    return {
+      os: "macOS",
+      osVersion: match?.[1].replace("_", ".") || UNKNOWN,
+      deviceType: DeviceType.DESKTOP,
+    };
+  }
+  
+  if (userAgent.includes(OS_PATTERNS.Linux.identifier)) {
+    return {
+      os: "Linux",
+      osVersion: UNKNOWN,
+      deviceType: DeviceType.DESKTOP,
+    };
+  }
+  
   return {
-    userAgent: clientInfo.userAgent || userAgent,
+    os: UNKNOWN,
+    osVersion: UNKNOWN,
+    deviceType: DeviceType.UNKNOWN,
+  };
+};
+
+const refineDeviceType = (userAgent: string, initialType: DeviceTypeValue): DeviceTypeValue => {
+  if (userAgent.includes("Tablet") || userAgent.includes("iPad")) {
+    return DeviceType.TABLET;
+  }
+  
+  if (userAgent.includes("Mobile")) {
+    return DeviceType.MOBILE;
+  }
+  
+  return initialType === DeviceType.UNKNOWN ? DeviceType.DESKTOP : initialType;
+};
+
+export const parseUserAgent = (userAgent: string): ParsedUserAgent => {
+  if (!userAgent || userAgent === UNKNOWN) {
+    return {
+      browser: UNKNOWN,
+      browserVersion: UNKNOWN,
+      os: UNKNOWN,
+      osVersion: UNKNOWN,
+      device: UNKNOWN,
+      deviceType: DeviceType.UNKNOWN,
+    };
+  }
+  
+  const { browser, browserVersion } = detectBrowser(userAgent);
+  const { os, osVersion, deviceType: initialDeviceType } = detectOS(userAgent);
+  const deviceType = refineDeviceType(userAgent, initialDeviceType);
+  
+  return {
+    browser,
+    browserVersion,
+    os,
+    osVersion,
+    device: UNKNOWN,
+    deviceType,
+  };
+};
+
+const extractLanguage = (acceptLanguage?: string): string => {
+  if (!acceptLanguage) return DEFAULT_LANGUAGE;
+  
+  const firstLang = acceptLanguage.split(",")[0]?.trim();
+  return firstLang || DEFAULT_LANGUAGE;
+};
+
+const validateClientInfo = (additionalInfo?: Record<string, any>): z.infer<typeof ClientInfoSchema> | null => {
+  if (!additionalInfo) return null;
+  
+  try {
+    return ClientInfoSchema.parse(additionalInfo);
+  } catch {
+    console.warn("Invalid client info provided:", additionalInfo);
+    return null;
+  }
+};
+
+/**
+ * Extracts comprehensive browser information from request and optional client data
+ * Prioritizes client-side data when available, falls back to server-side detection
+ * 
+ * @param req - Express request object
+ * @param additionalInfo - Optional client-side browser information
+ * @returns Comprehensive browser information object
+ */
+export const extractBrowserInfo = (
+  req: Request,
+  additionalInfo?: Record<string, any>
+): BrowserInfo => {
+  const userAgent = req.headers["user-agent"] || UNKNOWN;
+  const parsed = parseUserAgent(userAgent);
+  const clientInfo = validateClientInfo(additionalInfo);
+  
+  return {
+    userAgent: clientInfo?.userAgent || userAgent,
+    
     browser: parsed.browser,
     browserVersion: parsed.browserVersion,
     os: parsed.os,
     osVersion: parsed.osVersion,
     device: parsed.device,
     deviceType: parsed.deviceType,
-    screenResolution: clientInfo.screenResolution || clientInfo.viewport || "Unknown",
-    language: clientInfo.language || req.headers["accept-language"]?.split(",")[0] || "Unknown",
-    timezone: clientInfo.timezone || "Unknown",
-    platform: clientInfo.platform || parsed.os,
-    cookieEnabled: clientInfo.cookieEnabled ?? true,
-    online: clientInfo.online ?? true,
-    // Additional client-side info
-    viewport: clientInfo.viewport,
-    referrer: clientInfo.referrer,
-    connection: clientInfo.connection,
-    deviceMemory: clientInfo.deviceMemory,
-    hardwareConcurrency: clientInfo.hardwareConcurrency,
+    
+    screenResolution: clientInfo?.screenResolution || clientInfo?.viewport || UNKNOWN,
+    viewport: clientInfo?.viewport,
+    
+    language: clientInfo?.language || extractLanguage(req.headers["accept-language"]),
+    timezone: clientInfo?.timezone || DEFAULT_TIMEZONE,
+    platform: clientInfo?.platform || parsed.os,
+    
+    cookieEnabled: clientInfo?.cookieEnabled ?? true,
+    online: clientInfo?.online ?? true,
+    
+    referrer: clientInfo?.referrer,
+    connection: clientInfo?.connection,
+    deviceMemory: clientInfo?.deviceMemory,
+    hardwareConcurrency: clientInfo?.hardwareConcurrency,
   };
 };
 
+export const serializeBrowserInfo = (info: BrowserInfo): Record<string, any> => {
+  return Object.fromEntries(
+    Object.entries(info).filter(([_, value]) => value !== undefined)
+  );
+};
+
+export const createBrowserFingerprint = (info: BrowserInfo): string => {
+  const components = [
+    info.browser,
+    info.browserVersion,
+    info.os,
+    info.osVersion,
+    info.deviceType,
+    info.language,
+    info.timezone,
+    info.screenResolution,
+    info.hardwareConcurrency?.toString(),
+    info.deviceMemory?.toString(),
+  ].filter(Boolean);
+  
+  return Buffer.from(components.join("|")).toString("base64");
+};
