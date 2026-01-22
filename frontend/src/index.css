@@ -67,7 +67,6 @@
   overflow: hidden;
 }
 
-/* Page Transitions */
 .page-enter {
   opacity: 0;
   transform: translateY(10px);
@@ -90,7 +89,6 @@
   transition: opacity 200ms ease-in-out, transform 200ms ease-in-out;
 }
 
-/* Smooth animations */
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -147,16 +145,4 @@
 
 .animate-scale-in {
   animation: scaleIn 0.2s ease-out;
-}
-
-/* LiveKit Overrides for Light Theme */
-[data-lk-theme="default"] {
-  --lk-bg: #fafafa;
-  --lk-control-bg: #ffffff;
-  --lk-control-hover-bg: #f5f5f5;
-  --lk-control-active-bg: #e5e5e5;
-  --lk-accent-bg: #2563eb;
-  --lk-accent-fg: #ffffff;
-  --lk-danger-bg: #dc2626;
-  --lk-text-muted: #6b7280;
 }

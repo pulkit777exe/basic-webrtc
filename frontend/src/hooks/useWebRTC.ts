@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   WebRTCService,
   type WebRTCServiceCallbacks,
@@ -13,6 +13,8 @@ export interface UseWebRTCOptions {
   autoConnect?: boolean;
   audioEnabled?: boolean;
   videoEnabled?: boolean;
+  audioDeviceId?: string;
+  videoDeviceId?: string;
 }
 
 export interface UseWebRTCReturn {
@@ -27,6 +29,7 @@ export interface UseWebRTCReturn {
   disconnect: () => void;
   muteAudio: (muted: boolean) => void;
   muteVideo: (muted: boolean) => void;
+  startPreview: () => Promise<void>;
   error: Error | null;
 }
 
@@ -38,16 +41,18 @@ export function useWebRTC(options: UseWebRTCOptions = {}): UseWebRTCReturn {
     autoConnect = false,
     audioEnabled = true,
     videoEnabled = true,
+    audioDeviceId,
+    videoDeviceId,
   } = options;
 
-  const serviceRef = useRef<WebRTCService | null>(null);
+  const [service, setService] = useState<WebRTCService | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(
-    new Map()
+    new Map(),
   );
   const [connectionState, setConnectionState] = useState<ConnectionState>(
-    ConnectionState.DISCONNECTED
+    ConnectionState.DISCONNECTED,
   );
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoMuted, setIsVideoMuted] = useState(false);
@@ -67,9 +72,7 @@ export function useWebRTC(options: UseWebRTCOptions = {}): UseWebRTCReturn {
         });
       },
       onParticipantLeft: (peerId) => {
-        setParticipants((prev) =>
-          prev.filter((p) => p.socketId !== peerId)
-        );
+        setParticipants((prev) => prev.filter((p) => p.socketId !== peerId));
         setRemoteStreams((prev) => {
           const updated = new Map(prev);
           updated.delete(peerId);
@@ -96,22 +99,55 @@ export function useWebRTC(options: UseWebRTCOptions = {}): UseWebRTCReturn {
       },
     };
 
-    serviceRef.current = new WebRTCService(callbacks);
+    const newService = new WebRTCService(callbacks);
+    setService(newService);
 
     return () => {
-      if (serviceRef.current) {
-        serviceRef.current.disconnect();
-        serviceRef.current = null;
-      }
+      newService.disconnect();
     };
   }, []);
 
   // Initialize ICE servers
   useEffect(() => {
-    if (serviceRef.current) {
-      serviceRef.current.initializeIceServers();
+    if (service) {
+      service.initializeIceServers();
     }
-  }, []);
+  }, [service]);
+
+  const connect = useCallback(
+    async (wsUrl: string, token: string, roomName: string) => {
+      if (!service) {
+        throw new Error("WebRTC service not initialized");
+      }
+
+      try {
+        setError(null);
+        setConnectionState(ConnectionState.CONNECTING);
+
+        // Get local media stream with specific devices if selected
+        const stream = await service.getLocalStream(
+          audioEnabled,
+          videoEnabled,
+          audioDeviceId,
+          videoDeviceId,
+        );
+        setLocalStream(stream);
+
+        // Connect WebSocket
+        await service.connect(wsUrl, token);
+
+        // Join room
+        await service.joinRoom(roomName);
+      } catch (err) {
+        const error =
+          err instanceof Error ? err : new Error("Connection failed");
+        setError(error);
+        setConnectionState(ConnectionState.DISCONNECTED);
+        throw error;
+      }
+    },
+    [service, audioEnabled, videoEnabled, audioDeviceId, videoDeviceId],
+  );
 
   // Auto-connect if enabled
   useEffect(() => {
@@ -120,97 +156,94 @@ export function useWebRTC(options: UseWebRTCOptions = {}): UseWebRTCReturn {
       wsUrl &&
       token &&
       roomName &&
-      serviceRef.current &&
+      service &&
       connectionState === ConnectionState.DISCONNECTED
     ) {
       connect(wsUrl, token, roomName).catch((err) => {
         console.error("Auto-connect failed:", err);
       });
     }
-  }, [autoConnect, wsUrl, token, roomName, connectionState]);
+  }, [autoConnect, wsUrl, token, roomName, service, connectionState, connect]);
 
   // Update participants from service
   useEffect(() => {
-    if (!serviceRef.current) return;
+    if (!service) return;
 
     const interval = setInterval(() => {
-      if (serviceRef.current) {
-        const currentParticipants = serviceRef.current.getParticipants();
-        setParticipants(currentParticipants);
-        setRemoteStreams((prev) => {
-          const updated = new Map(prev);
-          currentParticipants.forEach((p) => {
-            const stream = serviceRef.current?.getRemoteStream(p.socketId);
-            if (stream) {
-              updated.set(p.socketId, stream);
-            }
-          });
-          return updated;
+      const currentParticipants = service.getParticipants();
+      setParticipants(currentParticipants);
+
+      // Also update remote streams map to ensure it's in sync
+      setRemoteStreams((prev) => {
+        const updated = new Map(prev);
+        let changed = false;
+
+        currentParticipants.forEach((p) => {
+          const stream = service.getRemoteStream(p.socketId);
+          if (stream && !updated.has(p.socketId)) {
+            updated.set(p.socketId, stream);
+            changed = true;
+          }
         });
-      }
+
+        return changed ? updated : prev;
+      });
     }, 1000);
 
     return () => clearInterval(interval);
-  }, []);
-
-  const connect = useCallback(
-    async (wsUrl: string, token: string, roomName: string) => {
-      if (!serviceRef.current) {
-        throw new Error("WebRTC service not initialized");
-      }
-
-      try {
-        setError(null);
-        setConnectionState(ConnectionState.CONNECTING);
-
-        // Get local media stream
-        const stream = await serviceRef.current.getLocalStream(
-          audioEnabled,
-          videoEnabled
-        );
-        setLocalStream(stream);
-
-        // Connect WebSocket
-        await serviceRef.current.connect(wsUrl, token);
-
-        // Join room
-        await serviceRef.current.joinRoom(roomName);
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error("Connection failed");
-        setError(error);
-        setConnectionState(ConnectionState.DISCONNECTED);
-        throw error;
-      }
-    },
-    [audioEnabled, videoEnabled]
-  );
+  }, [service]);
 
   const disconnect = useCallback(() => {
-    if (serviceRef.current) {
-      serviceRef.current.disconnect();
+    if (service) {
+      service.disconnect();
       setLocalStream(null);
       setRemoteStreams(new Map());
       setParticipants([]);
       setConnectionState(ConnectionState.DISCONNECTED);
     }
-  }, []);
+  }, [service]);
 
-  const muteAudio = useCallback((muted: boolean) => {
-    if (serviceRef.current) {
-      serviceRef.current.muteAudio(muted);
-      setIsAudioMuted(muted);
-    }
-  }, []);
+  const muteAudio = useCallback(
+    (muted: boolean) => {
+      if (service) {
+        service.muteAudio(muted);
+        setIsAudioMuted(muted);
+      }
+    },
+    [service],
+  );
 
-  const muteVideo = useCallback((muted: boolean) => {
-    if (serviceRef.current) {
-      serviceRef.current.muteVideo(muted);
-      setIsVideoMuted(muted);
+  const muteVideo = useCallback(
+    (muted: boolean) => {
+      if (service) {
+        service.muteVideo(muted);
+        setIsVideoMuted(muted);
+      }
+    },
+    [service],
+  );
+
+  const startPreview = useCallback(async () => {
+    if (service) {
+      try {
+        const stream = await service.getLocalStream(
+          audioEnabled,
+          videoEnabled,
+          audioDeviceId,
+          videoDeviceId,
+        );
+        setLocalStream(stream);
+      } catch (err) {
+        console.error("Failed to start preview:", err);
+        setError(
+          err instanceof Error ? err : new Error("Failed to start preview"),
+        );
+      }
     }
-  }, []);
+  }, [service, audioEnabled, videoEnabled, audioDeviceId, videoDeviceId]);
 
   return {
-    service: serviceRef.current,
+    service,
     participants,
     localStream,
     remoteStreams,
@@ -221,6 +254,7 @@ export function useWebRTC(options: UseWebRTCOptions = {}): UseWebRTCReturn {
     disconnect,
     muteAudio,
     muteVideo,
+    startPreview,
     error,
   };
 }

@@ -11,13 +11,26 @@ export const WebRTCProvider: React.FC<{
   roomName: string;
   audioEnabled?: boolean;
   videoEnabled?: boolean;
-}> = ({ children, wsUrl, roomName, audioEnabled = true, videoEnabled = true }) => {
+  audioDeviceId?: string;
+  videoDeviceId?: string;
+  connectOnMount?: boolean;
+}> = ({
+  children,
+  wsUrl,
+  roomName,
+  audioEnabled = true,
+  videoEnabled = true,
+  audioDeviceId,
+  videoDeviceId,
+  connectOnMount = true,
+}) => {
   const webrtc = useWebRTC({
     audioEnabled,
     videoEnabled,
+    audioDeviceId,
+    videoDeviceId,
   });
 
-  // Get JWT token from cookies
   const getToken = (): string => {
     const cookies = document.cookie.split(";");
     for (const cookie of cookies) {
@@ -29,8 +42,9 @@ export const WebRTCProvider: React.FC<{
     throw new Error("No authentication token found");
   };
 
-  // Connect when component mounts
   useEffect(() => {
+    if (!connectOnMount) return;
+
     const initializeConnection = async () => {
       try {
         const token = getToken();
@@ -45,7 +59,9 @@ export const WebRTCProvider: React.FC<{
     return () => {
       webrtc.disconnect();
     };
-  }, [wsUrl, roomName, webrtc]);
+  }, [wsUrl, roomName, connectOnMount, webrtc]);
 
-  return <WebRTCContext.Provider value={webrtc}>{children}</WebRTCContext.Provider>;
+  return (
+    <WebRTCContext.Provider value={webrtc}>{children}</WebRTCContext.Provider>
+  );
 };

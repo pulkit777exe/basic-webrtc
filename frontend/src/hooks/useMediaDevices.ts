@@ -4,6 +4,7 @@ export const useMediaDevices = () => {
   const [videoEnabled, setVideoEnabled] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [mediaError, setMediaError] = useState<string | null>(null);
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
 
   useEffect(() => {
     const checkMediaDevices = async () => {
@@ -13,9 +14,15 @@ export const useMediaDevices = () => {
           return;
         }
 
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const hasVideo = devices.some((device) => device.kind === "videoinput");
-        const hasAudio = devices.some((device) => device.kind === "audioinput");
+        const deviceList = await navigator.mediaDevices.enumerateDevices();
+        setDevices(deviceList);
+
+        const hasVideo = deviceList.some(
+          (device) => device.kind === "videoinput",
+        );
+        const hasAudio = deviceList.some(
+          (device) => device.kind === "audioinput",
+        );
 
         if (hasVideo || hasAudio) {
           try {
@@ -29,8 +36,13 @@ export const useMediaDevices = () => {
           } catch (err) {
             console.warn("Could not access media devices:", err);
             const error = err as Error;
-            if (error.name === "NotReadableError" || error.name === "NotAllowedError") {
-              setMediaError("Camera/microphone not available. You can enable them after joining.");
+            if (
+              error.name === "NotReadableError" ||
+              error.name === "NotAllowedError"
+            ) {
+              setMediaError(
+                "Camera/microphone not available. You can enable them after joining.",
+              );
             }
             setVideoEnabled(false);
             setAudioEnabled(false);
@@ -44,8 +56,16 @@ export const useMediaDevices = () => {
     };
 
     checkMediaDevices();
+
+    // Listen for device changes
+    navigator.mediaDevices.addEventListener("devicechange", checkMediaDevices);
+    return () => {
+      navigator.mediaDevices.removeEventListener(
+        "devicechange",
+        checkMediaDevices,
+      );
+    };
   }, []);
 
-  return { videoEnabled, audioEnabled, mediaError, setMediaError };
+  return { videoEnabled, audioEnabled, mediaError, setMediaError, devices };
 };
-

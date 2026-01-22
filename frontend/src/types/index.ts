@@ -13,5 +13,8 @@ export interface VideoRoomProps {
   wsUrl: string;
   roomName: string;
   onDisconnected: () => void;
+  audioEnabled?: boolean;
+  videoEnabled?: boolean;
+  audioDeviceId?: string;
+  videoDeviceId?: string;
 }
-

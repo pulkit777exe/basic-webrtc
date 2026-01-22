@@ -1,67 +1,87 @@
 import * as React from "react";
 import { useAtom } from "jotai";
 import { userAtom } from "../../store/atoms";
-import { Bell, ChevronDown, Share2 } from "lucide-react";
+import { ChevronDown, Share2, Sun, Moon } from "lucide-react";
 import { ProfileModal } from "../ProfileModal";
+import { useTheme } from "../../hooks/useTheme";
+import { Button } from "../ui/button";
+import { cn } from "@/lib/utils";
 
 interface MeetingHeaderProps {
   onInviteClick: () => void;
   roomName?: string;
 }
 
-export const MeetingHeader: React.FC<MeetingHeaderProps> = ({ onInviteClick, roomName }) => {
+export const MeetingHeader: React.FC<MeetingHeaderProps> = ({
+  onInviteClick,
+  roomName,
+}) => {
   const [user] = useAtom(userAtom);
   const [showProfileDropdown, setShowProfileDropdown] = React.useState(false);
   const [showProfileModal, setShowProfileModal] = React.useState(false);
+  const { theme, toggleTheme } = useTheme();
 
   return (
     <>
-      <div className="h-16 bg-white border-b border-neutral-200 flex items-center justify-between px-6">
-        <div className="flex items-center gap-4">
+      <div className="h-14 bg-card border-b border-border flex items-center justify-between px-4">
+        <div className="flex items-center gap-3">
           {roomName ? (
             <div className="flex flex-col">
-              <h1 className="text-xl font-bold text-neutral-900">{roomName}</h1>
-              <p className="text-xs text-neutral-500">In meeting</p>
+              <h1 className="text-lg font-semibold text-foreground">
+                {roomName}
+              </h1>
+              <p className="text-xs text-muted-foreground">In meeting</p>
             </div>
           ) : (
-            <h1 className="text-xl font-semibold text-neutral-900">Meeting</h1>
+            <h1 className="text-lg font-semibold text-foreground">Meeting</h1>
           )}
-          <button
-            onClick={onInviteClick}
-            className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-all duration-200 hover:scale-105 active:scale-95"
-          >
+          <Button onClick={onInviteClick} size="sm" className="gap-2">
             <Share2 className="w-4 h-4" />
             Invite
-          </button>
+          </Button>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={toggleTheme}
+            variant="ghost"
+            size="icon"
+            className="rounded-full"
+            title={
+              theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+            }
+          >
+            {theme === "dark" ? (
+              <Sun className="w-5 h-5" />
+            ) : (
+              <Moon className="w-5 h-5" />
+            )}
+          </Button>
+          
           <div className="relative">
             <button
               onClick={() => setShowProfileDropdown(!showProfileDropdown)}
-              className="flex items-center gap-3 hover:bg-neutral-100 rounded-lg px-3 py-2 transition-all duration-200 hover:scale-[1.02]"
+              className={cn(
+                "flex items-center gap-2 hover:bg-accent rounded-lg px-2 py-1.5 transition-colors",
+              )}
             >
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-linear-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-sm font-medium">
-                  {user?.name?.charAt(0).toUpperCase() || "U"}
-                </div>
-                <div className="text-left">
-                  <p className="text-sm font-medium text-neutral-900">{user?.name || "User"}</p>
-                  <p className="text-xs text-neutral-500">
-                    {user?.username || "user"}@example.com
-                  </p>
-                </div>
+              <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-medium">
+                {user?.name?.charAt(0).toUpperCase() || "U"}
               </div>
-              <Bell className="w-5 h-5 text-neutral-600" />
-              <ChevronDown className="w-4 h-4 text-neutral-600" />
+              <div className="text-left hidden sm:block">
+                <p className="text-sm font-medium text-foreground">
+                  {user?.name || "User"}
+                </p>
+              </div>
+              <ChevronDown className="w-4 h-4 text-muted-foreground" />
             </button>
             {showProfileDropdown && (
-              <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-neutral-200 py-2 z-50 animate-scale-in">
+              <div className="absolute right-0 mt-2 w-48 bg-card rounded-lg shadow-lg border border-border py-2 z-50 animate-scale-in">
                 <button
                   onClick={() => {
                     setShowProfileModal(true);
                     setShowProfileDropdown(false);
                   }}
-                  className="w-full text-left px-4 py-2 hover:bg-neutral-100 text-sm text-neutral-700 transition-colors duration-200"
+                  className="w-full text-left px-4 py-2 hover:bg-accent text-sm text-foreground transition-colors"
                 >
                   Profile Settings
                 </button>
@@ -69,7 +89,7 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({ onInviteClick, roo
                   onClick={() => {
                     setShowProfileDropdown(false);
                   }}
-                  className="w-full text-left px-4 py-2 hover:bg-neutral-100 text-sm text-red-600 transition-colors duration-200"
+                  className="w-full text-left px-4 py-2 hover:bg-accent text-sm text-destructive transition-colors"
                 >
                   Logout
                 </button>
@@ -84,4 +104,3 @@ export const MeetingHeader: React.FC<MeetingHeaderProps> = ({ onInviteClick, roo
     </>
   );
 };
-

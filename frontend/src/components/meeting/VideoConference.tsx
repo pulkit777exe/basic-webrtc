@@ -52,6 +52,12 @@ export const VideoConference: React.FC = () => {
         <div className="flex items-center justify-center h-full">
           <div className="text-center text-muted-foreground">
             <p className="text-sm">Waiting for participants...</p>
+            {localStream && (
+            <div
+              id="local-video-container"
+              className="relative bg-background rounded-lg overflow-hidden aspect-video border border-border"
+            />
+          )}
           </div>
         </div>
       ) : (

@@ -1,9 +1,7 @@
 import * as React from "react";
 import { useEffect } from "react";
 import { MeetingHeader } from "./MeetingHeader";
-import { MeetingSidebar } from "./MeetingSidebar";
 import { VideoConference } from "./VideoConference";
-import { MeetingInfo } from "./MeetingInfo";
 import { ControlBar } from "./ControlBar";
 import { ChatPanel } from "./ChatPanel";
 import { ParticipantsPanel } from "./ParticipantsPanel";
@@ -16,22 +14,29 @@ import { generateInviteLink } from "../../utils/inviteLink";
 import { analyticsApi } from "../../services/analyticsApi";
 import { getBrowserInfo, getSessionId } from "../../utils/browserInfo";
 import { cn } from "@/lib/utils";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "../ui/card";
 import { Button } from "../ui/button";
+import { X, MessageSquare, Users } from "lucide-react";
 
 interface MeetingLayoutProps {
   roomName: string;
 }
 
 export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
-  const [activeTab, setActiveTab] = React.useState<"chat" | "participants">("chat");
   const [showInviteModal, setShowInviteModal] = React.useState(false);
   const [showOnboarding, setShowOnboarding] = React.useState(false);
   const [onboardingStep, setOnboardingStep] = React.useState(0);
+  const [isChatOpen, setIsChatOpen] = React.useState(false);
+  const [isParticipantsOpen, setIsParticipantsOpen] = React.useState(false);
   const [user] = useAtom(userAtom);
   const { participants } = useWebRTCContext();
 
-  // Check if this is first meeting
   React.useEffect(() => {
     const hasSeenOnboarding = localStorage.getItem("hasSeenMeetingOnboarding");
     if (!hasSeenOnboarding) {
@@ -40,10 +45,22 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
   }, []);
 
   const onboardingSteps = [
-    { target: "header", text: "This is your meeting room. You can see the room name and invite others here." },
-    { target: "controls", text: "Use these controls to mute/unmute, turn video on/off, and manage your meeting." },
-    { target: "chat", text: "Chat with participants in real-time. Messages are saved and synced across devices." },
-    { target: "participants", text: "See who's in the meeting. You'll get notified when people join or leave." },
+    {
+      target: "header",
+      text: "This is your meeting room. You can see the room name and invite others here.",
+    },
+    {
+      target: "controls",
+      text: "Use these controls to mute/unmute, turn video on/off, and manage your meeting.",
+    },
+    {
+      target: "chat",
+      text: "Chat with participants in real-time. Click the chat icon in controls to open.",
+    },
+    {
+      target: "participants",
+      text: "See who's in the meeting by clicking the participants icon.",
+    },
   ];
 
   const handleOnboardingNext = () => {
@@ -59,18 +76,19 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
     setShowOnboarding(false);
     localStorage.setItem("hasSeenMeetingOnboarding", "true");
   };
-  const { 
-    chatMessages, 
-    newMessage, 
-    setNewMessage, 
-    sendMessage, 
-    retryMessage, 
+
+  const {
+    chatMessages,
+    newMessage,
+    setNewMessage,
+    sendMessage,
+    retryMessage,
     editMessage,
     deleteMessage,
-    isLoading, 
-    isSending, 
-    error, 
-    setError, 
+    isLoading,
+    isSending,
+    error,
+    setError,
     isOffline,
     connectionStatus,
     pendingCount,
@@ -112,73 +130,100 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
 
   const inviteLink = generateInviteLink(roomName);
 
+  const unreadCount = chatMessages.filter((m) => !m.isOwn).length;
+
   return (
-    <div className="flex h-screen bg-background text-foreground">
-      <MeetingSidebar />
+    <div className="flex flex-col h-screen bg-background text-foreground">
+      <MeetingHeader
+        onInviteClick={() => setShowInviteModal(true)}
+        roomName={roomName}
+      />
 
-      <div className="flex-1 flex flex-col">
-        <MeetingHeader onInviteClick={() => setShowInviteModal(true)} roomName={roomName} />
+      <div className="flex-1 relative overflow-hidden">
+        <div className="absolute inset-0">
+          <VideoConference />
+        </div>
 
-        <div className="flex-1 flex overflow-hidden">
-          <div className="flex-1 flex flex-col bg-background">
-            <div className="flex-1 relative">
-              <VideoConference />
-              <MeetingInfo />
+        <div
+          className={cn(
+            "absolute top-0 right-0 h-full w-80 bg-card/95 backdrop-blur-lg border-l border-border shadow-2xl z-20",
+            "transition-transform duration-300 ease-in-out",
+            isChatOpen ? "translate-x-0" : "translate-x-full",
+          )}
+        >
+          <div className="flex items-center justify-between h-12 px-4 border-b border-border">
+            <div className="flex items-center gap-2">
+              <MessageSquare className="w-4 h-4" />
+              <span className="font-medium text-sm">Chat</span>
             </div>
-            <ControlBar />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setIsChatOpen(false)}
+            >
+              <X className="w-4 h-4" />
+            </Button>
           </div>
-
-          <div className="w-80 bg-card border-l border-border flex flex-col">
-            <div className="flex border-b border-border">
-              <button
-                onClick={() => setActiveTab("chat")}
-                className={cn(
-                  "flex-1 px-4 py-3 text-sm font-medium relative transition-all duration-200",
-                  activeTab === "chat"
-                    ? "text-foreground border-b-2 border-foreground bg-accent"
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                )}
-              >
-                Chat
-              </button>
-              <button
-                onClick={() => setActiveTab("participants")}
-                className={cn(
-                  "flex-1 px-4 py-3 text-sm font-medium transition-all duration-200",
-                  activeTab === "participants"
-                    ? "text-foreground border-b-2 border-foreground bg-accent"
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                )}
-              >
-                Participants {participants.length}
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-hidden flex flex-col">
-              {activeTab === "chat" ? (
-                <ChatPanel
-                  messages={chatMessages}
-                  newMessage={newMessage}
-                  onMessageChange={setNewMessage}
-                  onSendMessage={sendMessage}
-                  onRetryMessage={retryMessage}
-                  onEditMessage={editMessage}
-                  onDeleteMessage={deleteMessage}
-                  isLoading={isLoading}
-                  isSending={isSending}
-                  error={error}
-                  isOffline={isOffline}
-                  connectionStatus={connectionStatus}
-                  pendingCount={pendingCount}
-                  onRetryLoad={handleRetryLoad}
-                />
-              ) : (
-                <ParticipantsPanel />
-              )}
-            </div>
+          <div className="flex flex-col h-[calc(100%-3rem)]">
+            <ChatPanel
+              messages={chatMessages}
+              newMessage={newMessage}
+              onMessageChange={setNewMessage}
+              onSendMessage={sendMessage}
+              onRetryMessage={retryMessage}
+              onEditMessage={editMessage}
+              onDeleteMessage={deleteMessage}
+              isLoading={isLoading}
+              isSending={isSending}
+              error={error}
+              isOffline={isOffline}
+              connectionStatus={connectionStatus}
+              pendingCount={pendingCount}
+              onRetryLoad={handleRetryLoad}
+            />
           </div>
         </div>
+
+        <div
+          className={cn(
+            "absolute top-0 h-full w-72 bg-card/95 backdrop-blur-lg border-l border-border shadow-2xl z-10",
+            "transition-all duration-300 ease-in-out",
+            isParticipantsOpen
+              ? isChatOpen
+                ? "right-80 translate-x-0"
+                : "right-0 translate-x-0"
+              : "right-0 translate-x-full",
+          )}
+        >
+          <div className="flex items-center justify-between h-12 px-4 border-b border-border">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4" />
+              <span className="font-medium text-sm">
+                Participants ({participants.length})
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => setIsParticipantsOpen(false)}
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+          <ParticipantsPanel />
+        </div>
       </div>
+
+      <ControlBar
+        isChatOpen={isChatOpen}
+        isParticipantsOpen={isParticipantsOpen}
+        onToggleChat={() => setIsChatOpen(!isChatOpen)}
+        onToggleParticipants={() => setIsParticipantsOpen(!isParticipantsOpen)}
+        unreadChatCount={unreadCount}
+        participantCount={participants.length}
+      />
 
       {showInviteModal && (
         <InviteModal
@@ -193,7 +238,9 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
           <Card className="max-w-sm mx-4 animate-scale-in">
             <CardHeader>
               <CardTitle>Welcome to your meeting!</CardTitle>
-              <CardDescription>{onboardingSteps[onboardingStep].text}</CardDescription>
+              <CardDescription>
+                {onboardingSteps[onboardingStep].text}
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="flex items-center justify-between gap-2 mb-4">
@@ -213,11 +260,10 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
                       Previous
                     </Button>
                   )}
-                  <Button
-                    onClick={handleOnboardingNext}
-                    size="sm"
-                  >
-                    {onboardingStep === onboardingSteps.length - 1 ? "Got it!" : "Next"}
+                  <Button onClick={handleOnboardingNext} size="sm">
+                    {onboardingStep === onboardingSteps.length - 1
+                      ? "Got it!"
+                      : "Next"}
                   </Button>
                 </div>
               </div>
@@ -227,7 +273,9 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
                     key={index}
                     className={cn(
                       "h-1.5 rounded-full transition-all",
-                      index === onboardingStep ? "w-6 bg-foreground" : "w-1.5 bg-muted"
+                      index === onboardingStep
+                        ? "w-6 bg-foreground"
+                        : "w-1.5 bg-muted",
                     )}
                   />
                 ))}
@@ -239,4 +287,3 @@ export const MeetingLayout: React.FC<MeetingLayoutProps> = ({ roomName }) => {
     </div>
   );
 };
-

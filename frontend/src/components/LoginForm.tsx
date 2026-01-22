@@ -1,21 +1,15 @@
 import * as React from "react";
-// import { z } from 'zod';
-import { useSetAtom } from "jotai";
+import { useAtom } from "jotai";
 import { userAtom } from "../store/atoms";
 import { Button } from "./Button";
 import { Input } from "./Input";
 import { Lock } from "lucide-react";
 import { toast } from "sonner";
 
-// const LoginSchema = z.object({
-//   username: z.string().min(3, 'Username must be at least 3 characters'),
-//   password: z.string().min(3, 'Password must be at least 3 characters'),
-// });
-
 const APP_BACKEND_URL = import.meta.env.VITE_APP_BACKEND_URL;
 
 export const LoginForm: React.FC = () => {
-  const setUser = useSetAtom(userAtom);
+  const [, setUser] = useAtom(userAtom);
   const [isLogin, setIsLogin] = React.useState(true);
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");

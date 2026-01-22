@@ -64,11 +64,25 @@ export class WebRTCService {
   async getLocalStream(
     audio: boolean = true,
     video: boolean = true,
+    audioDeviceId?: string,
+    videoDeviceId?: string,
   ): Promise<MediaStream> {
     try {
+      const audioConstraints = audio
+        ? audioDeviceId
+          ? { deviceId: { exact: audioDeviceId } }
+          : true
+        : false;
+
+      const videoConstraints = video
+        ? videoDeviceId
+          ? { deviceId: { exact: videoDeviceId }, width: 1280, height: 720 }
+          : { width: 1280, height: 720 }
+        : false;
+
       this.localStream = await navigator.mediaDevices.getUserMedia({
-        audio,
-        video: video ? { width: 1280, height: 720 } : false,
+        audio: audioConstraints,
+        video: videoConstraints,
       });
       return this.localStream;
     } catch (error) {

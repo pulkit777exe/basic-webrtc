@@ -17,18 +17,20 @@ export const VideoRoom: React.FC<VideoRoomProps> = ({
       audioEnabled={audioEnabled}
       videoEnabled={videoEnabled}
     >
-      <div style={{ height: "100vh", width: "100vw" }} className="relative">
+      <div className="relative h-screen w-screen overflow-hidden bg-[#121820] text-white">
+        
         {mediaError && (
-          <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-50 bg-yellow-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2">
+          <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-50 bg-red-600/90 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 backdrop-blur-sm">
             <span>{mediaError}</span>
             <button
               onClick={() => setMediaError(null)}
-              className="ml-2 px-2 py-1 bg-yellow-600 hover:bg-yellow-700 rounded transition-colors text-sm"
+              className="ml-2 px-2 py-1 bg-black/20 hover:bg-black/40 rounded transition-colors text-sm"
             >
               Dismiss
             </button>
           </div>
         )}
+        
         <MeetingLayout roomName={roomName} />
       </div>
     </WebRTCProvider>
