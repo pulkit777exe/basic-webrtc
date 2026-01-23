@@ -3,6 +3,7 @@ import { authenticate } from "../middleware/auth";
 import { rateLimit } from "../middleware/rateLimit";
 import {
   getIceServersHandler,
+  createRoomHandler,
   joinRoomHandler,
   getParticipantsHandler,
   leaveRoomHandler,
@@ -27,6 +28,9 @@ router.use(webrtcRateLimit);
 
 // ICE servers endpoint
 router.get("/ice-servers", getIceServersHandler);
+
+// Create room endpoint
+router.post("/create-room", createRoomHandler);
 
 // Room endpoints
 router.post("/rooms/:roomName/join", joinRoomHandler);

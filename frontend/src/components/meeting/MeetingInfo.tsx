@@ -1,7 +1,8 @@
 import * as React from "react";
-import { Circle, Wifi } from "lucide-react";
+import { Circle, Wifi, Users, ShieldCheck } from "lucide-react";
 import { useWebRTCContext } from "../../contexts/useWebRTCContext";
 import { ConnectionState } from "../../types/webrtc";
+import { cn } from "@/lib/utils";
 
 export const MeetingInfo: React.FC = () => {
   const { participants, connectionState } = useWebRTCContext();
@@ -21,50 +22,68 @@ export const MeetingInfo: React.FC = () => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
-    return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+    if (hours > 0) {
+        return `${hours}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+    }
+    return `${minutes}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const getConnectionQualityInfo = () => {
+  const getConnectionConfig = () => {
     switch (connectionState) {
       case ConnectionState.CONNECTED:
-        return { label: "Connected", color: "text-green-500", bgColor: "bg-green-500/20", icon: Wifi };
+        return { label: "Good", color: "text-green-400", bg: "bg-green-500/10" };
       case ConnectionState.CONNECTING:
       case ConnectionState.RECONNECTING:
-        return { label: "Connecting", color: "text-yellow-500", bgColor: "bg-yellow-500/20", icon: Wifi };
+        return { label: "Weak", color: "text-yellow-400", bg: "bg-yellow-500/10" };
       case ConnectionState.DISCONNECTED:
-        return { label: "Disconnected", color: "text-red-500", bgColor: "bg-red-500/20", icon: Wifi };
+        return { label: "Offline", color: "text-red-400", bg: "bg-red-500/10" };
       default:
-        return { label: "Unknown", color: "text-neutral-400", bgColor: "bg-neutral-400/20", icon: Wifi };
+        return { label: "Unknown", color: "text-gray-400", bg: "bg-gray-500/10" };
     }
   };
 
-  const qualityInfo = getConnectionQualityInfo();
-  const QualityIcon = qualityInfo.icon;
+  const conn = getConnectionConfig();
 
   return (
-    <div className="absolute top-4 left-4 z-10 flex items-center gap-4">
-      <div className="bg-card/90 backdrop-blur-sm rounded-lg px-4 py-2 shadow-lg border border-border">
-        <p className="text-sm text-muted-foreground">
-          Participants{" "}
-          <span className="font-semibold text-foreground">{participants.length + 1}</span>
-        </p>
+    <div className="absolute top-4 left-4 z-10 flex flex-col gap-2 items-start">
+      
+      <div className="flex items-center gap-2">
+         <div className="bg-[#202124]/60 backdrop-blur-md border border-white/10 rounded-full px-3 py-1.5 flex items-center gap-2 shadow-sm">
+            <ShieldCheck className="w-3.5 h-3.5 text-[#e8eaed]" />
+            <span className="text-xs text-[#e8eaed] font-medium tracking-wide">Encrypted</span>
+         </div>
       </div>
-      <div
-        className={`${qualityInfo.bgColor} backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg flex items-center gap-2 group relative border border-border`}
-        title={`Connection: ${qualityInfo.label}`}
-      >
-        <QualityIcon className={`w-4 h-4 ${qualityInfo.color}`} />
-        <span className={`text-xs font-medium ${qualityInfo.color} hidden sm:inline`}>
-          {qualityInfo.label}
-        </span>
-      </div>
-      {isRecording && (
-        <div className="bg-destructive/90 backdrop-blur-sm rounded-lg px-4 py-2 shadow-lg flex items-center gap-2 border border-destructive">
-          <Circle className="w-3 h-3 fill-destructive-foreground text-destructive-foreground" />
-          <span className="text-sm font-medium text-destructive-foreground">Recording</span>
-          <span className="text-sm font-mono text-destructive-foreground">{formatTime(recordingTime)}</span>
+
+      <div className="flex items-center gap-2">
+        
+        {isRecording && (
+          <div className="bg-[#202124]/80 backdrop-blur-md rounded-md px-2.5 py-1.5 flex items-center gap-2 border-l-[3px] border-[#ea4335] shadow-md">
+            <div className="relative flex items-center justify-center">
+                 <Circle className="w-2.5 h-2.5 fill-[#ea4335] text-[#ea4335] animate-pulse" />
+            </div>
+            <span className="text-xs font-bold text-[#e8eaed] tracking-wider uppercase">REC</span>
+            <span className="w-px h-3 bg-white/20 mx-0.5"></span>
+            <span className="text-xs font-mono text-[#e8eaed]">{formatTime(recordingTime)}</span>
+          </div>
+        )}
+
+        <div className="bg-[#202124]/60 backdrop-blur-md rounded-full px-3 py-1.5 flex items-center gap-2 border border-white/5 hover:bg-[#202124]/80 transition-colors cursor-default">
+           <Users className="w-3.5 h-3.5 text-[#e8eaed]" />
+           <span className="text-xs font-medium text-[#e8eaed]">{participants.length + 1}</span>
         </div>
-      )}
+
+        {connectionState !== ConnectionState.CONNECTED && (
+             <div className={cn(
+               "backdrop-blur-md rounded-full px-3 py-1.5 flex items-center gap-2 border border-white/5",
+               "bg-[#202124]/80"
+             )}>
+              <Wifi className={cn("w-3.5 h-3.5", conn.color)} />
+              <span className={cn("text-xs font-medium", conn.color)}>
+                {conn.label}
+              </span>
+            </div>
+        )}
+      </div>
     </div>
   );
 };

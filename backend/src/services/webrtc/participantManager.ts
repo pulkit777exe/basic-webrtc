@@ -75,7 +75,7 @@ interface JoinRoomResult {
 interface RoomValidationResult {
   valid: boolean;
   error?: string;
-  room?: { id: string; name: string; isLocked: boolean };
+  room?: { id: string; name: string | null; isLocked: boolean };
 }
 
 const validateRoomCapacity = (roomName: string): boolean => {
@@ -83,7 +83,7 @@ const validateRoomCapacity = (roomName: string): boolean => {
   return currentCount < MAX_ROOM_SIZE;
 };
 
-const findOrCreateRoom = async (roomName: string): Promise<RoomValidationResult> => {
+const findOrCreateRoom = async (roomName: string, creatorId: string): Promise<RoomValidationResult> => {
   try {
     let room = await prisma.room.findUnique({
       where: { name: roomName },
@@ -94,6 +94,7 @@ const findOrCreateRoom = async (roomName: string): Promise<RoomValidationResult>
       room = await prisma.room.create({
         data: {
           name: roomName,
+          creator: creatorId,
           maxPeers: MAX_ROOM_SIZE
         },
         select: { id: true, name: true, isLocked: true },
@@ -104,6 +105,64 @@ const findOrCreateRoom = async (roomName: string): Promise<RoomValidationResult>
   } catch (error) {
     console.error("Error finding/creating room:", error);
     return { valid: false, error: "Failed to access room" };
+  }
+};
+
+export const joinRoom = async (
+  socketId: string,
+  userId: string,
+  username: string,
+  roomName: string,
+  peerRole: string = "participant"
+): Promise<JoinRoomResult> => {
+  try {
+    if (!validateRoomCapacity(roomName)) {
+      return {
+        success: false,
+        error: "Room is full",
+        participants: getRoomParticipants(roomName),
+      };
+    }
+
+    const userExists = await validateUser(userId);
+    if (!userExists) {
+      return {
+        success: false,
+        error: "User not found",
+        participants: [],
+      };
+    }
+
+    const roomValidation = await findOrCreateRoom(roomName, userId);
+    if (!roomValidation.valid || !roomValidation.room) {
+      return {
+        success: false,
+        error: roomValidation.error || "Room access denied",
+        participants: [],
+      };
+    }
+
+    const participant = createParticipant(userId, socketId, username, peerRole);
+
+    await Promise.all([
+      syncParticipantToDatabase(roomValidation.room.id, userId, socketId, peerRole),
+      syncParticipantToRedis(roomName, socketId, userId),
+    ]);
+
+    store.setParticipant(socketId, participant);
+    store.addToRoom(roomName, socketId);
+
+    return {
+      success: true,
+      participants: getRoomParticipants(roomName),
+    };
+  } catch (error) {
+    console.error("Error joining room:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+      participants: [],
+    };
   }
 };
 
@@ -187,7 +246,6 @@ const cleanupParticipantFromRedis = async (
   ]);
 };
 
-// Public API
 export const getParticipant = (socketId: string): Participant | undefined => {
   return store.getParticipant(socketId);
 };
@@ -197,70 +255,6 @@ export const getRoomParticipants = (roomName: string): Participant[] => {
   return Array.from(socketIds)
     .map((socketId) => store.getParticipant(socketId))
     .filter((p): p is Participant => p !== undefined);
-};
-
-export const joinRoom = async (
-  socketId: string,
-  userId: string,
-  username: string,
-  roomName: string,
-  peerRole: string = "participant"
-): Promise<JoinRoomResult> => {
-  try {
-    // Validate capacity
-    if (!validateRoomCapacity(roomName)) {
-      return {
-        success: false,
-        error: "Room is full",
-        participants: getRoomParticipants(roomName),
-      };
-    }
-
-    // Validate and get/create room
-    const roomValidation = await findOrCreateRoom(roomName);
-    if (!roomValidation.valid || !roomValidation.room) {
-      return {
-        success: false,
-        error: roomValidation.error || "Room access denied",
-        participants: [],
-      };
-    }
-
-    // Validate user
-    const userExists = await validateUser(userId);
-    if (!userExists) {
-      return {
-        success: false,
-        error: "User not found",
-        participants: [],
-      };
-    }
-
-    // Create participant
-    const participant = createParticipant(userId, socketId, username, peerRole);
-
-    // Sync to all storage layers
-    await Promise.all([
-      syncParticipantToDatabase(roomValidation.room.id, userId, socketId, peerRole),
-      syncParticipantToRedis(roomName, socketId, userId),
-    ]);
-
-    // Update in-memory state
-    store.setParticipant(socketId, participant);
-    store.addToRoom(roomName, socketId);
-
-    return {
-      success: true,
-      participants: getRoomParticipants(roomName),
-    };
-  } catch (error) {
-    console.error("Error joining room:", error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
-      participants: [],
-    };
-  }
 };
 
 export const leaveRoom = async (

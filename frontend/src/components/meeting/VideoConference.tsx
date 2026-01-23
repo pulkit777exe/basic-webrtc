@@ -1,99 +1,81 @@
-import * as React from "react";
+import { cn } from "@/lib/utils";
+import { Mic } from "lucide-react";
+import React from "react";
 import { useWebRTCContext } from "../../contexts/useWebRTCContext";
 
 export const VideoConference: React.FC = () => {
+  const videoGridRef = React.useRef<HTMLDivElement>(null);
+  const localVideoRef = React.useRef<HTMLVideoElement>(null);
   const { participants, localStream, remoteStreams } = useWebRTCContext();
-  const videoRefs = React.useRef<Map<string, HTMLVideoElement>>(new Map());
 
-  // Set up local video
   React.useEffect(() => {
-    if (localStream) {
-      const video = document.createElement("video");
-      video.srcObject = localStream;
-      video.autoplay = true;
-      video.muted = true;
-      video.playsInline = true;
-      const container = document.getElementById("local-video-container");
-      if (container) {
-        container.innerHTML = "";
-        container.appendChild(video);
-      }
+    if (localVideoRef.current && localStream) {
+      localVideoRef.current.srcObject = localStream;
     }
   }, [localStream]);
 
-  // Set up remote videos
-  React.useEffect(() => {
-    remoteStreams.forEach((stream, peerId) => {
-      let video = videoRefs.current.get(peerId);
-      if (!video) {
-        video = document.createElement("video");
-        video.autoplay = true;
-        video.playsInline = true;
-        videoRefs.current.set(peerId, video);
-      }
-      video.srcObject = stream;
-    });
-
-    // Cleanup removed streams
-    const currentPeerIds = new Set(remoteStreams.keys());
-    videoRefs.current.forEach((video, peerId) => {
-      if (!currentPeerIds.has(peerId)) {
-        video.srcObject = null;
-        videoRefs.current.delete(peerId);
-      }
-    });
-  }, [remoteStreams]);
-
-  const allParticipants = participants.length + (localStream ? 1 : 0);
+  const tilesCount = participants.length + (localStream ? 1 : 0);
+  const gridCols = tilesCount <= 1 ? 1 : tilesCount <= 4 ? 2 : 3;
 
   return (
-    <div className="relative h-full w-full bg-foreground">
-      {allParticipants === 0 ? (
-        <div className="flex items-center justify-center h-full">
-          <div className="text-center text-muted-foreground">
-            <p className="text-sm">Waiting for participants...</p>
-            {localStream && (
-            <div
-              id="local-video-container"
-              className="relative bg-background rounded-lg overflow-hidden aspect-video border border-border"
-            />
-          )}
-          </div>
+    <div className="w-full h-full flex items-center justify-center">
+      {participants.length === 0 && !localStream ? (
+        <div className="text-center text-gray-400">
+          <p className="text-lg font-medium">Waiting for participants...</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2 p-2 h-full overflow-auto">
-          {localStream && (
-            <div
-              id="local-video-container"
-              className="relative bg-background rounded-lg overflow-hidden aspect-video border border-border"
-            />
+        <div
+          ref={videoGridRef}
+          className={cn(
+            "grid gap-2 w-full h-full p-4",
+            `grid-cols-${gridCols}`
           )}
-          {Array.from(remoteStreams.entries()).map(([peerId, stream]) => {
-            const participant = participants.find((p) => p.socketId === peerId);
+        >
+          {localStream && (
+            <div className="relative bg-black rounded-lg overflow-hidden aspect-video">
+              <video
+                ref={localVideoRef}
+                autoPlay
+                muted
+                playsInline
+                className="w-full h-full object-cover"
+              />
+              <div className="absolute bottom-3 left-3 bg-black/70 text-white text-xs px-3 py-1.5 rounded-full">
+                You
+              </div>
+            </div>
+          )}
+
+          {participants.map((participant) => {
+            const stream = remoteStreams.get(participant.socketId) || null;
             return (
-              <div
-                key={peerId}
-                className="relative bg-background rounded-lg overflow-hidden aspect-video border border-border"
-              >
+            <div
+              key={participant.socketId}
+              className="relative bg-black rounded-lg overflow-hidden aspect-video"
+            >
+              {stream ? (
                 <video
-                  ref={(el) => {
-                    if (el) {
-                      videoRefs.current.set(peerId, el);
-                      el.srcObject = stream;
-                    }
-                  }}
                   autoPlay
                   playsInline
                   className="w-full h-full object-cover"
+                  ref={(el) => {
+                    if (el && el.srcObject !== stream) {
+                      el.srcObject = stream;
+                    }
+                  }}
                 />
-                {participant && (
-                  <div className="absolute bottom-2 left-2 bg-foreground/80 text-background text-xs px-2 py-1 rounded border border-border">
-                    {participant.name}
-                    {participant.isAudioMuted && " 🔇"}
-                    {participant.isVideoMuted && " 📹"}
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-gray-800">
+                  <div className="w-20 h-20 rounded-full bg-blue-600 flex items-center justify-center text-white text-2xl font-medium">
+                    {participant.name.charAt(0).toUpperCase()}
                   </div>
-                )}
+                </div>
+              )}
+              <div className="absolute bottom-3 left-3 bg-black/70 text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-2">
+                <span>{participant.name}</span>
+                {participant.isAudioMuted && <Mic size={12} className="opacity-70" />}
               </div>
+            </div>
             );
           })}
         </div>

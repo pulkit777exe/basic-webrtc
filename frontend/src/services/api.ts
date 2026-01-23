@@ -25,6 +25,10 @@ export interface IceServersResponse {
   iceServers: RTCIceServer[];
 }
 
+export interface CreateRoomResponse {
+  roomId: string;
+}
+
 export const authApi = {
   me: async (): Promise<UserResponse | null> => {
     try {
@@ -43,6 +47,20 @@ export const authApi = {
 };
 
 export const webrtcApi = {
+  createRoom: async (): Promise<CreateRoomResponse> => {
+    const response = await fetch(`${APP_BACKEND_URL}/api/webrtc/create-room`, {
+      method: "POST",
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: "Failed to create room" }));
+      throw new Error(error.error || "Failed to create room");
+    }
+
+    return await response.json();
+  },
+
   getIceServers: async (): Promise<IceServersResponse> => {
     const response = await fetch(`${APP_BACKEND_URL}/api/webrtc/ice-servers`, {
       credentials: "include",
@@ -115,6 +133,39 @@ export const webrtcApi = {
 
     if (!response.ok) {
       throw new Error("Failed to update peer state");
+    }
+  },
+};
+
+export const recordingApi = {
+  upload: async (
+    roomName: string,
+    blob: Blob,
+    options: { startedAt: string; endedAt: string }
+  ): Promise<void> => {
+    const params = new URLSearchParams({
+      roomName,
+      startedAt: options.startedAt,
+      endedAt: options.endedAt,
+    });
+
+    const response = await fetch(
+      `${APP_BACKEND_URL}/api/recordings/upload?${params.toString()}`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "video/webm",
+        },
+        body: blob,
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({
+        error: "Failed to upload recording",
+      }));
+      throw new Error(error.error || "Failed to upload recording");
     }
   },
 };

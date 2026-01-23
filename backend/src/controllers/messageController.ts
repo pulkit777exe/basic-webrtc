@@ -9,9 +9,8 @@ import {
   EditMessageSchema,
   MessageParamsSchema,
 } from "../utils/types";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, Message, User } from "@prisma/client";
 
-// Types
 interface MessageResponse {
   id: string;
   content: string;
@@ -26,19 +25,40 @@ interface PaginatedMessagesResponse {
   nextCursor: string | null;
 }
 
-// Helper functions
-const findOrCreateRoom = async (roomName: string) => {
-  let room = await prisma.room.findFirst({ where: { name: roomName } });
-  
-  if (!room) {
-    room = await prisma.room.create({ data: { name: roomName } });
+type MessageWithUser = Message & {
+  user: Pick<User, "id" | "username" | "name">;
+};
+
+const USER_SELECT = {
+  id: true,
+  username: true,
+  name: true,
+} as const;
+
+const DEFAULT_SESSION_ID = "unknown";
+
+const findOrCreateRoom = async (roomName: string, creatorId: string) => {
+  const room = await prisma.room.findUnique({
+    where: { name: roomName },
+  });
+
+  if (room) {
+    return room;
   }
-  
-  return room;
+
+  return prisma.room.create({
+    data: { 
+      name: roomName,
+      creator: creatorId,
+    },
+  });
+
 };
 
 const findRoomByName = async (roomName: string) => {
-  return prisma.room.findFirst({ where: { name: roomName } });
+  return prisma.room.findUnique({
+    where: { name: roomName },
+  });
 };
 
 const trackMessageAnalytics = async (
@@ -46,18 +66,18 @@ const trackMessageAnalytics = async (
   userId: string,
   content: string,
   roomName: string,
-  req: AuthRequest
-) => {
+  req: AuthRequest,
+): Promise<void> => {
   const browserInfo = extractBrowserInfo(req, req.body.browserInfo);
   const serializedBrowserInfo = serializeBrowserInfo(browserInfo);
-  
+
   await prisma.analytics.create({
     data: {
       roomId,
       userId,
       eventType: "message_sent",
       browserInfo: serializedBrowserInfo as Prisma.InputJsonValue,
-      sessionId: req.body.sessionId || "unknown",
+      sessionId: req.body.sessionId || DEFAULT_SESSION_ID,
       metadata: {
         messageLength: content.length,
         roomName,
@@ -66,7 +86,7 @@ const trackMessageAnalytics = async (
   });
 };
 
-const formatMessage = (message: any): MessageResponse => ({
+const formatMessage = (message: MessageWithUser): MessageResponse => ({
   id: message.id,
   content: message.content,
   sender: message.user.name,
@@ -75,45 +95,64 @@ const formatMessage = (message: any): MessageResponse => ({
   ...(message.updatedAt && { updatedAt: message.updatedAt }),
 });
 
-const handleError = (error: unknown, res: Response, defaultMessage: string) => {
+const handleError = (
+  error: unknown,
+  res: Response,
+  defaultMessage: string,
+): Response => {
   if (error instanceof z.ZodError) {
-    return res.status(400).json({ error: error.issues });
+    return res.status(400).json({
+      error: "Validation failed",
+      details: error.issues,
+    });
   }
-  
-  console.error(defaultMessage, error);
-  return res.status(500).json({ error: defaultMessage });
+
+  console.error(`[MessageController] ${defaultMessage}:`, error);
+
+  return res.status(500).json({
+    error: defaultMessage,
+    message: error instanceof Error ? error.message : "Unknown error",
+  });
 };
 
-// Controllers
-export const createMessage = async (req: AuthRequest, res: Response) => {
+const requireAuth = (userId: string | undefined, res: Response): userId is string => {
+  if (!userId) {
+    res.status(401).json({ error: "Unauthorized" });
+    return false;
+  }
+  return true;
+};
+
+export const createMessage = async (
+  req: AuthRequest,
+  res: Response,
+): Promise<Response> => {
   try {
-    const userId = req.userId;
-    if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
+    if (!requireAuth(req.userId, res)) {
+      return res;
     }
 
     const { roomName, content } = CreateMessageSchema.parse(req.body);
-
-    const room = await findOrCreateRoom(roomName);
+    const room = await findOrCreateRoom(roomName, req.userId);
 
     const message = await prisma.message.create({
       data: {
         roomId: room.id,
-        userId,
+        userId: req.userId,
         content,
       },
       include: {
         user: {
-          select: {
-            id: true,
-            username: true,
-            name: true,
-          },
+          select: USER_SELECT,
         },
       },
     });
 
-    await trackMessageAnalytics(room.id, userId, content, roomName, req);
+    trackMessageAnalytics(room.id, req.userId, content, roomName, req).catch(
+      (error) => {
+        console.error("[MessageController] Failed to track analytics:", error);
+      },
+    );
 
     return res.status(201).json(formatMessage(message));
   } catch (error) {
@@ -121,7 +160,10 @@ export const createMessage = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const getMessages = async (req: AuthRequest, res: Response) => {
+export const getMessages = async (
+  req: AuthRequest,
+  res: Response,
+): Promise<Response> => {
   try {
     const { roomName, limit, cursor } = GetMessagesSchema.parse({
       ...req.query,
@@ -131,13 +173,16 @@ export const getMessages = async (req: AuthRequest, res: Response) => {
     const room = await findRoomByName(roomName);
 
     if (!room) {
-      return res.json({ messages: [], nextCursor: null });
+      return res.json({
+        messages: [],
+        nextCursor: null,
+      });
     }
 
-    const where: Prisma.MessageWhereInput = { roomId: room.id };
-    if (cursor) {
-      where.id = { lt: cursor };
-    }
+    const where: Prisma.MessageWhereInput = {
+      roomId: room.id,
+      ...(cursor && { id: { lt: cursor } }),
+    };
 
     const messages = await prisma.message.findMany({
       where,
@@ -145,18 +190,15 @@ export const getMessages = async (req: AuthRequest, res: Response) => {
       orderBy: { createdAt: "desc" },
       include: {
         user: {
-          select: {
-            id: true,
-            username: true,
-            name: true,
-          },
+          select: USER_SELECT,
         },
       },
     });
 
     const response: PaginatedMessagesResponse = {
       messages: messages.reverse().map(formatMessage),
-      nextCursor: messages.length === limit ? messages[messages.length - 1].id : null,
+      nextCursor:
+        messages.length === limit ? messages[messages.length - 1].id : null,
     };
 
     return res.json(response);
@@ -165,11 +207,13 @@ export const getMessages = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const editMessage = async (req: AuthRequest, res: Response) => {
+export const editMessage = async (
+  req: AuthRequest,
+  res: Response,
+): Promise<Response> => {
   try {
-    const userId = req.userId;
-    if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
+    if (!requireAuth(req.userId, res)) {
+      return res;
     }
 
     const { roomName, messageId } = MessageParamsSchema.parse(req.params);
@@ -185,13 +229,13 @@ export const editMessage = async (req: AuthRequest, res: Response) => {
       where: {
         id: messageId,
         roomId: room.id,
-        userId,
+        userId: req.userId,
       },
     });
 
     if (!existingMessage) {
-      return res.status(404).json({ 
-        error: "Message not found or you don't have permission to edit it" 
+      return res.status(404).json({
+        error: "Message not found or you don't have permission to edit it",
       });
     }
 
@@ -200,11 +244,7 @@ export const editMessage = async (req: AuthRequest, res: Response) => {
       data: { content },
       include: {
         user: {
-          select: {
-            id: true,
-            username: true,
-            name: true,
-          },
+          select: USER_SELECT,
         },
       },
     });
@@ -215,15 +255,16 @@ export const editMessage = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const deleteMessage = async (req: AuthRequest, res: Response) => {
+export const deleteMessage = async (
+  req: AuthRequest,
+  res: Response,
+): Promise<Response> => {
   try {
-    const userId = req.userId;
-    if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
+    if (!requireAuth(req.userId, res)) {
+      return res;
     }
 
     const { roomName, messageId } = MessageParamsSchema.parse(req.params);
-
     const room = await findRoomByName(roomName);
 
     if (!room) {
@@ -234,13 +275,13 @@ export const deleteMessage = async (req: AuthRequest, res: Response) => {
       where: {
         id: messageId,
         roomId: room.id,
-        userId,
+        userId: req.userId,
       },
     });
 
     if (!message) {
-      return res.status(404).json({ 
-        error: "Message not found or you don't have permission to delete it" 
+      return res.status(404).json({
+        error: "Message not found or you don't have permission to delete it",
       });
     }
 

@@ -10,6 +10,7 @@ import roomRoutes from "./routes/roomRoutes";
 import messageRoutes from "./routes/messageRoutes";
 import analyticsRoutes from "./routes/analyticsRoutes";
 import webrtcRoutes from "./routes/webrtcRoutes";
+import recordingRoutes from "./routes/recordingRoutes";
 import { SignalingServer } from "./services/webrtc/signalingServer";
 import { initializeRedis, closeRedis } from "./services/webrtc/redisManager";
 import prisma from "./utils/prisma";
@@ -77,6 +78,7 @@ app.use("/auth", authRoutes);
 app.use("/messages", messageRoutes);
 app.use("/analytics", analyticsRoutes);
 app.use("/api/webrtc", webrtcRoutes);
+app.use("/api", recordingRoutes);
 app.use("/", roomRoutes);
 
 initializeRedis()

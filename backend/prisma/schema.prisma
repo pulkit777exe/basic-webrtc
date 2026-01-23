@@ -15,22 +15,27 @@ model User {
   updatedAt    DateTime          @updatedAt
   messages     Message[]
   analytics    Analytics[]
-  hostedRooms  Room[]            @relation("RoomHost")
+  createdRooms Room[]            @relation("RoomCreator")
   participants RoomParticipant[]
+  recordings   Recording[]
 }
 
 model Room {
-  id           String            @id @default(uuid())
-  name         String            @unique
-  maxPeers     Int               @default(50)
-  isLocked     Boolean           @default(false)
-  hostId       String?
-  host         User?             @relation("RoomHost", fields: [hostId], references: [id])
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
-  messages     Message[]
-  analytics    Analytics[]
-  participants RoomParticipant[]
+  id               String            @id @default(cuid())
+  name             String            @unique
+  creator          String
+  creatorUser      User              @relation("RoomCreator", fields: [creator], references: [id])
+  participants     String[]
+  maxPeers         Int               @default(50)
+  hostId           String?
+  isLocked         Boolean           @default(false)
+  createdAt        DateTime          @default(now())
+  messages         Message[]
+  analytics        Analytics[]
+  roomParticipants RoomParticipant[]
+  recordings       Recording[]
+  
+  @@index([name])
 }
 
 model Message {
@@ -82,4 +87,19 @@ model RoomParticipant {
   @@index([roomId])
   @@index([userId])
   @@index([socketId])
+}
+
+model Recording {
+  id        String   @id @default(uuid())
+  roomId    String
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  filePath  String
+  startedAt DateTime
+  endedAt   DateTime
+  createdAt DateTime @default(now())
+
+  @@index([roomId])
+  @@index([userId])
 }
