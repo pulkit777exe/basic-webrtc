@@ -46,3 +46,33 @@ export interface SignalingPayload {
   fromUserId: string;
   signal: RTCSessionDescriptionInit | RTCIceCandidateInit;
 }
+export interface SignupPayload {
+  username: string;
+  email: string;
+  password: string;
+}
+
+export interface LoginPayload {
+  email: string;
+  password: string;
+}
+
+export interface VerifyOtpPayload {
+  email: string;
+  code: string;
+}
+
+export interface TokenPayload {
+  userId: string;
+  email: string;
+}
+
+export interface AuthResponse {
+  user: {
+    id: string;
+    username: string;
+    email: string;
+    emailVerified: boolean;
+  };
+  accessToken?: string;
+}
