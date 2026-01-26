@@ -1,0 +1,48 @@
+import { WebSocket } from 'ws';
+
+export type RoomType = 'open' | 'locked';
+
+export interface Participant {
+  id: string;
+  username: string;
+  ws: WebSocket;
+  joinedAt: number;
+}
+
+export interface PendingRequest {
+  userId: string;
+  username: string;
+  ws: WebSocket;
+  requestedAt: number;
+}
+
+export interface Room {
+  id: string;
+  type: RoomType;
+  hostId: string;
+  participants: Map<string, Participant>;
+  pendingRequests: Map<string, PendingRequest>;
+  createdAt: number;
+}
+
+export interface WSMessage {
+  type: 'join-room' | 'offer' | 'answer' | 'ice-candidate' | 'request-join' | 
+        'approve-join' | 'reject-join' | 'user-left' | 'start-screen-share' | 
+        'stop-screen-share' | 'error';
+  payload: any;
+}
+
+export interface JoinRoomPayload {
+  roomId: string;
+  userId: string;
+  username: string;
+  roomType?: RoomType;
+  isHost?: boolean;
+}
+
+export interface SignalingPayload {
+  roomId: string;
+  targetUserId: string;
+  fromUserId: string;
+  signal: RTCSessionDescriptionInit | RTCIceCandidateInit;
+}
