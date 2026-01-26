@@ -19,58 +19,55 @@ export interface RoomState {
   isScreenSharing: boolean;
 }
 
-export interface JoinRoomPayload {
+export interface FileAttachment {
+  name: string;
+  type: "image" | "pdf";
+  mimeType: string;
+  data: string;
+  size: number;
+}
+
+export interface ChatMessage {
+  id: string;
   roomId: string;
   userId: string;
   username: string;
+  text: string;
+  timestamp: number;
+  file?: FileAttachment;
 }
 
-export interface RoomJoinedPayload {
-  roomId: string;
-  peers: Peer[];
+export interface User {
+  id: string;
+  username: string;
+  email: string;
+  emailVerified: boolean;
 }
 
-export interface UserJoinedPayload {
-  peer: Peer;
-}
+export type WSMessageType =
+  | "join-room"
+  | "room-joined"
+  | "user-joined"
+  | "user-left"
+  | "offer"
+  | "answer"
+  | "ice-candidate"
+  | "request-join"
+  | "join-request"
+  | "approve-join"
+  | "reject-join"
+  | "join-approved"
+  | "join-rejected"
+  | "start-screen-share"
+  | "stop-screen-share"
+  | "user-started-screen-share"
+  | "user-stopped-screen-share"
+  | "chat-message"
+  | "chat-history"
+  | "get-chat-history"
+  | "error";
 
-export interface UserLeftPayload {
-  userId: string;
-}
-
-export interface OfferPayload {
-  from: string;
-  to: string;
-  sdp: RTCSessionDescriptionInit;
-}
-
-export interface AnswerPayload {
-  from: string;
-  to: string;
-  sdp: RTCSessionDescriptionInit;
-}
-
-export interface IceCandidatePayload {
-  from: string;
-  to: string;
-  candidate: RTCIceCandidateInit;
-}
-
-export interface ScreenSharePayload {
-  userId: string;
-}
-
-export interface WSMessageMap {
-  "join-room": JoinRoomPayload;
-  "room-joined": RoomJoinedPayload;
-  "user-joined": UserJoinedPayload;
-  "user-left": UserLeftPayload;
-  offer: OfferPayload;
-  answer: AnswerPayload;
-  "ice-candidate": IceCandidatePayload;
-  "start-screen-share": ScreenSharePayload;
-  "stop-screen-share": ScreenSharePayload;
-  "user-started-screen-share": ScreenSharePayload;
-  "user-stopped-screen-share": ScreenSharePayload;
-  error: { message: string };
+export interface WSMessage {
+  type: WSMessageType;
+  payload: any;
 }

@@ -13,7 +13,7 @@ import { useWebSocket } from '../hooks/useWebSocket';
 import { useWebRTC } from '../hooks/useWebRTC';
 import { ControlBar } from '../components/ControlBar';
 import { VideoGrid } from '../components/VideoGrid';
-import type { WSMessageMap } from '../types';
+import type { WSMessage } from '../types';
 
 export function Room() {
   const { roomId: urlRoomId } = useParams();
@@ -26,7 +26,7 @@ export function Room() {
   const [peers, setPeers] = useAtom(peersAtom);
   const [pendingRequests, setPendingRequests] = useAtom(pendingRequestsAtom);
 
-  const handleWSMessage = useCallback((message: WSMessageMap) => {
+  const handleWSMessage = useCallback((message: WSMessage) => {
     console.log('[WS Message]', message);
 
     switch (message.type) {

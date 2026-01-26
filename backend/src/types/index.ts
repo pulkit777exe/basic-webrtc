@@ -1,6 +1,6 @@
-import { WebSocket } from 'ws';
+import { WebSocket } from "ws";
 
-export type RoomType = 'open' | 'locked';
+export type RoomType = "open" | "locked";
 
 export interface Participant {
   id: string;
@@ -26,9 +26,20 @@ export interface Room {
 }
 
 export interface WSMessage {
-  type: 'join-room' | 'offer' | 'answer' | 'ice-candidate' | 'request-join' | 
-        'approve-join' | 'reject-join' | 'user-left' | 'start-screen-share' | 
-        'stop-screen-share' | 'error';
+  type:
+    | "join-room"
+    | "offer"
+    | "answer"
+    | "ice-candidate"
+    | "request-join"
+    | "approve-join"
+    | "reject-join"
+    | "user-left"
+    | "start-screen-share"
+    | "stop-screen-share"
+    | "chat-message"
+    | "get-chat-history"
+    | "error";
   payload: any;
 }
 
@@ -75,4 +86,31 @@ export interface AuthResponse {
     emailVerified: boolean;
   };
   accessToken?: string;
+}
+
+export interface FileAttachment {
+  name: string;
+  type: "image" | "pdf";
+  mimeType: string;
+  data: string;
+  size: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  roomId: string;
+  userId: string;
+  username: string;
+  text: string;
+  timestamp: number;
+  file?: FileAttachment;
+}
+
+export interface RoomInfo {
+  id: string;
+  roomCode: string;
+  type: RoomType;
+  hostId: string;
+  participantCount: number;
+  createdAt: number;
 }

@@ -1,17 +1,21 @@
-import jwt from 'jsonwebtoken';
-import { TokenPayload } from '../types';
+import jwt, { SignOptions } from "jsonwebtoken";
+import { TokenPayload } from "../types";
 
 const JWT_SECRET = process.env.JWT_SECRET!;
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET!;
-const JWT_ACCESS_EXPIRY = process.env.JWT_ACCESS_EXPIRY || '15m';
-const JWT_REFRESH_EXPIRY = process.env.JWT_REFRESH_EXPIRY || '7d';
+const JWT_ACCESS_EXPIRY = process.env.JWT_ACCESS_EXPIRY || "15m";
+const JWT_REFRESH_EXPIRY = process.env.JWT_REFRESH_EXPIRY || "7d";
 
 export function generateAccessToken(payload: TokenPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_ACCESS_EXPIRY });
+  return jwt.sign(payload, JWT_SECRET, {
+    expiresIn: JWT_ACCESS_EXPIRY,
+  } as SignOptions);
 }
 
 export function generateRefreshToken(payload: TokenPayload): string {
-  return jwt.sign(payload, JWT_REFRESH_SECRET, { expiresIn: JWT_REFRESH_EXPIRY });
+  return jwt.sign(payload, JWT_REFRESH_SECRET, {
+    expiresIn: JWT_REFRESH_EXPIRY,
+  } as SignOptions);
 }
 
 export function verifyAccessToken(token: string): TokenPayload | null {

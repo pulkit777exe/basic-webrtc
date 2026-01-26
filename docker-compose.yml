@@ -19,6 +19,20 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: webrtc_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ./backend
@@ -30,9 +44,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       - NODE_ENV=development
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/webrtc_db
+      - REDIS_URL=redis://redis:6379
       - PORT=4000
       - ALLOWED_ORIGINS=http://localhost:3000
     env_file:
@@ -59,3 +76,4 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:

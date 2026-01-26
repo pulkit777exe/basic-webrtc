@@ -1,5 +1,5 @@
 import { atom } from 'jotai';
-import { Peer } from '../types';
+import { type Peer, type ChatMessage, type User } from '../types';
 
 export const roomIdAtom = atom<string>('');
 export const userIdAtom = atom<string>('');
@@ -12,3 +12,11 @@ export const isAudioEnabledAtom = atom<boolean>(true);
 export const isVideoEnabledAtom = atom<boolean>(true);
 export const isScreenSharingAtom = atom<boolean>(false);
 export const pendingRequestsAtom = atom<Array<{ userId: string; username: string }>>([]);
+
+export const chatMessagesAtom = atom<ChatMessage[]>([]);
+export const isChatOpenAtom = atom<boolean>(false);
+export const unreadCountAtom = atom<number>(0);
+
+export const currentUserAtom = atom<User | null>(null);
+export const accessTokenAtom = atom<string | null>(null);
+export const isAuthenticatedAtom = atom<boolean>(false);

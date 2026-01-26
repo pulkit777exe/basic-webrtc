@@ -7,6 +7,7 @@ import cookieParser from 'cookie-parser';
 import { WebSocketHandler } from './websocket/handler';
 import authRoutes from './routes/auth';
 import oauthRoutes from './routes/oauth';
+import roomRoutes from './routes/rooms';
 import passport from './config/passport';
 
 dotenv.config();
@@ -35,6 +36,7 @@ app.get('/api/ice-servers', (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/oauth', oauthRoutes);
+app.use('/api/rooms', roomRoutes);
 
 const server = createServer(app);
 
@@ -43,7 +45,6 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 new WebSocketHandler(wss);
 
 server.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
-  console.log(`📡 WebSocket server ready at ws://localhost:${PORT}/ws`);
-  console.log(`🗄️  Database: ${process.env.DATABASE_URL}`);
+  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`WebSocket server ready at ws://localhost:${PORT}/ws`);
 });
