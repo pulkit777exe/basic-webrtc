@@ -93,6 +93,28 @@ export class WebSocketHandler {
       case "user-left":
         this.handleUserLeft(ws, message.payload);
         break;
+      case "send-reaction":
+        this.handleReaction(ws, message.payload);
+        break;
+      case "raise-hand":
+        this.handleHandRaise(ws, message.payload, true);
+        break;
+      case "lower-hand":
+        this.handleHandRaise(ws, message.payload, false);
+        break;
+      case "kick-user":
+        this.handleKickUser(ws, message.payload);
+        break;
+      case "mute-all":
+        this.handleMuteAll(ws, message.payload);
+        break;
+      case "lock-room":
+        this.handleLockRoom(ws, message.payload);
+        break;
+      case "unlock-room":
+        this.handleUnlockRoom(ws, message.payload);
+        break;
+
       default:
         this.sendError(ws, "Unknown message type");
     }
@@ -281,6 +303,129 @@ export class WebSocketHandler {
         });
       }
     });
+  }
+
+  private handleReaction(
+    ws: WebSocket,
+    payload: {
+      roomId: string;
+      userId: string;
+      username: string;
+      emoji: string;
+    },
+  ): void {
+    const { roomId, userId, username, emoji } = payload;
+    const participants = this.roomManager.getRoomParticipants(roomId);
+
+    participants.forEach((p) => {
+      this.send(p.ws, {
+        type: "user-reaction",
+        payload: { userId, username, emoji, timestamp: Date.now() },
+      });
+    });
+  }
+
+  private handleHandRaise(
+    ws: WebSocket,
+    payload: { roomId: string; userId: string; username: string },
+    raised: boolean,
+  ): void {
+    const { roomId, userId, username } = payload;
+    const participants = this.roomManager.getRoomParticipants(roomId);
+
+    participants.forEach((p) => {
+      this.send(p.ws, {
+        type: raised ? "hand-raised" : "hand-lowered",
+        payload: { userId, username, timestamp: Date.now() },
+      });
+    });
+  }
+
+  private handleKickUser(
+    ws: WebSocket,
+    payload: { roomId: string; hostId: string; targetUserId: string },
+  ): void {
+    const { roomId, hostId, targetUserId } = payload;
+    const room = this.roomManager.getRoom(roomId);
+
+    if (!room || room.hostId !== hostId) {
+      this.sendError(ws, "Unauthorized");
+      return;
+    }
+
+    const targetParticipant = room.participants.get(targetUserId);
+    if (targetParticipant) {
+      this.send(targetParticipant.ws, {
+        type: "kicked",
+        payload: { roomId },
+      });
+
+      this.roomManager.removeParticipant(roomId, targetUserId);
+
+      // Notify others
+      const participants = this.roomManager.getRoomParticipants(roomId);
+      participants.forEach((p) => {
+        this.send(p.ws, {
+          type: "user-left",
+          payload: { userId: targetUserId },
+        });
+      });
+    }
+  }
+
+  private handleMuteAll(
+    ws: WebSocket,
+    payload: { roomId: string; hostId: string },
+  ): void {
+    const { roomId, hostId } = payload;
+    const room = this.roomManager.getRoom(roomId);
+
+    if (!room || room.hostId !== hostId) {
+      this.sendError(ws, "Unauthorized");
+      return;
+    }
+
+    const participants = this.roomManager.getRoomParticipants(roomId);
+    participants.forEach((p) => {
+      if (p.id !== hostId) {
+        this.send(p.ws, {
+          type: "force-mute",
+          payload: {},
+        });
+      }
+    });
+  }
+
+  private handleLockRoom(
+    ws: WebSocket,
+    payload: { roomId: string; hostId: string },
+  ): void {
+    const { roomId, hostId } = payload;
+    const room = this.roomManager.getRoom(roomId);
+
+    if (!room || room.hostId !== hostId) {
+      this.sendError(ws, "Unauthorized");
+      return;
+    }
+
+    room.type = "locked";
+    console.log(`[RoomManager] Room ${roomId} locked by host`);
+  }
+
+  private handleUnlockRoom(
+    ws: WebSocket,
+    payload: { roomId: string; hostId: string },
+  ): void {
+    const { roomId, hostId } = payload;
+    const room = this.roomManager.getRoom(roomId);
+
+    if (!room || room.hostId !== hostId) {
+      this.sendError(ws, "Unauthorized");
+      return;
+    }
+
+    room.type = "open";
+    console.log(`[RoomManager] Room ${roomId} unlocked by host`);
   }
 
   private handleChatMessage(
