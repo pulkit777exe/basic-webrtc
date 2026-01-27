@@ -40,12 +40,17 @@ export function useWebRTC(sendMessage: (msg: WSMessage) => void) {
 
   const createOffer = useCallback(
     async (targetUserId: string, stream: MediaStream) => {
+      console.log("LOG: [WebRTC] Creating offer for", targetUserId);
       const pc = createPeerConnection();
 
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
       pc.onicecandidate = (event) => {
         if (event.candidate) {
+          console.log(
+            "LOG: [WebRTC] Generated ICE candidate for",
+            targetUserId,
+          );
           sendMessage({
             type: "ice-candidate",
             payload: {
@@ -58,7 +63,15 @@ export function useWebRTC(sendMessage: (msg: WSMessage) => void) {
         }
       };
 
+      pc.onconnectionstatechange = () => {
+        console.log(
+          "LOG: [WebRTC] Connection state change:",
+          pc.connectionState,
+        );
+      };
+
       pc.ontrack = (event) => {
+        console.log("LOG: [WebRTC] Received track from", targetUserId);
         setPeers((prev) => {
           const newPeers = new Map(prev);
           const peer = newPeers.get(targetUserId);
@@ -72,6 +85,7 @@ export function useWebRTC(sendMessage: (msg: WSMessage) => void) {
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      console.log("LOG: [WebRTC] Sending offer to", targetUserId);
 
       sendMessage({
         type: "offer",
@@ -102,12 +116,17 @@ export function useWebRTC(sendMessage: (msg: WSMessage) => void) {
       offer: RTCSessionDescriptionInit,
       stream: MediaStream,
     ) => {
+      console.log("LOG: [WebRTC] Handling offer from", fromUserId);
       const pc = createPeerConnection();
 
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
       pc.onicecandidate = (event) => {
         if (event.candidate) {
+          console.log(
+            "LOG: [WebRTC] Generated ICE candidate during answer for",
+            fromUserId,
+          );
           sendMessage({
             type: "ice-candidate",
             payload: {
@@ -120,7 +139,15 @@ export function useWebRTC(sendMessage: (msg: WSMessage) => void) {
         }
       };
 
+      pc.onconnectionstatechange = () => {
+        console.log(
+          "LOG: [WebRTC] Connection state change (receiver):",
+          pc.connectionState,
+        );
+      };
+
       pc.ontrack = (event) => {
+        console.log("LOG: [WebRTC] Received track (receiver) from", fromUserId);
         setPeers((prev) => {
           const newPeers = new Map(prev);
           const peer = newPeers.get(fromUserId);
@@ -135,6 +162,7 @@ export function useWebRTC(sendMessage: (msg: WSMessage) => void) {
       await pc.setRemoteDescription(offer);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+      console.log("LOG: [WebRTC] Sending answer to", fromUserId);
 
       sendMessage({
         type: "answer",
@@ -161,18 +189,30 @@ export function useWebRTC(sendMessage: (msg: WSMessage) => void) {
 
   const handleAnswer = useCallback(
     async (fromUserId: string, answer: RTCSessionDescriptionInit) => {
+      console.log("LOG: [WebRTC] Handling answer from", fromUserId);
       const peer = peers.get(fromUserId);
       if (peer?.connection) {
         await peer.connection.setRemoteDescription(answer);
+      } else {
+        console.warn(
+          "LOG: [WebRTC] Received answer but no peer connection for",
+          fromUserId,
+        );
       }
     },
     [peers],
   );
   const handleIceCandidate = useCallback(
     async (fromUserId: string, candidate: RTCIceCandidateInit) => {
+      console.log("LOG: [WebRTC] Handling ICE candidate from", fromUserId);
       const peer = peers.get(fromUserId);
       if (peer?.connection) {
         await peer.connection.addIceCandidate(new RTCIceCandidate(candidate));
+      } else {
+        console.warn(
+          "LOG: [WebRTC] Received ICE but no peer connection for",
+          fromUserId,
+        );
       }
     },
     [peers],

@@ -39,7 +39,14 @@ export interface WSMessage {
     | "stop-screen-share"
     | "chat-message"
     | "get-chat-history"
-    | "error";
+    | "error"
+    | "send-reaction"
+    | "raise-hand"
+    | "lower-hand"
+    | "kick-user"
+    | "mute-all"
+    | "lock-room"
+    | "unlock-room";
   payload: any;
 }
 

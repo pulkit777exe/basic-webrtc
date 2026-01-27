@@ -114,20 +114,34 @@ export function Room() {
           break;
 
         case "offer":
+          console.log(
+            "LOG: [Room] Received offer from",
+            message.payload.fromUserId,
+          );
           if (localStream) {
             handleOffer(
               message.payload.fromUserId,
               message.payload.signal,
               localStream,
             );
+          } else {
+            console.warn("LOG: [Room] Received offer but no local stream!");
           }
           break;
 
         case "answer":
+          console.log(
+            "LOG: [Room] Received answer from",
+            message.payload.fromUserId,
+          );
           handleAnswer(message.payload.fromUserId, message.payload.signal);
           break;
 
         case "ice-candidate":
+          console.log(
+            "LOG: [Room] Received ICE candidate from",
+            message.payload.fromUserId,
+          );
           handleIceCandidate(
             message.payload.fromUserId,
             message.payload.signal,
@@ -250,10 +264,15 @@ export function Room() {
 
     peers.forEach((peer) => {
       if (!peer.connection) {
-        createOffer(peer.userId, localStream);
+        if (userId > peer.userId) {
+          console.log("LOG: [Room] Initiating connection to", peer.userId);
+          createOffer(peer.userId, localStream);
+        } else {
+          console.log("LOG: [Room] Waiting for offer from", peer.userId);
+        }
       }
     });
-  }, [peers, localStream, createOffer]);
+  }, [peers, localStream, createOffer, userId]);
 
   // ghosting the room (leaving)
   const handleLeave = () => {

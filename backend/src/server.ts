@@ -61,5 +61,4 @@ new WebSocketHandler(wss);
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`WebSocket server ready at ws://localhost:${PORT}/ws`);
-  console.log(`Security: Helmet enabled, Rate limiting active`);
 });
