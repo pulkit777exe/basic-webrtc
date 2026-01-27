@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from "react";
 
 interface FloatingReaction {
   id: string;
@@ -10,15 +10,19 @@ interface ReactionsProps {
   onSendReaction: (emoji: string) => void;
 }
 
-const EMOJIS = ['👍', '❤️', '😂', '🎉', '👏', '🔥'];
+const EMOJIS = ["👍", "❤️", "😂", "🎉", "👏", "🔥"];
 
 export function Reactions({ onSendReaction }: ReactionsProps) {
   const [showPicker, setShowPicker] = useState(false);
-  const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
+  const [floatingReactions, setFloatingReactions] = useState<
+    FloatingReaction[]
+  >([]);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setFloatingReactions(prev => prev.filter(r => Date.now() - parseInt(r.id) < 3000));
+      setFloatingReactions((prev) =>
+        prev.filter((r) => Date.now() - parseInt(r.id) < 3000),
+      );
     }, 100);
 
     return () => clearInterval(interval);
@@ -30,16 +34,16 @@ export function Reactions({ onSendReaction }: ReactionsProps) {
     setShowPicker(false);
   };
 
-  const addFloatingReaction = (emoji: string) => {
+  const addFloatingReaction = useCallback((emoji: string) => {
     const id = Date.now().toString();
     const x = Math.random() * 80 + 10; // 10-90% of width
-    setFloatingReactions(prev => [...prev, { id, emoji, x }]);
-  };
+    setFloatingReactions((prev) => [...prev, { id, emoji, x }]);
+  }, []);
 
   return (
     <>
       <div className="fixed inset-0 pointer-events-none z-40">
-        {floatingReactions.map(reaction => (
+        {floatingReactions.map((reaction) => (
           <div
             key={reaction.id}
             className="absolute bottom-20 text-4xl animate-float-up"
@@ -53,7 +57,7 @@ export function Reactions({ onSendReaction }: ReactionsProps) {
       <div className="relative">
         {showPicker && (
           <div className="absolute bottom-16 left-0 bg-gray-800 rounded-lg p-3 shadow-xl flex gap-2">
-            {EMOJIS.map(emoji => (
+            {EMOJIS.map((emoji) => (
               <button
                 key={emoji}
                 onClick={() => handleReaction(emoji)}

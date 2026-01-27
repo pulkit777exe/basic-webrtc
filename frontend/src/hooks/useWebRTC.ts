@@ -10,7 +10,7 @@ import {
   roomIdAtom,
   userIdAtom,
 } from "../store/roomStore";
-import { Peer, WSMessage } from "../types";
+import { type WSMessage } from "../types";
 import {
   createPeerConnection,
   getLocalStream,
@@ -195,6 +195,40 @@ export function useWebRTC(sendMessage: (msg: WSMessage) => void) {
       }
     }
   }, [localStream, setIsVideoEnabled]);
+  const stopScreenShare = useCallback(() => {
+    if (screenStream) {
+      screenStream.getTracks().forEach((track) => track.stop());
+      setScreenStream(null);
+      setIsScreenSharing(false);
+      sendMessage({
+        type: "stop-screen-share",
+        payload: { roomId, userId },
+      });
+
+      if (localStream) {
+        peers.forEach((peer) => {
+          if (peer.connection) {
+            const sender = peer.connection
+              .getSenders()
+              .find((s) => s.track?.kind === "video");
+            if (sender) {
+              sender.replaceTrack(localStream.getVideoTracks()[0]);
+            }
+          }
+        });
+      }
+    }
+  }, [
+    screenStream,
+    localStream,
+    roomId,
+    userId,
+    peers,
+    sendMessage,
+    setScreenStream,
+    setIsScreenSharing,
+  ]);
+
   const startScreenShare = useCallback(async () => {
     try {
       const stream = await getScreenStream();
@@ -223,41 +257,16 @@ export function useWebRTC(sendMessage: (msg: WSMessage) => void) {
     } catch (error) {
       console.error("Error starting screen share:", error);
     }
-  }, [roomId, userId, peers, sendMessage, setScreenStream, setIsScreenSharing]);
-  const stopScreenShare = useCallback(() => {
-    if (screenStream) {
-      screenStream.getTracks().forEach((track) => track.stop());
-      setScreenStream(null);
-      setIsScreenSharing(false);
-      sendMessage({
-        type: "stop-screen-share",
-        payload: { roomId, userId },
-      });
-
-      // Restore camera tracks
-      if (localStream) {
-        peers.forEach((peer) => {
-          if (peer.connection) {
-            const sender = peer.connection
-              .getSenders()
-              .find((s) => s.track?.kind === "video");
-            if (sender) {
-              sender.replaceTrack(localStream.getVideoTracks()[0]);
-            }
-          }
-        });
-      }
-    }
   }, [
-    screenStream,
-    localStream,
     roomId,
     userId,
     peers,
     sendMessage,
     setScreenStream,
     setIsScreenSharing,
+    stopScreenShare,
   ]);
+  // ghosting the room (cleanup)
   const cleanup = useCallback(() => {
     localStream?.getTracks().forEach((track) => track.stop());
     screenStream?.getTracks().forEach((track) => track.stop());

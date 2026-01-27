@@ -29,19 +29,35 @@ async function fetchAPI(endpoint: string, options: RequestOptions = {}) {
   return data;
 }
 
+interface SignupPayload {
+  username: string;
+  email: string;
+  password?: string;
+}
+
+interface LoginPayload {
+  email: string;
+  password?: string;
+}
+
+interface VerifyOtpPayload {
+  email: string;
+  otp: string;
+}
+
 export const api = {
   auth: {
-    signup: (payload: any) =>
+    signup: (payload: SignupPayload) =>
       fetchAPI("/auth/signup", {
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    login: (payload: any) =>
+    login: (payload: LoginPayload) =>
       fetchAPI("/auth/login", {
         method: "POST",
         body: JSON.stringify(payload),
       }),
-    verifyOtp: (payload: any) =>
+    verifyOtp: (payload: VerifyOtpPayload) =>
       fetchAPI("/auth/verify-otp", {
         method: "POST",
         body: JSON.stringify(payload),

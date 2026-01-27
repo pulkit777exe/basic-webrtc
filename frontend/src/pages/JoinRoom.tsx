@@ -60,9 +60,9 @@ export function JoinRoom() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-black to-gray-900">
+    <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-gray-900 via-black to-gray-900">
       <div className="bg-gray-800 rounded-2xl shadow-2xl p-8 w-full max-w-md">
-        <h1 className="text-3xl font-bold text-center mb-8 bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+        <h1 className="text-3xl font-bold text-center mb-8 bg-linear-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
           WebRTC Meet
         </h1>
 

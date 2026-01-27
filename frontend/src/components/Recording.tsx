@@ -1,19 +1,20 @@
-import { useState, useRef } from 'react';
+import { useState, useRef } from "react";
 
 export function Recording() {
   const [isRecording, setIsRecording] = useState(false);
-  const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
+  const [, setRecordedChunks] = useState<Blob[]>([]);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { mediaSource: 'screen' } as any,
-        audio: true
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        video: { mediaSource: "screen" } as any,
+        audio: true,
       });
 
       const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'video/webm;codecs=vp9'
+        mimeType: "video/webm;codecs=vp9",
       });
 
       mediaRecorderRef.current = mediaRecorder;
@@ -27,15 +28,15 @@ export function Recording() {
 
       mediaRecorder.onstop = () => {
         setRecordedChunks(chunks);
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach((track) => track.stop());
         downloadRecording(chunks);
       };
 
-      mediaRecorder.start(1000); // Collect data every second
+      mediaRecorder.start(1000);
       setIsRecording(true);
     } catch (error) {
-      console.error('Error starting recording:', error);
-      alert('Failed to start recording');
+      console.error("Error starting recording:", error);
+      alert("Failed to start recording");
     }
   };
 
@@ -47,9 +48,9 @@ export function Recording() {
   };
 
   const downloadRecording = (chunks: Blob[]) => {
-    const blob = new Blob(chunks, { type: 'video/webm' });
+    const blob = new Blob(chunks, { type: "video/webm" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
     a.download = `recording-${Date.now()}.webm`;
     a.click();
@@ -59,8 +60,8 @@ export function Recording() {
   return (
     <button
       onClick={isRecording ? stopRecording : startRecording}
-      className={`p-4 rounded-full ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-gray-700 hover:bg-gray-600'}`}
-      title={isRecording ? 'Stop Recording' : 'Start Recording'}
+      className={`p-4 rounded-full ${isRecording ? "bg-red-600 animate-pulse" : "bg-gray-700 hover:bg-gray-600"}`}
+      title={isRecording ? "Stop Recording" : "Start Recording"}
     >
       <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
         {isRecording ? (

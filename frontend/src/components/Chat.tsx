@@ -25,8 +25,8 @@ const ALLOWED_TYPES = [
 
 export function Chat({ sendMessage }: ChatProps) {
   const [messages] = useAtom(chatMessagesAtom);
-  const [isOpen, setIsOpen] = useAtom(isChatOpenAtom);
-  const [unreadCount, setUnreadCount] = useAtom(unreadCountAtom);
+  const [isOpen,] = useAtom(isChatOpenAtom);
+  const [, setUnreadCount] = useAtom(unreadCountAtom);
   const [roomId] = useAtom(roomIdAtom);
   const [userId] = useAtom(userIdAtom);
   const [username] = useAtom(usernameAtom);
@@ -190,46 +190,8 @@ export function Chat({ sendMessage }: ChatProps) {
     return null;
   };
 
-  if (!isOpen) {
-    return (
-      <button
-        onClick={() => setIsOpen(true)}
-        className="fixed right-4 bottom-24 bg-blue-600 hover:bg-blue-700 p-4 rounded-full shadow-lg"
-      >
-        <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-          <path
-            fillRule="evenodd"
-            d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7zM7 9H5v2h2V9zm8 0h-2v2h2V9zM9 9h2v2H9V9z"
-            clipRule="evenodd"
-          />
-        </svg>
-        {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-            {unreadCount}
-          </span>
-        )}
-      </button>
-    );
-  }
-
   return (
-    <div className="fixed right-4 bottom-24 w-96 h-[500px] bg-gray-800 rounded-lg shadow-2xl flex flex-col">
-      <div className="flex items-center justify-between p-4 border-b border-gray-700">
-        <h3 className="font-semibold text-lg">Chat</h3>
-        <button
-          onClick={() => setIsOpen(false)}
-          className="text-gray-400 hover:text-white"
-        >
-          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-            <path
-              fillRule="evenodd"
-              d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-              clipRule="evenodd"
-            />
-          </svg>
-        </button>
-      </div>
-
+    <div className="flex flex-col h-full bg-gray-800">
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.length === 0 ? (
           <p className="text-gray-400 text-center text-sm mt-4">
@@ -249,7 +211,7 @@ export function Chat({ sendMessage }: ChatProps) {
                 {msg.userId !== userId && (
                   <p className="text-xs text-gray-300 mb-1">{msg.username}</p>
                 )}
-                {msg.text && <p className="text-sm break-words">{msg.text}</p>}
+                {msg.text && <p className="text-sm wrap-break-word">{msg.text}</p>}
                 {msg.file && renderFileAttachment(msg.file)}
                 <p className="text-xs text-gray-300 mt-1">
                   {formatTime(msg.timestamp)}

@@ -43,7 +43,7 @@ export interface User {
   email: string;
   emailVerified: boolean;
 }
-
+export type RoomType = "open" | "locked";
 export type WSMessageType =
   | "join-room"
   | "room-joined"
@@ -65,9 +65,22 @@ export type WSMessageType =
   | "chat-message"
   | "chat-history"
   | "get-chat-history"
+  | "user-reaction"
+  | "hand-raised"
+  | "hand-lowered"
+  | "force-mute"
+  | "kicked"
+  | "send-reaction"
+  | "raise-hand"
+  | "lower-hand"
+  | "kick-user"
+  | "mute-all"
+  | "lock-room"
+  | "unlock-room"
   | "error";
 
 export interface WSMessage {
   type: WSMessageType;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   payload: any;
 }

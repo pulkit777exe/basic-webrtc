@@ -7,7 +7,7 @@ import {
   isAuthenticatedAtom,
 } from "../store/roomStore";
 import { api } from "../utils/api";
-import { RoomType } from "../types";
+import { type RoomType } from "../types";
 
 interface Room {
   id: string;
@@ -34,20 +34,21 @@ export function Dashboard() {
       return;
     }
 
+    const loadRooms = async () => {
+      try {
+        if (!token) return;
+        const data = await api.rooms.listMyRooms(token);
+        setMyRooms(data.rooms);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } catch (err: any) {
+        setError(err.message);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
     loadRooms();
   }, [isAuthenticated, token, navigate]);
-
-  const loadRooms = async () => {
-    try {
-      if (!token) return;
-      const data = await api.rooms.listMyRooms(token);
-      setMyRooms(data.rooms);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const handleCreateRoom = async (type: "open" | "locked") => {
     try {
@@ -55,6 +56,7 @@ export function Dashboard() {
       setIsCreating(true);
       const data = await api.rooms.create(type, token);
       setMyRooms([...myRooms, data.room]);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -69,6 +71,7 @@ export function Dashboard() {
       if (!token) return;
       await api.rooms.delete(roomCode, token);
       setMyRooms(myRooms.filter((r) => r.roomCode !== roomCode));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       alert(err.message);
     }
@@ -102,7 +105,7 @@ export function Dashboard() {
         {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
-            <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+            <h1 className="text-3xl font-bold bg-linear-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
               Dashboard
             </h1>
             <p className="text-gray-400">Welcome, {user.username}</p>

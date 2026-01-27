@@ -114,3 +114,16 @@ export interface RoomInfo {
   participantCount: number;
   createdAt: number;
 }
+
+export interface Reaction {
+  userId: string;
+  username: string;
+  emoji: string;
+  timestamp: number;
+}
+
+export interface HandRaiseState {
+  userId: string;
+  username: string;
+  timestamp: number;
+}

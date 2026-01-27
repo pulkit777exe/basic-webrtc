@@ -8,13 +8,13 @@ export function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black text-white">
+    <div className="min-h-screen bg-linear-to-br from-gray-900 via-gray-800 to-black text-white">
       <section className="relative min-h-screen flex flex-col items-center justify-center px-6 overflow-hidden">
         <div className="absolute top-20 left-10 w-72 h-72 bg-blue-600/30 rounded-full blur-3xl" />
         <div className="absolute bottom-20 right-10 w-96 h-96 bg-purple-600/30 rounded-full blur-3xl" />
 
         <div className="relative z-10 text-center max-w-4xl mx-auto">
-          <h1 className="text-5xl md:text-7xl font-bold mb-6 bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+          <h1 className="text-5xl md:text-7xl font-bold mb-6 bg-linear-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
             Connect Face-to-Face
           </h1>
           <p className="text-xl md:text-2xl text-gray-300 mb-8 max-w-2xl mx-auto">
@@ -25,7 +25,7 @@ export function Home() {
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
             <button
               onClick={() => navigate("/landing")}
-              className="px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-xl font-semibold text-lg shadow-lg shadow-blue-500/25 transition-all hover:scale-105"
+              className="px-8 py-4 bg-linear-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-xl font-semibold text-lg shadow-lg shadow-blue-500/25 transition-all hover:scale-105"
             >
               Start Meeting
             </button>
@@ -45,7 +45,7 @@ export function Home() {
                 <div className="w-3 h-3 rounded-full bg-green-500" />
               </div>
               <div className="bg-gray-900 rounded-lg p-4 grid grid-cols-2 gap-4">
-                <div className="aspect-video bg-gradient-to-br from-gray-800 to-gray-700 rounded-lg flex items-center justify-center">
+                <div className="aspect-video bg-linear-to-br from-gray-800 to-gray-700 rounded-lg flex items-center justify-center">
                   <div className="w-16 h-16 rounded-full bg-blue-600/50 flex items-center justify-center">
                     <svg
                       className="w-8 h-8"
@@ -56,7 +56,7 @@ export function Home() {
                     </svg>
                   </div>
                 </div>
-                <div className="aspect-video bg-gradient-to-br from-gray-800 to-gray-700 rounded-lg flex items-center justify-center">
+                <div className="aspect-video bg-linear-to-br from-gray-800 to-gray-700 rounded-lg flex items-center justify-center">
                   <div className="w-16 h-16 rounded-full bg-purple-600/50 flex items-center justify-center">
                     <svg
                       className="w-8 h-8"
@@ -100,7 +100,7 @@ export function Home() {
           </p>
 
           <div className="grid md:grid-cols-3 gap-8">
-            <div className="bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm rounded-2xl p-8 border border-gray-700 hover:border-blue-500/50 transition-all group">
+            <div className="bg-linear-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm rounded-2xl p-8 border border-gray-700 hover:border-blue-500/50 transition-all group">
               <div className="w-14 h-14 bg-blue-600/20 rounded-xl flex items-center justify-center mb-6 group-hover:bg-blue-600/30 transition-colors">
                 <svg
                   className="w-7 h-7 text-blue-400"
@@ -117,7 +117,7 @@ export function Home() {
               </p>
             </div>
 
-            <div className="bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm rounded-2xl p-8 border border-gray-700 hover:border-purple-500/50 transition-all group">
+            <div className="bg-linear-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm rounded-2xl p-8 border border-gray-700 hover:border-purple-500/50 transition-all group">
               <div className="w-14 h-14 bg-purple-600/20 rounded-xl flex items-center justify-center mb-6 group-hover:bg-purple-600/30 transition-colors">
                 <svg
                   className="w-7 h-7 text-purple-400"
@@ -138,7 +138,7 @@ export function Home() {
               </p>
             </div>
 
-            <div className="bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm rounded-2xl p-8 border border-gray-700 hover:border-pink-500/50 transition-all group">
+            <div className="bg-linear-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm rounded-2xl p-8 border border-gray-700 hover:border-pink-500/50 transition-all group">
               <div className="w-14 h-14 bg-pink-600/20 rounded-xl flex items-center justify-center mb-6 group-hover:bg-pink-600/30 transition-colors">
                 <svg
                   className="w-7 h-7 text-pink-400"
@@ -164,7 +164,7 @@ export function Home() {
 
       <section className="py-24 px-6">
         <div className="max-w-4xl mx-auto text-center">
-          <div className="bg-gradient-to-r from-blue-600/20 to-purple-600/20 backdrop-blur-xl rounded-3xl p-12 border border-white/10">
+          <div className="bg-linear-to-r from-blue-600/20 to-purple-600/20 backdrop-blur-xl rounded-3xl p-12 border border-white/10">
             <h2 className="text-3xl md:text-4xl font-bold mb-4">
               Ready to Connect?
             </h2>
