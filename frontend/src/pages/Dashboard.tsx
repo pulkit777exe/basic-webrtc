@@ -8,6 +8,7 @@ import {
 } from "../store/roomStore";
 import { api } from "../utils/api";
 import { type RoomType } from "../types";
+import { toast } from "sonner";
 
 interface Room {
   id: string;
@@ -58,7 +59,7 @@ export function Dashboard() {
       setMyRooms([...myRooms, data.room]);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message);
     } finally {
       setIsCreating(false);
     }
@@ -73,7 +74,7 @@ export function Dashboard() {
       setMyRooms(myRooms.filter((r) => r.roomCode !== roomCode));
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
-      alert(err.message);
+      toast.error(err.message);
     }
   };
 

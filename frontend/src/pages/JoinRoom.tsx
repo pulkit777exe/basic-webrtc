@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAtom } from 'jotai';
 import { userIdAtom, usernameAtom, isHostAtom } from '../store/roomStore';
+import { toast } from 'sonner';
 
 function generateRoomId(): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz';
@@ -25,7 +26,7 @@ export function JoinRoom() {
 
   const handleCreateRoom = () => {
     if (!name.trim()) {
-      alert('Please enter your name');
+      toast.error('Please enter your name');
       return;
     }
 
@@ -41,12 +42,12 @@ export function JoinRoom() {
 
   const handleJoinRoom = () => {
     if (!name.trim()) {
-      alert('Please enter your name');
+      toast.error('Please enter your name');
       return;
     }
 
     if (!roomCode.match(/^[a-z]{3}-[a-z]{3}$/)) {
-      alert('Invalid room code format. Should be xxx-xxx');
+      toast.error('Invalid room code format. Should be xxx-xxx');
       return;
     }
 

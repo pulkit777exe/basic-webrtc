@@ -21,6 +21,8 @@ import { VideoGrid } from "../components/VideoGrid";
 import { ControlBar } from "../components/ControlBar";
 import { Chat } from "../components/Chat";
 import { type WSMessage, type ChatMessage, type Peer } from "../types";
+import { toast } from "sonner";
+import { Video } from "lucide-react";
 
 export function Room() {
   const { roomId: urlRoomId } = useParams();
@@ -31,20 +33,33 @@ export function Room() {
   const [username] = useAtom(usernameAtom);
   const [isHost] = useAtom(isHostAtom);
   const [peers, setPeers] = useAtom(peersAtom);
-  const [pendingRequests, setPendingRequests] = useAtom(pendingRequestsAtom);
+  const [, setPendingRequests] = useAtom(pendingRequestsAtom);
   const [, setChatMessages] = useAtom(chatMessagesAtom);
-  const [isChatOpen] = useAtom(isChatOpenAtom);
+  const [isChatOpen, setIsChatOpen] = useAtom(isChatOpenAtom);
   const [, setUnreadCount] = useAtom(unreadCountAtom);
   const [isHandRaised, setIsHandRaised] = useAtom(isHandRaisedAtom);
-  const [raisedHands, setRaisedHands] = useAtom(raisedHandsAtom);
+  const [, setRaisedHands] = useAtom(raisedHandsAtom);
   const [isRoomLocked, setIsRoomLocked] = useAtom(isRoomLockedAtom);
 
-  const messageHandlerRef = useRef<((message: WSMessage) => void) | null>(null);
+  const hasJoinedRef = useRef(false);
+  const hasInitializedMediaRef = useRef(false);
 
-  const { send } = useWebSocket((message) => {
-    if (messageHandlerRef.current) {
-      messageHandlerRef.current(message);
-    }
+  // --- Refs to break TDZ / circular deps ---
+  const handleWSMessageRef = useRef<(m: WSMessage) => void>(() => {});
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const webRTCActionsRef = useRef<{
+    handleOffer?: (
+      fromUserId: string,
+      signal: any,
+      stream: MediaStream,
+    ) => void;
+    handleAnswer?: (fromUserId: string, signal: any) => void;
+    handleIceCandidate?: (fromUserId: string, signal: any) => void;
+    toggleAudio?: () => void;
+  }>({});
+
+  const { send, connectionStatus, reconnect } = useWebSocket((message) => {
+    handleWSMessageRef.current(message);
   });
 
   const {
@@ -64,48 +79,66 @@ export function Room() {
     cleanup,
   } = useWebRTC(send);
 
+  useEffect(() => {
+    localStreamRef.current = localStream ?? null;
+  }, [localStream]);
+
+  useEffect(() => {
+    webRTCActionsRef.current = {
+      handleOffer,
+      handleAnswer,
+      handleIceCandidate,
+      toggleAudio,
+    };
+  }, [handleOffer, handleAnswer, handleIceCandidate, toggleAudio]);
+
   const handleWSMessage = useCallback(
     (message: WSMessage) => {
       console.log("[WS Message]", message);
 
       switch (message.type) {
         case "room-joined":
+          hasJoinedRef.current = true;
           message.payload.participants.forEach((p: Peer) => {
-            setPeers((prev: Map<string, Peer>) => {
-              const newPeers = new Map(prev);
-              newPeers.set(p.userId, {
+            setPeers((prev) => {
+              const map = new Map(prev);
+              map.set(p.userId, {
                 userId: p.userId,
                 username: p.username,
               });
-              return newPeers;
+              return map;
             });
           });
+
           if (message.payload.chatHistory) {
             setChatMessages(message.payload.chatHistory);
           }
+
+          toast.success("Successfully joined the room");
           break;
 
         case "user-joined":
-          setPeers((prev: Map<string, Peer>) => {
-            const newPeers = new Map(prev);
-            newPeers.set(message.payload.userId, {
+          setPeers((prev) => {
+            const map = new Map(prev);
+            map.set(message.payload.userId, {
               userId: message.payload.userId,
               username: message.payload.username,
             });
-            return newPeers;
+            return map;
           });
+          toast.info(`${message.payload.username} joined the room`);
           break;
 
         case "user-left":
-          setPeers((prev: Map<string, Peer>) => {
-            const newPeers = new Map(prev);
-            newPeers.delete(message.payload.userId);
-            return newPeers;
+          setPeers((prev) => {
+            const map = new Map(prev);
+            map.delete(message.payload.userId);
+            return map;
           });
           setRaisedHands((prev: Set<string>) => {
-            const newHands = new Set(prev);
-            newHands.delete(message.payload.userId);
-            return newHands;
+            const s = new Set(prev);
+            s.delete(message.payload.userId);
+            return s;
           });
           break;
 
@@ -114,35 +147,27 @@ export function Room() {
           break;
 
         case "offer":
-          console.log(
-            "LOG: [Room] Received offer from",
-            message.payload.fromUserId,
-          );
-          if (localStream) {
-            handleOffer(
+          console.log("LOG: [Room] Received offer from", message.payload.fromUserId);
+          if (localStreamRef.current) {
+            webRTCActionsRef.current.handleOffer?.(
               message.payload.fromUserId,
               message.payload.signal,
-              localStream,
+              localStreamRef.current,
             );
           } else {
-            console.warn("LOG: [Room] Received offer but no local stream!");
+            console.warn("Received offer but no local stream");
           }
           break;
 
         case "answer":
-          console.log(
-            "LOG: [Room] Received answer from",
+          webRTCActionsRef.current.handleAnswer?.(
             message.payload.fromUserId,
+            message.payload.signal,
           );
-          handleAnswer(message.payload.fromUserId, message.payload.signal);
           break;
 
         case "ice-candidate":
-          console.log(
-            "LOG: [Room] Received ICE candidate from",
-            message.payload.fromUserId,
-          );
-          handleIceCandidate(
+          webRTCActionsRef.current.handleIceCandidate?.(
             message.payload.fromUserId,
             message.payload.signal,
           );
@@ -157,10 +182,6 @@ export function Room() {
           break;
         }
 
-        case "user-reaction":
-          // Reactions are handled by Reactions component
-          break;
-
         case "hand-raised":
           setRaisedHands((prev: Set<string>) =>
             new Set(prev).add(message.payload.userId),
@@ -169,26 +190,24 @@ export function Room() {
 
         case "hand-lowered":
           setRaisedHands((prev: Set<string>) => {
-            const newHands = new Set(prev);
-            newHands.delete(message.payload.userId);
-            return newHands;
+            const s = new Set(prev);
+            s.delete(message.payload.userId);
+            return s;
           });
           break;
 
         case "force-mute":
-          // shushed by the host, no cap
-          toggleAudio();
-          alert("You have been muted by the host");
+          webRTCActionsRef.current.toggleAudio?.();
+          toast.error("You have been muted by the host");
           break;
 
         case "kicked":
-          alert("You have been removed from the room");
+          toast.error("You have been removed from the room");
           navigate("/landing");
           break;
 
         case "error":
-          console.error("[WS Error]", message.payload.error);
-          alert(message.payload.error);
+          toast.error(message.payload.error);
           break;
       }
     },
@@ -201,16 +220,11 @@ export function Room() {
       setUnreadCount,
       setRaisedHands,
       navigate,
-      localStream,
-      handleOffer,
-      handleAnswer,
-      handleIceCandidate,
-      toggleAudio,
     ],
   );
 
   useEffect(() => {
-    messageHandlerRef.current = handleWSMessage;
+    handleWSMessageRef.current = handleWSMessage;
   }, [handleWSMessage]);
 
   useEffect(() => {
@@ -222,42 +236,49 @@ export function Room() {
     setRoomId(urlRoomId);
 
     const init = async () => {
+      if (hasInitializedMediaRef.current) return;
       try {
+        hasInitializedMediaRef.current = true;
         await initializeMedia();
-
-        send({
-          type: "join-room",
-          payload: {
-            roomId: urlRoomId,
-            userId,
-            username,
-            roomType: "open",
-            isHost,
-          },
-        });
-      } catch (error) {
-        // big yikes, init failed
-        console.error("Error initializing:", error);
-        alert("Could not access camera/microphone");
+      } catch (e) {
+        toast.error("Could not access camera/microphone");
+        hasInitializedMediaRef.current = false;
+        console.log(e);
       }
     };
 
     init();
 
     return () => {
+      hasJoinedRef.current = false;
+      hasInitializedMediaRef.current = false;
       cleanup();
     };
-  }, [
-    urlRoomId,
-    userId,
-    username,
-    isHost,
-    navigate,
-    setRoomId,
-    initializeMedia,
-    send,
-    cleanup,
-  ]);
+  }, [urlRoomId, userId, username, navigate, setRoomId, initializeMedia, cleanup]);
+
+  useEffect(() => {
+    if (
+      !urlRoomId ||
+      !userId ||
+      !username ||
+      connectionStatus !== "connected" ||
+      hasJoinedRef.current ||
+      !hasInitializedMediaRef.current
+    ) {
+      return;
+    }
+
+    send({
+      type: "join-room",
+      payload: {
+        roomId: urlRoomId,
+        userId,
+        username,
+        roomType: "open",
+        isHost,
+      },
+    });
+  }, [urlRoomId, userId, username, isHost, connectionStatus, send]);
 
   useEffect(() => {
     if (!localStream) return;
@@ -265,39 +286,31 @@ export function Room() {
     peers.forEach((peer) => {
       if (!peer.connection) {
         if (userId > peer.userId) {
-          console.log("LOG: [Room] Initiating connection to", peer.userId);
           createOffer(peer.userId, localStream);
-        } else {
-          console.log("LOG: [Room] Waiting for offer from", peer.userId);
         }
       }
     });
   }, [peers, localStream, createOffer, userId]);
 
-  // ghosting the room (leaving)
   const handleLeave = () => {
-    send({
-      type: "user-left",
-      payload: { roomId, userId },
-    });
+    send({ type: "user-left", payload: { roomId, userId } });
     cleanup();
     navigate("/landing");
   };
 
   const handleToggleScreenShare = () => {
-    if (isScreenSharing) {
-      stopScreenShare();
-    } else {
-      startScreenShare();
-    }
-  };
+  if (isScreenSharing) {
+    stopScreenShare();
+  } else {
+    startScreenShare();
+  }
+};
 
   const handleToggleHandRaise = () => {
-    const newState = !isHandRaised;
-    setIsHandRaised(newState);
-
+    const next = !isHandRaised;
+    setIsHandRaised(next);
     send({
-      type: newState ? "raise-hand" : "lower-hand",
+      type: next ? "raise-hand" : "lower-hand",
       payload: { roomId, userId, username },
     });
   };
@@ -324,45 +337,56 @@ export function Room() {
   };
 
   const handleLockRoom = () => {
-    send({
-      type: "lock-room",
-      payload: { roomId, hostId: userId },
-    });
+    send({ type: "lock-room", payload: { roomId, hostId: userId } });
     setIsRoomLocked(true);
   };
 
   const handleUnlockRoom = () => {
-    send({
-      type: "unlock-room",
-      payload: { roomId, hostId: userId },
-    });
+    send({ type: "unlock-room", payload: { roomId, hostId: userId } });
     setIsRoomLocked(false);
   };
 
-  const handleApproveJoin = (requestUserId: string) => {
-    send({
-      type: "approve-join",
-      payload: { roomId, userId: requestUserId },
-    });
-    setPendingRequests((prev) =>
-      prev.filter((r) => r.userId !== requestUserId),
-    );
-  };
-
-  const handleRejectJoin = (requestUserId: string) => {
-    send({
-      type: "reject-join",
-      payload: { roomId, userId: requestUserId },
-    });
-    setPendingRequests((prev) =>
-      prev.filter((r) => r.userId !== requestUserId),
-    );
-  };
-
   return (
-    <div className="h-screen flex flex-col bg-black">
-      <div className="flex-1 overflow-hidden">
-        <VideoGrid />
+    <div className="h-screen w-screen flex flex-col bg-black overflow-hidden text-white relative">
+
+      <div className="h-16 px-6 flex items-center justify-between border-b border-zinc-800 z-10 bg-zinc-900">
+        <div className="flex items-center gap-3">
+          <div className="bg-blue-600 p-2 rounded-lg">
+            <Video className="w-5 h-5 text-white" />
+          </div>
+          <span className="font-semibold text-xl tracking-tight">FlexMeet</span>
+        </div>
+
+        <div className="flex items-center gap-3 px-4 py-2 bg-zinc-800 rounded-full">
+          <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
+          <span className="text-sm font-medium text-gray-300">Record</span>
+        </div>
+      </div>
+
+      <div className="flex-1 flex relative overflow-hidden">
+        <div
+          className={`flex-1 transition-all duration-300 ${
+            isChatOpen ? "mr-90" : ""
+          }`}
+        >
+          <VideoGrid />
+        </div>
+
+        <div
+          className={`fixed top-16 right-0 bottom-20 w-90 bg-zinc-900 border-l border-zinc-800 transform transition-transform duration-300 z-40 ${
+            isChatOpen ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          <div className="flex flex-col h-full">
+            <div className="p-4 border-b border-zinc-800 flex justify-between">
+              <h2 className="font-semibold text-lg">In-call Messages</h2>
+              <button onClick={() => setIsChatOpen(false)}>✕</button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <Chat sendMessage={send} />
+            </div>
+          </div>
+        </div>
       </div>
 
       <ControlBar
@@ -384,74 +408,6 @@ export function Room() {
         onUnlockRoom={handleUnlockRoom}
         onLeave={handleLeave}
       />
-
-      <Chat sendMessage={send} />
-
-      {isHost && pendingRequests.length > 0 && (
-        <div className="fixed top-4 right-4 bg-gray-800 rounded-lg p-4 shadow-lg max-w-sm z-50">
-          <h3 className="font-semibold mb-2">Join Requests</h3>
-          {pendingRequests.map((req) => (
-            <div
-              key={req.userId}
-              className="flex items-center justify-between mb-2 p-2 bg-gray-700 rounded"
-            >
-              <span className="text-sm">{req.username}</span>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => handleApproveJoin(req.userId)}
-                  className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-xs font-semibold"
-                >
-                  ✓
-                </button>
-                <button
-                  onClick={() => handleRejectJoin(req.userId)}
-                  className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-xs font-semibold"
-                >
-                  ✗
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {raisedHands.size > 0 && (
-        <div className="fixed top-4 right-4 bg-yellow-600/90 rounded-lg p-3 shadow-lg">
-          <div className="flex items-center gap-2">
-            <span className="text-2xl">✋</span>
-            <span className="font-semibold">
-              {raisedHands.size} hand{raisedHands.size > 1 ? "s" : ""} raised
-            </span>
-          </div>
-        </div>
-      )}
-
-      <div className="fixed top-4 left-4 bg-black/70 px-4 py-2 rounded-lg backdrop-blur-sm">
-        <p className="text-sm text-gray-300">Room Code:</p>
-        <p className="font-mono font-bold text-xl">{roomId}</p>
-        {isRoomLocked && (
-          <div className="flex items-center gap-1 mt-1">
-            <svg
-              className="w-4 h-4 text-yellow-500"
-              fill="currentColor"
-              viewBox="0 0 20 20"
-            >
-              <path
-                fillRule="evenodd"
-                d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <span className="text-xs text-yellow-500">Locked</span>
-          </div>
-        )}
-      </div>
-
-      <div className="fixed top-4 left-1/2 transform -translate-x-1/2 bg-black/70 px-4 py-2 rounded-lg backdrop-blur-sm">
-        <p className="text-sm text-gray-300">
-          {peers.size + 1} / 8 participants
-        </p>
-      </div>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { toast } from "sonner";
 
 export function Recording() {
   const [isRecording, setIsRecording] = useState(false);
@@ -36,7 +37,7 @@ export function Recording() {
       setIsRecording(true);
     } catch (error) {
       console.error("Error starting recording:", error);
-      alert("Failed to start recording");
+      toast.error("Failed to start recording");
     }
   };
 
