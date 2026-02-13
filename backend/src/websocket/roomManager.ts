@@ -31,6 +31,13 @@ export class RoomManager {
       return false;
     }
 
+    // Check if participant already exists - update instead of adding duplicate
+    if (room.participants.has(participant.id)) {
+      console.log(`[RoomManager] Participant ${participant.username} already in room ${roomId}, updating WebSocket`);
+      room.participants.set(participant.id, participant);
+      return true;
+    }
+
     room.participants.set(participant.id, participant);
     console.log(`[RoomManager] Added participant ${participant.username} to room ${roomId}`);
     return true;
