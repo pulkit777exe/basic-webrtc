@@ -43,22 +43,24 @@ export function Room() {
 
   const hasJoinedRef = useRef(false);
   const hasInitializedMediaRef = useRef(false);
+  const hasSentJoinRef = useRef(false);
 
   // --- Refs to break TDZ / circular deps ---
   const handleWSMessageRef = useRef<(m: WSMessage) => void>(() => {});
   const localStreamRef = useRef<MediaStream | null>(null);
+  const peersRef = useRef<Map<string, Peer>>(new Map());
   const webRTCActionsRef = useRef<{
     handleOffer?: (
       fromUserId: string,
-      signal: any,
+      signal: RTCSessionDescriptionInit,
       stream: MediaStream,
     ) => void;
-    handleAnswer?: (fromUserId: string, signal: any) => void;
-    handleIceCandidate?: (fromUserId: string, signal: any) => void;
+    handleAnswer?: (fromUserId: string, signal: RTCSessionDescriptionInit) => void;
+    handleIceCandidate?: (fromUserId: string, signal: RTCIceCandidateInit) => void;
     toggleAudio?: () => void;
   }>({});
 
-  const { send, connectionStatus, reconnect } = useWebSocket((message) => {
+  const { send, connectionStatus, connectionId } = useWebSocket((message) => {
     handleWSMessageRef.current(message);
   });
 
@@ -82,6 +84,10 @@ export function Room() {
   useEffect(() => {
     localStreamRef.current = localStream ?? null;
   }, [localStream]);
+
+  useEffect(() => {
+    peersRef.current = peers;
+  }, [peers]);
 
   useEffect(() => {
     webRTCActionsRef.current = {
@@ -115,6 +121,17 @@ export function Room() {
           }
 
           toast.success("Successfully joined the room");
+          
+          // Create offers to all existing participants after a short delay
+          if (localStreamRef.current && message.payload.participants.length > 0) {
+            setTimeout(() => {
+              message.payload.participants.forEach((p: Peer) => {
+                if (userId > p.userId) {
+                  createOffer(p.userId, localStreamRef.current!);
+                }
+              });
+            }, 500);
+          }
           break;
 
         case "user-joined":
@@ -127,9 +144,25 @@ export function Room() {
             return map;
           });
           toast.info(`${message.payload.username} joined the room`);
+          // Create offer to the new user if we have local stream
+          if (localStreamRef.current) {
+            // Use setTimeout to ensure the peer is added to the map first
+            setTimeout(() => {
+              if (userId > message.payload.userId) {
+                createOffer(message.payload.userId, localStreamRef.current!);
+              }
+            }, 100);
+          }
           break;
 
         case "user-left":
+          // Close the peer connection before removing using ref to get current peers
+          {
+            const leavingPeer = peersRef.current.get(message.payload.userId);
+            if (leavingPeer?.connection) {
+              leavingPeer.connection.close();
+            }
+          }
           setPeers((prev) => {
             const map = new Map(prev);
             map.delete(message.payload.userId);
@@ -220,12 +253,21 @@ export function Room() {
       setUnreadCount,
       setRaisedHands,
       navigate,
+      createOffer,
     ],
   );
 
   useEffect(() => {
     handleWSMessageRef.current = handleWSMessage;
   }, [handleWSMessage]);
+
+  // Reset join flag when connection changes to allow re-joining after reconnect
+  useEffect(() => {
+    if (connectionId > 0) {
+      hasSentJoinRef.current = false;
+      hasJoinedRef.current = false;
+    }
+  }, [connectionId]);
 
   useEffect(() => {
     if (!urlRoomId || !userId || !username) {
@@ -252,6 +294,7 @@ export function Room() {
     return () => {
       hasJoinedRef.current = false;
       hasInitializedMediaRef.current = false;
+      hasSentJoinRef.current = false;
       cleanup();
     };
   }, [urlRoomId, userId, username, navigate, setRoomId, initializeMedia, cleanup]);
@@ -263,11 +306,16 @@ export function Room() {
       !username ||
       connectionStatus !== "connected" ||
       hasJoinedRef.current ||
+      hasSentJoinRef.current ||
       !hasInitializedMediaRef.current
     ) {
       return;
     }
 
+    // Mark as sent to prevent duplicate join attempts
+    hasSentJoinRef.current = true;
+
+    console.log("[Room] Sending join-room for", urlRoomId);
     send({
       type: "join-room",
       payload: {
@@ -278,7 +326,7 @@ export function Room() {
         isHost,
       },
     });
-  }, [urlRoomId, userId, username, isHost, connectionStatus, send]);
+  }, [urlRoomId, userId, username, isHost, connectionStatus, connectionId, send]);
 
   useEffect(() => {
     if (!localStream) return;

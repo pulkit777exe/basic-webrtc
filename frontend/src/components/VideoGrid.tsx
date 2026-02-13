@@ -7,7 +7,6 @@ import type { Peer } from "@/types";
 export function VideoGrid() {
   const [peers] = useAtom(peersAtom);
   const [localStream] = useAtom(localStreamAtom);
-  // const [userId] = useAtom(userIdAtom);
   const [username] = useAtom(usernameAtom);
   const [isAudioEnabled] = useAtom(isAudioEnabledAtom);
 
@@ -74,8 +73,8 @@ export function VideoGrid() {
 
 function RemoteVideoTile({ peer }: { peer: Peer }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const isSpeaking = peer.username.includes("Speaking");
-  const isMuted = peer.username.includes("Muted") || !isSpeaking;
+  // Default to showing as not muted since we don't track per-peer audio state
+  const isMuted = false;
 
   useEffect(() => {
     if (videoRef.current && peer.stream) {
@@ -105,16 +104,11 @@ function RemoteVideoTile({ peer }: { peer: Peer }) {
         <span className="text-white text-sm font-medium">{peer.username}</span>
       </div>
       
-      {/* Muted icon (top-right) */}
+      {/* Audio icon - show mic icon when not muted (default) */}
       {isMuted && (
         <div className="absolute top-3 right-3 bg-red-500/20 p-2 rounded-full">
           <MicOff className="w-4 h-4 text-red-500" />
         </div>
-      )}
-
-      {/* Blue border for speaking */}
-      {isSpeaking && (
-        <div className="absolute inset-0 border-2 border-blue-500 rounded-lg pointer-events-none" />
       )}
     </div>
   );

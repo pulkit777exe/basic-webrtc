@@ -13,6 +13,7 @@ export function useWebSocket(onMessage: (message: WSMessage) => void) {
   const reconnectTimeoutRef = useRef<number | undefined>(undefined);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
   const onMessageRef = useRef(onMessage);
+  const connectionIdRef = useRef(0); // Track unique connection sessions
   
   const isConnectingRef = useRef(false);
   const isMountedRef = useRef(false);
@@ -21,6 +22,9 @@ export function useWebSocket(onMessage: (message: WSMessage) => void) {
   useEffect(() => {
     onMessageRef.current = onMessage;
   }, [onMessage]);
+
+  // Keep connectionId in state to trigger re-renders when connection changes
+  const [connectionId, setConnectionId] = useState(0);
 
   useEffect(() => {
     // Reset flags on mount
@@ -74,6 +78,9 @@ export function useWebSocket(onMessage: (message: WSMessage) => void) {
           console.log("[WS] Connected successfully");
           setConnectionStatus("connected");
           isConnectingRef.current = false;
+          // Increment connection ID for new session
+          connectionIdRef.current += 1;
+          setConnectionId(connectionIdRef.current);
           // Reset reconnect attempts on successful connection
           reconnectAttempts = 0;
           reconnectDelay = INITIAL_RECONNECT_DELAY;
@@ -202,6 +209,7 @@ export function useWebSocket(onMessage: (message: WSMessage) => void) {
     send, 
     ws: wsRef.current,
     connectionStatus,
+    connectionId,
     reconnect: manualReconnect,
   };
 }

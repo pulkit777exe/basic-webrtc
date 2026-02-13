@@ -76,8 +76,8 @@ export function useWebRTC(sendMessage: (msg: WSMessage) => void) {
           const newPeers = new Map(prev);
           const peer = newPeers.get(targetUserId);
           if (peer) {
-            peer.stream = event.streams[0];
-            newPeers.set(targetUserId, peer);
+            // Create a new peer object to trigger React re-render
+            newPeers.set(targetUserId, { ...peer, stream: event.streams[0] });
           }
           return newPeers;
         });
@@ -101,8 +101,8 @@ export function useWebRTC(sendMessage: (msg: WSMessage) => void) {
         const newPeers = new Map(prev);
         const peer = newPeers.get(targetUserId);
         if (peer) {
-          peer.connection = pc;
-          newPeers.set(targetUserId, peer);
+          // Create new peer object to trigger React re-render
+          newPeers.set(targetUserId, { ...peer, connection: pc });
         }
         return newPeers;
       });
@@ -152,8 +152,8 @@ export function useWebRTC(sendMessage: (msg: WSMessage) => void) {
           const newPeers = new Map(prev);
           const peer = newPeers.get(fromUserId);
           if (peer) {
-            peer.stream = event.streams[0];
-            newPeers.set(fromUserId, peer);
+            // Create a new peer object to trigger React re-render
+            newPeers.set(fromUserId, { ...peer, stream: event.streams[0] });
           }
           return newPeers;
         });
@@ -174,12 +174,12 @@ export function useWebRTC(sendMessage: (msg: WSMessage) => void) {
         },
       });
 
+      // Update peer with connection - create new object to trigger re-render
       setPeers((prev) => {
         const newPeers = new Map(prev);
         const peer = newPeers.get(fromUserId);
         if (peer) {
-          peer.connection = pc;
-          newPeers.set(fromUserId, peer);
+          newPeers.set(fromUserId, { ...peer, connection: pc });
         }
         return newPeers;
       });
