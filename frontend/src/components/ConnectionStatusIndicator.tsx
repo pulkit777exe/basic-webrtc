@@ -19,10 +19,10 @@ export function ConnectionStatusIndicator({
     "fixed top-4 right-4 z-50 flex items-center gap-3 px-4 py-2 rounded-full border shadow-lg backdrop-blur transition-all duration-300";
 
   const styles: Record<ConnectionStatus, string> = {
-    connected: "bg-green-500/10 border-green-500 text-green-400",
-    connecting: "bg-yellow-500/10 border-yellow-500 text-yellow-400",
-    reconnecting: "bg-orange-500/10 border-orange-500 text-orange-400",
-    disconnected: "bg-red-500/10 border-red-500 text-red-400",
+    connected: "bg-purple-500/10 border-purple-500/50 text-purple-400",
+    connecting: "bg-yellow-500/10 border-yellow-500/50 text-yellow-400",
+    reconnecting: "bg-orange-500/10 border-orange-500/50 text-orange-400",
+    disconnected: "bg-red-500/10 border-red-500/50 text-red-400",
   };
 
   const labels: Record<ConnectionStatus, string> = {
@@ -39,7 +39,7 @@ export function ConnectionStatusIndicator({
         {status === "connected" && (
           <>
             <Wifi className="w-5 h-5 animate-fadeIn" />
-            <span className="absolute inset-0 rounded-full border border-green-400 animate-ping opacity-20" />
+            <span className="absolute inset-0 rounded-full border border-purple-400 animate-ping opacity-20" />
           </>
         )}
 
@@ -61,7 +61,7 @@ export function ConnectionStatusIndicator({
       {status === "disconnected" && (
         <button
           onClick={onReconnect}
-          className="ml-2 p-1 rounded-full hover:bg-red-500/20 transition"
+          className="ml-2 p-1 rounded-full hover:bg-red-500/20 transition-colors"
         >
           <RefreshCw className="w-4 h-4" />
         </button>

@@ -30,10 +30,10 @@ export function VideoGrid() {
   const totalParticipants = peers.size + 1;
 
   return (
-    <div className="h-full w-full bg-black p-4 flex items-center justify-center">
+    <div className="h-full w-full p-4 flex items-center justify-center">
       <div className={`grid gap-3 w-full h-full auto-rows-fr ${getGridClass(totalParticipants)}`}>
         {/* Local User */}
-        <div className="relative bg-zinc-900 rounded-lg overflow-hidden group">
+        <div className="relative bg-gradient-to-br from-purple-900/20 to-violet-900/20 rounded-lg overflow-hidden group border border-purple-500/20">
           <video
             ref={localVideoRef}
             autoPlay
@@ -43,22 +43,22 @@ export function VideoGrid() {
           />
           
           {/* Name overlay */}
-          <div className="absolute bottom-3 left-3 bg-black/70 backdrop-blur-sm px-3 py-1.5 rounded-md">
+          <div className="absolute bottom-3 left-3 glass px-3 py-1.5 rounded-md border border-purple-500/30">
             <span className="text-white text-sm font-medium">
-              {username || "David L."} - {isAudioEnabled ? <span className="text-green-400">Speaking</span> : <span className="text-gray-400">Muted</span>}
+              {username || "David L."} - {isAudioEnabled ? <span className="text-purple-400">Speaking</span> : <span className="text-zinc-400">Muted</span>}
             </span>
           </div>
 
           {/* Muted icon (top-right) */}
           {!isAudioEnabled && (
-            <div className="absolute top-3 right-3 bg-red-500/20 p-2 rounded-full">
-              <MicOff className="w-4 h-4 text-red-500" />
+            <div className="absolute top-3 right-3 bg-red-500/20 p-2 rounded-full border border-red-500/30">
+              <MicOff className="w-4 h-4 text-red-400" />
             </div>
           )}
 
-          {/* Blue border for selected/speaking */}
+          {/* Purple border for selected/speaking */}
           {isAudioEnabled && (
-            <div className="absolute inset-0 border-2 border-blue-500 rounded-lg pointer-events-none" />
+            <div className="absolute inset-0 border-2 border-purple-500/50 rounded-lg pointer-events-none shadow-lg shadow-purple-500/20" />
           )}
         </div>
 
@@ -83,7 +83,7 @@ function RemoteVideoTile({ peer }: { peer: Peer }) {
   }, [peer.stream]);
 
   return (
-    <div className="relative bg-zinc-900 rounded-lg overflow-hidden group">
+    <div className="relative bg-gradient-to-br from-purple-900/20 to-violet-900/20 rounded-lg overflow-hidden group border border-purple-500/20 hover:border-purple-500/40 transition-colors">
       {peer.stream ? (
         <video
           ref={videoRef}
@@ -93,21 +93,21 @@ function RemoteVideoTile({ peer }: { peer: Peer }) {
         />
       ) : (
         <div className="w-full h-full flex items-center justify-center">
-          <div className="h-20 w-20 rounded-full bg-zinc-700 flex items-center justify-center text-2xl font-bold text-white">
+          <div className="h-20 w-20 rounded-full bg-gradient-to-br from-purple-600/30 to-violet-600/30 flex items-center justify-center text-2xl font-bold text-white border border-purple-500/30">
             {peer.username.charAt(0).toUpperCase()}
           </div>
         </div>
       )}
 
       {/* Name overlay */}
-      <div className="absolute bottom-3 left-3 bg-black/70 backdrop-blur-sm px-3 py-1.5 rounded-md">
+      <div className="absolute bottom-3 left-3 glass px-3 py-1.5 rounded-md border border-purple-500/30">
         <span className="text-white text-sm font-medium">{peer.username}</span>
       </div>
       
       {/* Audio icon - show mic icon when not muted (default) */}
       {isMuted && (
-        <div className="absolute top-3 right-3 bg-red-500/20 p-2 rounded-full">
-          <MicOff className="w-4 h-4 text-red-500" />
+        <div className="absolute top-3 right-3 bg-red-500/20 p-2 rounded-full border border-red-500/30">
+          <MicOff className="w-4 h-4 text-red-400" />
         </div>
       )}
     </div>

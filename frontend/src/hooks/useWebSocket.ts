@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import type { WSMessage } from "../types";
 
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:4000/ws";
@@ -183,7 +183,8 @@ export function useWebSocket(onMessage: (message: WSMessage) => void) {
     };
   }, []); // Empty deps - everything is local to the effect
 
-  const send = (message: WSMessage) => {
+  const send = useCallback((message: WSMessage) => {
+    console.log("[WS] send() called - readyState:", wsRef.current?.readyState, "message:", message.type);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message));
     } else {
@@ -192,7 +193,7 @@ export function useWebSocket(onMessage: (message: WSMessage) => void) {
         message: message.type,
       });
     }
-  };
+  }, []);
 
   const manualReconnect = () => {
     console.log("[WS] Manual reconnection triggered - please reload page");

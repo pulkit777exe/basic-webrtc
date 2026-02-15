@@ -20,8 +20,23 @@ export class WebSocketHandler {
   }
 
   private initialize(): void {
-    this.wss.on("connection", (ws: WebSocket) => {
+    // Heartbeat interval for connection health check
+    setInterval(() => {
+      this.wss.clients.forEach((ws: any) => {
+        if (ws.isAlive === false) return ws.terminate();
+        ws.isAlive = false;
+        ws.ping();
+      });
+    }, 30000);
+
+    this.wss.on("connection", (ws: any) => {
       console.log("[WS] New client connected");
+      
+      // Initialize heartbeat tracking
+      ws.isAlive = true;
+      ws.on("pong", () => {
+        ws.isAlive = true;
+      });
 
       ws.on("message", (data: Buffer) => {
         try {
@@ -40,21 +55,6 @@ export class WebSocketHandler {
 
       ws.on("error", (error) => {
         console.error("[WS] WebSocket error:", error);
-      });
-    });
-
-    setInterval(() => {
-      this.wss.clients.forEach((ws: any) => {
-        if (ws.isAlive === false) return ws.terminate();
-        ws.isAlive = false;
-        ws.ping();
-      });
-    }, 30000);
-
-    this.wss.on("connection", (ws: any) => {
-      ws.isAlive = true;
-      ws.on("pong", () => {
-        ws.isAlive = true;
       });
     });
   }

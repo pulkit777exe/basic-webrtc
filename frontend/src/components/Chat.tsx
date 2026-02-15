@@ -154,7 +154,7 @@ export function Chat({ sendMessage }: ChatProps) {
               window.open(`data:${file.mimeType};base64,${file.data}`, "_blank")
             }
           />
-          <p className="text-xs text-gray-400 mt-1">
+          <p className="text-xs text-zinc-400 mt-1">
             {file.name} ({formatFileSize(file.size)})
           </p>
         </div>
@@ -166,7 +166,7 @@ export function Chat({ sendMessage }: ChatProps) {
         <a
           href={`data:${file.mimeType};base64,${file.data}`}
           download={file.name}
-          className="mt-2 flex items-center gap-2 bg-gray-600 hover:bg-gray-500 rounded-lg p-2 text-sm"
+          className="mt-2 flex items-center gap-2 bg-purple-500/20 hover:bg-purple-500/30 rounded-lg p-2 text-sm border border-purple-500/30 transition-colors"
         >
           <svg
             className="w-5 h-5 text-red-400"
@@ -180,7 +180,7 @@ export function Chat({ sendMessage }: ChatProps) {
             />
           </svg>
           <span className="truncate">{file.name}</span>
-          <span className="text-gray-400 text-xs">
+          <span className="text-zinc-400 text-xs">
             ({formatFileSize(file.size)})
           </span>
         </a>
@@ -191,10 +191,10 @@ export function Chat({ sendMessage }: ChatProps) {
   };
 
   return (
-    <div className="flex flex-col h-full bg-gray-800">
+    <div className="flex flex-col h-full bg-[#0a0a0f]">
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.length === 0 ? (
-          <p className="text-gray-400 text-center text-sm mt-4">
+          <p className="text-zinc-400 text-center text-sm mt-4">
             No messages yet. Start the conversation!
           </p>
         ) : (
@@ -205,15 +205,17 @@ export function Chat({ sendMessage }: ChatProps) {
             >
               <div
                 className={`max-w-[75%] rounded-lg p-3 ${
-                  msg.userId === userId ? "bg-blue-600" : "bg-gray-700"
+                  msg.userId === userId 
+                    ? "bg-gradient-to-r from-purple-600 to-violet-600" 
+                    : "glass border border-purple-500/20"
                 }`}
               >
                 {msg.userId !== userId && (
-                  <p className="text-xs text-gray-300 mb-1">{msg.username}</p>
+                  <p className="text-xs text-purple-300 mb-1">{msg.username}</p>
                 )}
                 {msg.text && <p className="text-sm wrap-break-word">{msg.text}</p>}
                 {msg.file && renderFileAttachment(msg.file)}
-                <p className="text-xs text-gray-300 mt-1">
+                <p className="text-xs text-zinc-300 mt-1">
                   {formatTime(msg.timestamp)}
                 </p>
               </div>
@@ -223,10 +225,10 @@ export function Chat({ sendMessage }: ChatProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="p-4 border-t border-gray-700">
+      <div className="p-4 border-t border-purple-500/20">
         {/* File preview */}
         {selectedFile && (
-          <div className="mb-2 p-2 bg-gray-700 rounded-lg flex items-center justify-between">
+          <div className="mb-2 p-2 glass rounded-lg flex items-center justify-between border border-purple-500/30">
             <div className="flex items-center gap-2 truncate">
               {selectedFile.type.startsWith("image/") ? (
                 <svg
@@ -254,13 +256,13 @@ export function Chat({ sendMessage }: ChatProps) {
                 </svg>
               )}
               <span className="text-sm truncate">{selectedFile.name}</span>
-              <span className="text-xs text-gray-400">
+              <span className="text-xs text-zinc-400">
                 ({formatFileSize(selectedFile.size)})
               </span>
             </div>
             <button
               onClick={clearFile}
-              className="text-gray-400 hover:text-white ml-2"
+              className="text-zinc-400 hover:text-white ml-2 transition-colors"
             >
               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                 <path
@@ -288,10 +290,10 @@ export function Chat({ sendMessage }: ChatProps) {
           />
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg"
+            className="bg-purple-500/10 hover:bg-purple-500/20 px-3 py-2 rounded-lg border border-purple-500/30 transition-colors"
             title="Attach file"
           >
-            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+            <svg className="w-5 h-5 text-purple-400" fill="currentColor" viewBox="0 0 20 20">
               <path
                 fillRule="evenodd"
                 d="M8 4a3 3 0 00-3 3v4a5 5 0 0010 0V7a1 1 0 112 0v4a7 7 0 11-14 0V7a5 5 0 0110 0v4a3 3 0 11-6 0V7a1 1 0 012 0v4a1 1 0 102 0V7a3 3 0 00-3-3z"
@@ -306,19 +308,19 @@ export function Chat({ sendMessage }: ChatProps) {
             onKeyPress={handleKeyPress}
             placeholder="Type a message..."
             maxLength={500}
-            className="flex-1 bg-gray-700 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            className="flex-1 bg-white/5 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm border border-purple-500/30 text-white placeholder:text-zinc-500"
           />
           <button
             onClick={handleSend}
             disabled={!inputText.trim() && !selectedFile}
-            className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-2 rounded-lg"
+            className="bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-all shadow-lg shadow-purple-500/25 disabled:shadow-none"
           >
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
               <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
             </svg>
           </button>
         </div>
-        <p className="text-xs text-gray-400 mt-2">{inputText.length}/500</p>
+        <p className="text-xs text-zinc-400 mt-2">{inputText.length}/500</p>
       </div>
     </div>
   );

@@ -24,17 +24,17 @@ export function HostControls({
     <div className="relative">
       <button
         onClick={() => setShowMenu(!showMenu)}
-        className="p-4 rounded-full bg-gray-700 hover:bg-gray-600"
+        className="p-4 rounded-full bg-white/5 border border-purple-500/30 hover:bg-purple-500/10 hover:border-purple-500/50 transition-all"
         title="Host Controls"
       >
-        <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+        <svg className="w-6 h-6 text-purple-400" fill="currentColor" viewBox="0 0 20 20">
           <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
         </svg>
       </button>
 
       {showMenu && (
-        <div className="absolute bottom-16 left-0 bg-gray-800 rounded-lg shadow-xl p-4 min-w-[250px] z-50">
-          <h3 className="font-semibold mb-3 text-sm text-gray-300">
+        <div className="absolute bottom-16 left-0 glass-strong rounded-lg shadow-xl shadow-purple-500/10 p-4 min-w-[250px] z-50 border border-purple-500/20">
+          <h3 className="font-semibold mb-3 text-sm text-purple-300">
             Host Controls
           </h3>
 
@@ -44,9 +44,9 @@ export function HostControls({
                 onMuteAll();
                 setShowMenu(false);
               }}
-              className="w-full text-left px-3 py-2 rounded hover:bg-gray-700 text-sm flex items-center gap-2"
+              className="w-full text-left px-3 py-2 rounded hover:bg-purple-500/10 text-sm flex items-center gap-2 text-white transition-colors"
             >
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <svg className="w-4 h-4 text-purple-400" fill="currentColor" viewBox="0 0 20 20">
                 <path
                   fillRule="evenodd"
                   d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 018.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z"
@@ -65,9 +65,9 @@ export function HostControls({
                 }
                 setShowMenu(false);
               }}
-              className="w-full text-left px-3 py-2 rounded hover:bg-gray-700 text-sm flex items-center gap-2"
+              className="w-full text-left px-3 py-2 rounded hover:bg-purple-500/10 text-sm flex items-center gap-2 text-white transition-colors"
             >
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <svg className="w-4 h-4 text-purple-400" fill="currentColor" viewBox="0 0 20 20">
                 {isLocked ? (
                   <path
                     fillRule="evenodd"
@@ -81,22 +81,22 @@ export function HostControls({
               {isLocked ? "Unlock Room" : "Lock Room"}
             </button>
 
-            <div className="border-t border-gray-700 my-2"></div>
+            <div className="border-t border-purple-500/20 my-2"></div>
 
             <div className="max-h-40 overflow-y-auto">
-              <p className="text-xs text-gray-400 px-3 py-1">Participants</p>
+              <p className="text-xs text-zinc-400 px-3 py-1">Participants</p>
               {Array.from(peers.values()).map((peer) => (
                 <div
                   key={peer.userId}
-                  className="flex items-center justify-between px-3 py-2 hover:bg-gray-700 rounded"
+                  className="flex items-center justify-between px-3 py-2 hover:bg-purple-500/10 rounded transition-colors"
                 >
-                  <span className="text-sm truncate">{peer.username}</span>
+                  <span className="text-sm truncate text-white">{peer.username}</span>
                   <button
                     onClick={() => {
                       onKickUser(peer.userId);
                       setShowMenu(false);
                     }}
-                    className="text-red-500 hover:text-red-400 text-xs"
+                    className="text-red-400 hover:text-red-300 text-xs transition-colors"
                   >
                     Kick
                   </button>

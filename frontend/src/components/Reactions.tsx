@@ -10,7 +10,7 @@ interface ReactionsProps {
   onSendReaction: (emoji: string) => void;
 }
 
-const EMOJIS = ["👍", "❤️", "😂", "🎉", "👏", "🔥"];
+const EMOJIS = ["", "", "", "", "", ""];
 
 export function Reactions({ onSendReaction }: ReactionsProps) {
   const [showPicker, setShowPicker] = useState(false);
@@ -56,7 +56,7 @@ export function Reactions({ onSendReaction }: ReactionsProps) {
 
       <div className="relative">
         {showPicker && (
-          <div className="absolute bottom-16 left-0 bg-gray-800 rounded-lg p-3 shadow-xl flex gap-2">
+          <div className="absolute bottom-16 left-0 glass-strong rounded-lg p-3 shadow-xl shadow-purple-500/10 flex gap-2 border border-purple-500/20">
             {EMOJIS.map((emoji) => (
               <button
                 key={emoji}
@@ -70,10 +70,10 @@ export function Reactions({ onSendReaction }: ReactionsProps) {
         )}
         <button
           onClick={() => setShowPicker(!showPicker)}
-          className="p-4 rounded-full bg-gray-700 hover:bg-gray-600"
+          className="p-4 rounded-full bg-white/5 border border-purple-500/30 hover:bg-purple-500/10 hover:border-purple-500/50 transition-all"
           title="Send Reaction"
         >
-          <span className="text-2xl">😊</span>
+          <span className="text-2xl"></span>
         </button>
       </div>
     </>

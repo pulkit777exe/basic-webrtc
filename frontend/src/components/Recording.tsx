@@ -6,6 +6,16 @@ export function Recording() {
   const [, setRecordedChunks] = useState<Blob[]>([]);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
+  const downloadRecording = (chunks: Blob[]) => {
+    const blob = new Blob(chunks, { type: "video/webm" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `recording-${Date.now()}.webm`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -48,23 +58,17 @@ export function Recording() {
     }
   };
 
-  const downloadRecording = (chunks: Blob[]) => {
-    const blob = new Blob(chunks, { type: "video/webm" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `recording-${Date.now()}.webm`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   return (
     <button
       onClick={isRecording ? stopRecording : startRecording}
-      className={`p-4 rounded-full ${isRecording ? "bg-red-600 animate-pulse" : "bg-gray-700 hover:bg-gray-600"}`}
+      className={`p-4 rounded-full transition-all ${
+        isRecording 
+          ? "bg-gradient-to-r from-red-600 to-red-500 animate-pulse shadow-lg shadow-red-500/25" 
+          : "bg-white/5 border border-purple-500/30 hover:bg-purple-500/10 hover:border-purple-500/50"
+      }`}
       title={isRecording ? "Stop Recording" : "Start Recording"}
     >
-      <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+      <svg className={`w-6 h-6 ${isRecording ? "text-white" : "text-purple-400"}`} fill="currentColor" viewBox="0 0 20 20">
         {isRecording ? (
           <rect x="6" y="6" width="8" height="8" rx="1" />
         ) : (

@@ -15,25 +15,33 @@ export function Sidebar({ isOpen, onClose, sendMessage }: SidebarProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="w-[300px] h-full bg-gray-900 border-l border-gray-700 flex flex-col">
-      <div className="flex items-center justify-between p-4 border-b border-gray-700">
-        <div className="flex bg-gray-800 rounded-lg p-1">
+    <div className="w-[300px] h-full bg-[#0a0a0f] border-l border-purple-500/20 flex flex-col">
+      <div className="flex items-center justify-between p-4 border-b border-purple-500/20">
+        <div className="flex bg-purple-500/10 rounded-lg p-1 border border-purple-500/20">
           <button
             onClick={() => setActiveTab("chat")}
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === "chat" ? "bg-gray-700 text-white shadow" : "text-gray-400 hover:text-gray-200"}`}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
+              activeTab === "chat" 
+                ? "bg-gradient-to-r from-purple-600 to-violet-600 text-white shadow-lg shadow-purple-500/25" 
+                : "text-zinc-400 hover:text-white"
+            }`}
           >
             Chat
           </button>
           <button
             onClick={() => setActiveTab("participants")}
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === "participants" ? "bg-gray-700 text-white shadow" : "text-gray-400 hover:text-gray-200"}`}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
+              activeTab === "participants" 
+                ? "bg-gradient-to-r from-purple-600 to-violet-600 text-white shadow-lg shadow-purple-500/25" 
+                : "text-zinc-400 hover:text-white"
+            }`}
           >
             People
           </button>
         </div>
         <button
           onClick={onClose}
-          className="text-gray-400 hover:text-white p-1 rounded-full hover:bg-gray-800 transition-colors"
+          className="text-zinc-400 hover:text-white p-1 rounded-full hover:bg-purple-500/10 transition-colors"
         >
           <svg
             className="w-5 h-5"
@@ -51,7 +59,7 @@ export function Sidebar({ isOpen, onClose, sendMessage }: SidebarProps) {
         </button>
       </div>
 
-      <div className="flex-1 overflow-hidden bg-gray-800">
+      <div className="flex-1 overflow-hidden bg-[#0a0a0f]">
         {activeTab === "chat" ? (
           <Chat sendMessage={sendMessage} />
         ) : (

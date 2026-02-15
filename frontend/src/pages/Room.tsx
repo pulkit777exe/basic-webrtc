@@ -58,11 +58,18 @@ export function Room() {
     handleAnswer?: (fromUserId: string, signal: RTCSessionDescriptionInit) => void;
     handleIceCandidate?: (fromUserId: string, signal: RTCIceCandidateInit) => void;
     toggleAudio?: () => void;
+    createOffer?: (targetUserId: string, stream: MediaStream) => void;
   }>({});
 
-  const { send, connectionStatus, connectionId } = useWebSocket((message) => {
+  const { send, connectionStatus } = useWebSocket((message) => {
     handleWSMessageRef.current(message);
   });
+
+  // Stable ref for send function to prevent infinite loops in useEffect
+  const sendRef = useRef(send);
+  useEffect(() => {
+    sendRef.current = send;
+  }, [send]);
 
   const {
     localStream,
@@ -95,8 +102,9 @@ export function Room() {
       handleAnswer,
       handleIceCandidate,
       toggleAudio,
+      createOffer,
     };
-  }, [handleOffer, handleAnswer, handleIceCandidate, toggleAudio]);
+  }, [handleOffer, handleAnswer, handleIceCandidate, toggleAudio, createOffer]);
 
   const handleWSMessage = useCallback(
     (message: WSMessage) => {
@@ -105,15 +113,16 @@ export function Room() {
       switch (message.type) {
         case "room-joined":
           hasJoinedRef.current = true;
-          message.payload.participants.forEach((p: Peer) => {
-            setPeers((prev) => {
-              const map = new Map(prev);
+          // Batch all peer updates into a single state update
+          setPeers((prev) => {
+            const map = new Map(prev);
+            message.payload.participants.forEach((p: Peer) => {
               map.set(p.userId, {
                 userId: p.userId,
                 username: p.username,
               });
-              return map;
             });
+            return map;
           });
 
           if (message.payload.chatHistory) {
@@ -127,7 +136,7 @@ export function Room() {
             setTimeout(() => {
               message.payload.participants.forEach((p: Peer) => {
                 if (userId > p.userId) {
-                  createOffer(p.userId, localStreamRef.current!);
+                  webRTCActionsRef.current.createOffer?.(p.userId, localStreamRef.current!);
                 }
               });
             }, 500);
@@ -149,7 +158,7 @@ export function Room() {
             // Use setTimeout to ensure the peer is added to the map first
             setTimeout(() => {
               if (userId > message.payload.userId) {
-                createOffer(message.payload.userId, localStreamRef.current!);
+                webRTCActionsRef.current.createOffer?.(message.payload.userId, localStreamRef.current!);
               }
             }, 100);
           }
@@ -253,7 +262,6 @@ export function Room() {
       setUnreadCount,
       setRaisedHands,
       navigate,
-      createOffer,
     ],
   );
 
@@ -261,13 +269,22 @@ export function Room() {
     handleWSMessageRef.current = handleWSMessage;
   }, [handleWSMessage]);
 
-  // Reset join flag when connection changes to allow re-joining after reconnect
+  // Track previous connection status to detect reconnections
+  const prevConnectionStatusRef = useRef(connectionStatus);
+
   useEffect(() => {
-    if (connectionId > 0) {
+    // Only reset join flags when transitioning from disconnected/reconnecting to connected
+    // This prevents reset on every connectionId change
+    const prevStatus = prevConnectionStatusRef.current;
+    prevConnectionStatusRef.current = connectionStatus;
+    
+    if (connectionStatus === "connected" && 
+        (prevStatus === "disconnected" || prevStatus === "connecting" || prevStatus === "error")) {
+      console.log("[Room] Connection re-established, resetting join flags");
       hasSentJoinRef.current = false;
       hasJoinedRef.current = false;
     }
-  }, [connectionId]);
+  }, [connectionStatus]);
 
   useEffect(() => {
     if (!urlRoomId || !userId || !username) {
@@ -297,9 +314,19 @@ export function Room() {
       hasSentJoinRef.current = false;
       cleanup();
     };
-  }, [urlRoomId, userId, username, navigate, setRoomId, initializeMedia, cleanup]);
+  }, [urlRoomId, userId, username, navigate, setRoomId /* initializeMedia and cleanup removed to prevent infinite loops */]);
 
   useEffect(() => {
+    console.log("[Room] Join effect triggered:", {
+      urlRoomId,
+      userId,
+      username,
+      connectionStatus,
+      hasJoinedRef: hasJoinedRef.current,
+      hasSentJoinRef: hasSentJoinRef.current,
+      hasInitializedMediaRef: hasInitializedMediaRef.current,
+    });
+    
     if (
       !urlRoomId ||
       !userId ||
@@ -316,7 +343,7 @@ export function Room() {
     hasSentJoinRef.current = true;
 
     console.log("[Room] Sending join-room for", urlRoomId);
-    send({
+    sendRef.current({
       type: "join-room",
       payload: {
         roomId: urlRoomId,
@@ -326,7 +353,7 @@ export function Room() {
         isHost,
       },
     });
-  }, [urlRoomId, userId, username, isHost, connectionStatus, connectionId, send]);
+  }, [urlRoomId, userId, username, isHost, connectionStatus]);
 
   useEffect(() => {
     if (!localStream) return;
@@ -395,23 +422,27 @@ export function Room() {
   };
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-black overflow-hidden text-white relative">
+    <div className="h-screen w-screen flex flex-col overflow-hidden text-white relative">
+      {/* Background gradient effects */}
+      <div className="absolute inset-0 bg-gradient-to-br from-[#0a0a0f] via-[#0f0f1a] to-[#0a0a0f]" />
+      <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-violet-600/10 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="h-16 px-6 flex items-center justify-between border-b border-zinc-800 z-10 bg-zinc-900">
+      <div className="relative z-10 h-16 px-6 flex items-center justify-between border-b border-purple-500/20 bg-[#0a0a0f]/80 backdrop-blur-sm">
         <div className="flex items-center gap-3">
-          <div className="bg-blue-600 p-2 rounded-lg">
+          <div className="bg-gradient-to-br from-purple-600 to-violet-600 p-2 rounded-lg shadow-lg shadow-purple-500/25">
             <Video className="w-5 h-5 text-white" />
           </div>
-          <span className="font-semibold text-xl tracking-tight">FlexMeet</span>
+          <span className="font-semibold text-xl tracking-tight bg-gradient-to-r from-purple-400 to-violet-400 bg-clip-text text-transparent">FlexMeet</span>
         </div>
 
-        <div className="flex items-center gap-3 px-4 py-2 bg-zinc-800 rounded-full">
+        <div className="flex items-center gap-3 px-4 py-2 bg-purple-500/10 border border-purple-500/30 rounded-full">
           <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-          <span className="text-sm font-medium text-gray-300">Record</span>
+          <span className="text-sm font-medium text-purple-300">Record</span>
         </div>
       </div>
 
-      <div className="flex-1 flex relative overflow-hidden">
+      <div className="relative z-10 flex-1 flex overflow-hidden">
         <div
           className={`flex-1 transition-all duration-300 ${
             isChatOpen ? "mr-90" : ""
@@ -421,14 +452,21 @@ export function Room() {
         </div>
 
         <div
-          className={`fixed top-16 right-0 bottom-20 w-90 bg-zinc-900 border-l border-zinc-800 transform transition-transform duration-300 z-40 ${
+          className={`fixed top-16 right-0 bottom-20 w-90 bg-[#0a0a0f]/90 backdrop-blur-xl border-l border-purple-500/20 transform transition-transform duration-300 z-40 ${
             isChatOpen ? "translate-x-0" : "translate-x-full"
           }`}
         >
           <div className="flex flex-col h-full">
-            <div className="p-4 border-b border-zinc-800 flex justify-between">
-              <h2 className="font-semibold text-lg">In-call Messages</h2>
-              <button onClick={() => setIsChatOpen(false)}>✕</button>
+            <div className="p-4 border-b border-purple-500/20 flex justify-between">
+              <h2 className="font-semibold text-lg text-white">In-call Messages</h2>
+              <button 
+                onClick={() => setIsChatOpen(false)} 
+                className="text-zinc-400 hover:text-white transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
             <div className="flex-1 overflow-hidden">
               <Chat sendMessage={send} />
