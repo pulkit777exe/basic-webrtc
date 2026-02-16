@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAtom } from "jotai";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import {
   userIdAtom,
   usernameAtom,
@@ -10,9 +12,18 @@ import {
 } from "../store/roomStore";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "../components/ui/card";
 import { toast } from "sonner";
+import { 
+  Zap, 
+  Waves, 
+  Sparkles, 
+  Video, 
+  Mic, 
+  Monitor,
+  Users,
+  ArrowRight,
+  Flower2
+} from "lucide-react";
 
 function generateRoomId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz";
@@ -38,9 +49,78 @@ export function Landing() {
   const [, setUserId] = useAtom(userIdAtom);
   const [, setUsername] = useAtom(usernameAtom);
   const [, setIsHost] = useAtom(isHostAtom);
-  const [name, setName] = useState(currentUser?.username || "Test User");
+  const [name] = useState(currentUser?.username || "Test User");
   const [roomCode, setRoomCode] = useState("");
-  const [, setShowAuthModal] = useState(false);
+  const [showJoinInput, setShowJoinInput] = useState(false);
+  
+  // GSAP refs
+  const containerRef = useRef<HTMLDivElement>(null);
+  const heroRef = useRef<HTMLDivElement>(null);
+  const featuresRef = useRef<HTMLDivElement>(null);
+  const workflowRef = useRef<HTMLDivElement>(null);
+  const testimonialsRef = useRef<HTMLDivElement>(null);
+  const ctaRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
+    
+    tl.from(".hero-title", { y: 60, opacity: 0, duration: 1 })
+      .from(".hero-subtitle", { y: 40, opacity: 0, duration: 0.8 }, "-=0.6")
+      .from(".hero-input", { y: 30, opacity: 0, duration: 0.8 }, "-=0.4")
+      .from(".hero-mockup", { y: 80, opacity: 0, duration: 1.2 }, "-=0.4");
+    
+    gsap.from(".feature-card", {
+      scrollTrigger: {
+        trigger: featuresRef.current,
+        start: "top 80%",
+      },
+      y: 60,
+      opacity: 0,
+      duration: 0.8,
+      stagger: 0.2,
+    });
+    
+    gsap.from(".workflow-text", {
+      scrollTrigger: {
+        trigger: workflowRef.current,
+        start: "top 75%",
+      },
+      x: -60,
+      opacity: 0,
+      duration: 1,
+    });
+    
+    gsap.from(".workflow-card", {
+      scrollTrigger: {
+        trigger: workflowRef.current,
+        start: "top 75%",
+      },
+      x: 60,
+      opacity: 0,
+      duration: 1,
+    });
+    
+    gsap.from(".testimonial-card", {
+      scrollTrigger: {
+        trigger: testimonialsRef.current,
+        start: "top 80%",
+      },
+      y: 40,
+      opacity: 0,
+      duration: 0.6,
+      stagger: 0.15,
+    });
+    
+    gsap.from(ctaRef.current, {
+      scrollTrigger: {
+        trigger: ctaRef.current,
+        start: "top 85%",
+      },
+      scale: 0.9,
+      opacity: 0,
+      duration: 0.8,
+    });
+  }, { scope: containerRef });
   
   const handleCreateRoom = () => {
     if (!name.trim()) {
@@ -70,187 +150,431 @@ export function Landing() {
     setIsHost(false);
     navigate(`/room/${roomCode}`);
   };
-  
+
   return (
-    <div className="min-h-screen relative overflow-hidden">
-      {/* Background gradient effects */}
-      <div className="absolute inset-0 bg-gradient-to-br from-[#0a0a0f] via-[#0f0f1a] to-[#0a0a0f]" />
-      <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl" />
-      <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-violet-600/20 rounded-full blur-3xl" />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-purple-500/10 rounded-full blur-3xl" />
-      
-      <div className="relative z-10 mx-auto px-4 py-16">
-        <div className="text-center mb-16">
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-purple-500/10 border border-purple-500/20 mb-6">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500"></span>
-            </span>
-            <span className="text-sm text-purple-300">WebRTC Powered</span>
+    <div ref={containerRef} className="min-h-screen" style={{ backgroundColor: '#FCFCFA' }}>
+      {/* Navigation */}
+      <nav className="px-6 py-5 flex items-center justify-between max-w-7xl mx-auto">
+        <div className="flex items-center gap-2">
+          <Flower2 className="w-8 h-8" style={{ color: '#1F1F1F' }} />
+          <span className="text-2xl font-serif" style={{ color: '#1F1F1F', fontFamily: 'Playfair Display, serif' }}>
+            Popcorn
+          </span>
+        </div>
+        
+        <div className="flex items-center gap-6">
+          {!isAuthenticated && (
+            <a href="#" className="text-base font-medium hover:opacity-70 transition-opacity" style={{ color: '#666666' }}>
+              Log in
+            </a>
+          )}
+          <Button
+            onClick={handleCreateRoom}
+            variant="black"
+            className="rounded-full px-8"
+          >
+            Start a meeting
+          </Button>
+        </div>
+      </nav>
+
+      {/* Hero Section */}
+      <section ref={heroRef} className="px-6 py-16 md:py-24">
+        <div className="max-w-4xl mx-auto text-center">
+          <h1 
+            className="hero-title text-5xl md:text-6xl lg:text-7xl font-serif mb-6 leading-tight"
+            style={{ color: '#1F1F1F', fontFamily: 'Playfair Display, serif' }}
+          >
+            Collaboration,
+            <br />without the chaos.
+          </h1>
+          
+          <p 
+            className="hero-subtitle text-lg md:text-xl mb-10 max-w-2xl mx-auto"
+            style={{ color: '#666666', fontFamily: 'Inter, sans-serif' }}
+          >
+            High-fidelity video for creative teams. 4K audio, AI summaries, and zero installs.
+          </p>
+
+          {/* Split Pill Container */}
+          <div 
+            className="hero-input inline-flex items-center rounded-full px-2 py-1.5 shadow-lg max-w-lg mx-auto"
+            style={{ backgroundColor: '#FFFFFF', border: '1px solid #E5E5E5' }}
+          >
+            <div className="flex-1 px-4">
+              <Input
+                type="text"
+                value={showJoinInput ? roomCode : ""}
+                onChange={(e) => setRoomCode(e.target.value.toLowerCase())}
+                onFocus={() => setShowJoinInput(true)}
+                placeholder="Enter room code"
+                className="border-0 shadow-none bg-transparent text-base"
+                style={{ color: '#1F1F1F' }}
+                maxLength={7}
+              />
+            </div>
+            <Button
+              variant="black"
+              onClick={handleJoinRoom}
+              disabled={!showJoinInput}
+              className="rounded-full px-6"
+            >
+              Join Room
+            </Button>
+          </div>
+
+          <div className="mt-4">
+            <button 
+              onClick={handleCreateRoom}
+              className="text-base font-medium underline"
+              style={{ color: '#666666' }}
+            >
+              Or start a personal meeting →
+            </button>
+          </div>
+
+          {/* REC indicator */}
+          <div className="mt-8 inline-flex items-center gap-2 px-3 py-1 rounded-full" style={{ backgroundColor: '#EAD4CE' }}>
+            <span className="w-2 h-2 rounded-full bg-red-500"></span>
+            <span className="text-sm font-medium" style={{ color: '#1F1F1F' }}>REC</span>
+          </div>
+
+          {/* Browser Mockup */}
+          <div className="mt-12 mx-auto max-w-5xl">
+            <div 
+              className="rounded-2xl overflow-hidden shadow-2xl"
+              style={{ 
+                backgroundColor: '#FFFFFF', 
+                border: '1px solid #E5E5E5',
+                transform: 'rotate(-1deg)'
+              }}
+            >
+              {/* Browser chrome */}
+              <div className="px-4 py-3 flex items-center gap-2" style={{ borderBottom: '1px solid #E5E5E5' }}>
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#EAD4CE' }}></div>
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#D4E2D4' }}></div>
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#E5E5E5' }}></div>
+                <div className="flex-1 mx-4 rounded-md px-3 py-1" style={{ backgroundColor: '#FCFCFA', border: '1px solid #E5E5E5' }}>
+                  <span className="text-xs" style={{ color: '#666666' }}>popcorn.space</span>
+                </div>
+              </div>
+              
+              {/* Video Grid Mockup */}
+              <div className="p-6 grid grid-cols-2 gap-4" style={{ backgroundColor: '#FCFCFA' }}>
+                {[1, 2, 3, 4].map((i) => (
+                  <div 
+                    key={i}
+                    className="aspect-video rounded-xl overflow-hidden relative"
+                    style={{ 
+                      backgroundColor: i === 1 ? '#D4E2D4' : '#E5E5E5',
+                      border: '1px solid #E5E5E5'
+                    }}
+                  >
+                    {/* Mock video with person */}
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div 
+                        className="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-serif"
+                        style={{ backgroundColor: '#FFFFFF', color: '#1F1F1F' }}
+                      >
+                        {['S', 'D', 'K', 'M'][i-1]}
+                      </div>
+                    </div>
+                    {/* Name tag */}
+                    <div className="absolute bottom-2 left-2 right-2">
+                      <span 
+                        className="text-xs px-2 py-1 rounded"
+                        style={{ backgroundColor: 'rgba(0,0,0,0.5)', color: '#FFFFFF' }}
+                      >
+                        {['Sarah', 'Davide', 'Kenji', 'You'][i-1]}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Control bar mockup */}
+              <div className="px-6 py-4 flex items-center justify-center gap-4" style={{ borderTop: '1px solid #E5E5E5' }}>
+                <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: '#1F1F1F' }}>
+                  <Mic className="w-5 h-5 text-white" />
+                </div>
+                <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: '#1F1F1F' }}>
+                  <Video className="w-5 h-5 text-white" />
+                </div>
+                <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: '#D4E2D4' }}>
+                  <Monitor className="w-5 h-5" style={{ color: '#1F1F1F' }} />
+                </div>
+                <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: '#EAD4CE' }}>
+                  <Users className="w-5 h-5" style={{ color: '#1F1F1F' }} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Decorative circle behind mockup */}
+          <div 
+            className="mx-auto rounded-full"
+            style={{ 
+              backgroundColor: '#F1F5F1', 
+              width: '600px', 
+              height: '600px',
+              marginTop: '-500px',
+              position: 'relative',
+              zIndex: -1
+            }}
+          ></div>
+        </div>
+      </section>
+
+      {/* Feature Grid */}
+      <section ref={featuresRef} className="px-6 py-20" style={{ backgroundColor: '#FCFCFA' }}>
+        <div className="max-w-5xl mx-auto">
+          <div className="grid md:grid-cols-3 gap-8">
+            {/* Feature 1 */}
+            <div className="feature-card text-center">
+              <div 
+                className="w-16 h-16 rounded-full mx-auto mb-4 flex items-center justify-center"
+                style={{ backgroundColor: '#D4E2D4' }}
+              >
+                <Zap className="w-8 h-8" style={{ color: '#1F1F1F' }} />
+              </div>
+              <h3 
+                className="text-xl font-serif mb-2"
+                style={{ color: '#1F1F1F', fontFamily: 'Playfair Display, serif' }}
+              >
+                Instant Flow
+              </h3>
+              <p className="text-base" style={{ color: '#666666' }}>
+                No downloads. Just send a link and you're live in the browser.
+              </p>
+            </div>
+
+            {/* Feature 2 */}
+            <div className="feature-card text-center">
+              <div 
+                className="w-16 h-16 rounded-full mx-auto mb-4 flex items-center justify-center"
+                style={{ backgroundColor: '#EAD4CE' }}
+              >
+                <Waves className="w-8 h-8" style={{ color: '#1F1F1F' }} />
+              </div>
+              <h3 
+                className="text-xl font-serif mb-2"
+                style={{ color: '#1F1F1F', fontFamily: 'Playfair Display, serif' }}
+              >
+                Studio Sound
+              </h3>
+              <p className="text-base" style={{ color: '#666666' }}>
+                Crystal clear 4K audio so you hear every breath and bass drop.
+              </p>
+            </div>
+
+            {/* Feature 3 */}
+            <div className="feature-card text-center">
+              <div 
+                className="w-16 h-16 rounded-full mx-auto mb-4 flex items-center justify-center"
+                style={{ backgroundColor: '#D4E2D4' }}
+              >
+                <Sparkles className="w-8 h-8" style={{ color: '#1F1F1F' }} />
+              </div>
+              <h3 
+                className="text-xl font-serif mb-2"
+                style={{ color: '#1F1F1F', fontFamily: 'Playfair Display, serif' }}
+              >
+                AI Scribe
+              </h3>
+              <p className="text-base" style={{ color: '#666666' }}>
+                Focus on the art. We'll transcribe and summarize the critique.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Creative Workflow Section */}
+      <section ref={workflowRef} className="px-6 py-20" style={{ backgroundColor: '#FAF5F4' }}>
+        <div className="max-w-5xl mx-auto">
+          <div className="grid md:grid-cols-2 gap-12 items-center">
+            <div className="workflow-text">
+              <h2 
+                className="text-4xl font-serif mb-4"
+                style={{ color: '#1F1F1F', fontFamily: 'Playfair Display, serif' }}
+              >
+                Share pixels, not blurry approximations.
+              </h2>
+              <p className="text-lg mb-6" style={{ color: '#666666' }}>
+                Screen sharing optimized for design software. True color accuracy and 60fps framerate.
+              </p>
+              <div className="flex items-center gap-2">
+                <span className="text-base font-medium" style={{ color: '#1F1F1F' }}>
+                  Noise Cancellation:
+                </span>
+                <div 
+                  className="w-12 h-6 rounded-full relative"
+                  style={{ backgroundColor: '#D4E2D4' }}
+                >
+                  <div 
+                    className="absolute right-1 top-1 w-4 h-4 rounded-full"
+                    style={{ backgroundColor: '#1F1F1F' }}
+                  ></div>
+                </div>
+                <span className="text-sm font-medium" style={{ color: '#1F1F1F' }}>ON</span>
+              </div>
+            </div>
+
+            <div 
+              className="workflow-card rounded-xl p-6 relative"
+              style={{ backgroundColor: '#FFFFFF', border: '1px solid #E5E5E5' }}
+            >
+              <div className="aspect-video rounded-lg mb-4" style={{ backgroundColor: '#F1F5F1' }}>
+                {/* Screen share mockup */}
+                <div className="w-full h-full flex items-center justify-center">
+                  <Monitor className="w-16 h-16" style={{ color: '#666666' }} />
+                </div>
+              </div>
+              
+              {/* Notification badge */}
+              <div 
+                className="absolute -right-4 top-4 px-4 py-2 rounded-full shadow-lg flex items-center gap-2"
+                style={{ backgroundColor: '#1F1F1F' }}
+              >
+                <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                <span className="text-sm font-medium" style={{ color: '#FFFFFF' }}>Recording started</span>
+              </div>
+              
+              <div className="flex items-center justify-between">
+                <span className="text-sm" style={{ color: '#666666' }}>Screen Share Active</span>
+                <Users className="w-5 h-5" style={{ color: '#666666' }} />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Social Proof */}
+      <section ref={testimonialsRef} className="px-6 py-20" style={{ backgroundColor: '#FCFCFA' }}>
+        <div className="max-w-5xl mx-auto">
+          <div className="flex gap-6 overflow-x-auto pb-4">
+            {/* Card 1 */}
+            <div 
+              className="testimonial-card shrink-0 w-80 p-6 rounded-xl"
+              style={{ backgroundColor: '#FFFFFF', border: '1px solid #E5E5E5' }}
+            >
+              <p className="text-lg mb-4" style={{ color: '#1F1F1F' }}>
+                "Finally, a video tool that doesn't compress my Figma designs."
+              </p>
+              <div className="flex items-center gap-3">
+                <div 
+                  className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium"
+                  style={{ backgroundColor: '#D4E2D4', color: '#1F1F1F' }}
+                >
+                  S
+                </div>
+                <div>
+                  <p className="font-medium" style={{ color: '#1F1F1F' }}>Sarah</p>
+                  <p className="text-sm" style={{ color: '#666666' }}>Art Director</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 2 */}
+            <div 
+              className="testimonial-card shrink-0 w-80 p-6 rounded-xl"
+              style={{ backgroundColor: '#FFFFFF', border: '1px solid #E5E5E5' }}
+            >
+              <p className="text-lg mb-4" style={{ color: '#1F1F1F' }}>
+                "The AI summaries save me 20 minutes after every sync."
+              </p>
+              <div className="flex items-center gap-3">
+                <div 
+                  className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium"
+                  style={{ backgroundColor: '#EAD4CE', color: '#1F1F1F' }}
+                >
+                  D
+                </div>
+                <div>
+                  <p className="font-medium" style={{ color: '#1F1F1F' }}>Davide</p>
+                  <p className="text-sm" style={{ color: '#666666' }}>Producer</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 3 */}
+            <div 
+              className="testimonial-card shrink-0 w-80 p-6 rounded-xl"
+              style={{ backgroundColor: '#FFFFFF', border: '1px solid #E5E5E5' }}
+            >
+              <p className="text-lg mb-4" style={{ color: '#1F1F1F' }}>
+                "The audio quality is actually good enough for music production review."
+              </p>
+              <div className="flex items-center gap-3">
+                <div 
+                  className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium"
+                  style={{ backgroundColor: '#D4E2D4', color: '#1F1F1F' }}
+                >
+                  K
+                </div>
+                <div>
+                  <p className="font-medium" style={{ color: '#1F1F1F' }}>Kenji</p>
+                  <p className="text-sm" style={{ color: '#666666' }}>Composer</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Footer / Pre-Footer */}
+      <section ref={ctaRef} className="px-6 py-16">
+        <div 
+          className="max-w-5xl mx-auto rounded-2xl p-12 text-center"
+          style={{ backgroundColor: '#1F1F1F' }}
+        >
+          <h2 
+            className="text-4xl md:text-5xl font-serif mb-4"
+            style={{ color: '#FFFFFF', fontFamily: 'Playfair Display, serif' }}
+          >
+            Ready to flow?
+          </h2>
+          
+          <div className="mb-6">
+            <span className="text-5xl font-medium" style={{ color: '#FFFFFF' }}>$0</span>
+            <span className="text-lg ml-2" style={{ color: '#666666' }}>/mo</span>
           </div>
           
-          <h1 className="text-6xl font-bold mb-6">
-            <span className="bg-gradient-to-r from-purple-400 via-violet-400 to-purple-500 bg-clip-text text-transparent">
-              WebRTC Meet
-            </span>
-          </h1>
-          <p className="text-xl text-zinc-400 mb-8 max-w-2xl mx-auto">
-            Secure, high-quality video conferencing for teams with end-to-end encryption
+          <p className="text-base mb-8" style={{ color: '#666666' }}>
+            Free for personal use.
           </p>
-          {!isAuthenticated && (
-            <Button
-              onClick={() => setShowAuthModal(true)}
-              className="bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white shadow-lg shadow-purple-500/25 transition-all duration-300"
-              size="lg"
-            >
-              Sign In / Sign Up
-            </Button>
-          )}
-          {isAuthenticated && (
-            <p className="text-purple-300 font-medium">
-              Welcome back, <span className="text-white font-semibold">{currentUser?.username}</span>!
-            </p>
-          )}
-        </div>
-        
-        <div className="grid md:grid-cols-3 gap-6 mb-16 max-w-5xl mx-auto">
-          <Card className="glass border-purple-500/20 hover:border-purple-500/40 transition-all duration-300 hover:shadow-lg hover:shadow-purple-500/10">
-            <CardHeader>
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500/20 to-violet-500/20 flex items-center justify-center mb-4 border border-purple-500/30">
-                <svg className="w-6 h-6 text-purple-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z" />
-                </svg>
-              </div>
-              <CardTitle className="text-xl font-bold text-white">HD Video Quality</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-zinc-400">
-                Crystal clear video with advanced WebRTC technology
-              </p>
-            </CardContent>
-          </Card>
           
-          <Card className="glass border-purple-500/20 hover:border-purple-500/40 transition-all duration-300 hover:shadow-lg hover:shadow-purple-500/10">
-            <CardHeader>
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500/20 to-violet-500/20 flex items-center justify-center mb-4 border border-purple-500/30">
-                <svg className="w-6 h-6 text-purple-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path
-                    fillRule="evenodd"
-                    d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-              </div>
-              <CardTitle className="text-xl font-bold text-white">Secure Rooms</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-zinc-400">
-                Locked rooms with host approval for privacy
-              </p>
-            </CardContent>
-          </Card>
+          <Button
+            variant="white"
+            onClick={handleCreateRoom}
+            className="rounded-full px-8 py-3 text-lg"
+          >
+            Start Meeting Now <ArrowRight className="ml-2 w-5 h-5" />
+          </Button>
+        </div>
+      </section>
+
+      {/* Final Footer */}
+      <footer className="px-6 py-8 border-t" style={{ borderColor: '#E5E5E5' }}>
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <Flower2 className="w-6 h-6" style={{ color: '#1F1F1F' }} />
+            <span className="text-lg font-serif" style={{ color: '#1F1F1F', fontFamily: 'Playfair Display, serif' }}>
+              Popcorn
+            </span>
+          </div>
           
-          <Card className="glass border-purple-500/20 hover:border-purple-500/40 transition-all duration-300 hover:shadow-lg hover:shadow-purple-500/10">
-            <CardHeader>
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500/20 to-violet-500/20 flex items-center justify-center mb-4 border border-purple-500/30">
-                <svg className="w-6 h-6 text-purple-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path
-                    fillRule="evenodd"
-                    d="M3 5a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2h-2.22l.123.489.804.804A1 1 0 0113 18H7a1 1 0 01-.707-1.707l.804-.804L7.22 15H5a2 2 0 01-2-2V5zm5.771 7H5V5h10v7H8.771z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-              </div>
-              <CardTitle className="text-xl font-bold text-white">Screen Sharing</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-zinc-400">
-                Share your screen with audio support
-              </p>
-            </CardContent>
-          </Card>
+          <div className="flex items-center gap-6 text-sm" style={{ color: '#666666' }}>
+            <a href="#" className="hover:text-black transition-colors">Privacy</a>
+            <a href="#" className="hover:text-black transition-colors">Terms</a>
+            <a href="#" className="hover:text-black transition-colors">Contact</a>
+          </div>
+          
+          <p className="text-sm" style={{ color: '#666666' }}>
+            © 2024 Popcorn. All rights reserved.
+          </p>
         </div>
-        
-        <div className="max-w-xl mx-auto">
-          <Card className="glass-strong border-purple-500/30 shadow-2xl shadow-purple-500/10">
-            <CardHeader className="text-center pb-2">
-              <CardTitle className="text-2xl font-bold text-white">Join or Create a Room</CardTitle>
-              <CardDescription className="text-zinc-400">
-                Connect with your team instantly
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6 pt-4">
-              <div className="space-y-2">
-                <Label htmlFor="name" className="text-zinc-300">Your Name</Label>
-                <Input
-                  id="name"
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Enter your name"
-                  className="w-full bg-white/5 border-purple-500/30 text-white placeholder:text-zinc-500 focus:border-purple-500 focus:ring-purple-500/20"
-                  maxLength={20}
-                />
-              </div>
-              
-              <Button
-                onClick={handleCreateRoom}
-                className="w-full h-12 text-lg font-semibold bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white shadow-lg shadow-purple-500/25 transition-all duration-300"
-              >
-                <span className="flex items-center gap-2">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                  Create New Room
-                </span>
-              </Button>
-              
-              <div className="relative">
-                <div className="absolute inset-0 flex items">
-                  <div className="w-full border-t border-purple-500/20"></div>
-                </div>
-                <div className="relative flex justify-center text-sm">
-                  <span className="px-4 bg-[#14141e] text-zinc-500 rounded">
-                    OR JOIN EXISTING ROOM
-                  </span>
-                </div>
-              </div>
-              
-              <div className="space-y-2">
-                <Label htmlFor="roomCode" className="text-zinc-300">Room Code</Label>
-                <Input
-                  id="roomCode"
-                  type="text"
-                  value={roomCode}
-                  onChange={(e) => setRoomCode(e.target.value.toLowerCase())}
-                  placeholder="xxx-xxx"
-                  className="w-full font-mono text-center text-xl tracking-widest bg-white/5 border-purple-500/30 text-white placeholder:text-zinc-500 focus:border-purple-500 focus:ring-purple-500/20"
-                  maxLength={7}
-                />
-              </div>
-              
-              <Button
-                onClick={handleJoinRoom}
-                className="w-full h-12 text-lg font-semibold bg-white/5 border border-purple-500/30 text-white hover:bg-purple-500/10 hover:border-purple-500/50 transition-all duration-300"
-                variant="outline"
-              >
-                <span className="flex items-center gap-2">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
-                  </svg>
-                  Join Room
-                </span>
-              </Button>
-            </CardContent>
-            <CardFooter className="justify-center pt-2">
-              <p className="text-center text-zinc-500 text-sm">
-                Free tier: Max 8 participants per room
-              </p>
-            </CardFooter>
-          </Card>
-        </div>
-        
-      </div>
+      </footer>
     </div>
   );
 }

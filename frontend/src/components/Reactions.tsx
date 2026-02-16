@@ -10,7 +10,7 @@ interface ReactionsProps {
   onSendReaction: (emoji: string) => void;
 }
 
-const EMOJIS = ["", "", "", "", "", ""];
+const EMOJIS = ["👍", "👏", "❤️", "😂", "🎉", "🔥"];
 
 export function Reactions({ onSendReaction }: ReactionsProps) {
   const [showPicker, setShowPicker] = useState(false);

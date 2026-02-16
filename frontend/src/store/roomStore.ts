@@ -22,3 +22,22 @@ export const raisedHandsAtom = atom<Set<string>>(new Set() as Set<string>);
 export const currentUserAtom = atom<User | null>(null);
 export const accessTokenAtom = atom<string | null>(null);
 export const isAuthenticatedAtom = atom<boolean>(false);
+export interface Reaction {
+  id: string;
+  userId: string;
+  username: string;
+  emoji: string;
+  timestamp: number;
+}
+export const reactionsAtom = atom<Reaction[]>([]);
+
+export type ViewMode = "grid" | "speaker" | "presentation";
+export const viewModeAtom = atom<ViewMode>("grid");
+
+export const meetingStartTimeAtom = atom<number | null>(null);
+export const meetingDurationAtom = atom<string>("00:00");
+
+export const isPiPAtom = atom<boolean>(false);
+
+// Track which peer is currently sharing their screen
+export const screenSharerIdAtom = atom<string | null>(null);

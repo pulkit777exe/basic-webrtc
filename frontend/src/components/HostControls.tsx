@@ -33,7 +33,7 @@ export function HostControls({
       </button>
 
       {showMenu && (
-        <div className="absolute bottom-16 left-0 glass-strong rounded-lg shadow-xl shadow-purple-500/10 p-4 min-w-[250px] z-50 border border-purple-500/20">
+        <div className="absolute bottom-16 left-0 glass-strong rounded-lg shadow-xl shadow-purple-500/10 p-4 min-w-62.5 z-50 border border-purple-500/20">
           <h3 className="font-semibold mb-3 text-sm text-purple-300">
             Host Controls
           </h3>

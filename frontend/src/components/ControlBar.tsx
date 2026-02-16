@@ -7,6 +7,7 @@ import {
   Video, 
   VideoOff,
   Users,
+  PhoneOff,
 } from "lucide-react";
 import { type Peer } from "../types";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { useState } from "react";
 
 interface ControlBarProps {
   isAudioEnabled: boolean;
@@ -34,6 +36,49 @@ interface ControlBarProps {
   onLockRoom: () => void;
   onUnlockRoom: () => void;
   onLeave: () => void;
+  onToggleChat?: () => void;
+  onToggleParticipants?: () => void;
+  isChatOpen?: boolean;
+  isParticipantsOpen?: boolean;
+}
+
+// Tooltip wrapper component
+function TooltipButton({ children, tooltip, onClick, active, variant }: { 
+  children: React.ReactNode; 
+  tooltip: string;
+  onClick?: () => void;
+  active?: boolean;
+  variant?: 'default' | 'danger' | 'success';
+}) {
+  const [showTooltip, setShowTooltip] = useState(false);
+  
+  return (
+    <div 
+      className="relative"
+      onMouseEnter={() => setShowTooltip(true)}
+      onMouseLeave={() => setShowTooltip(false)}
+    >
+      <Button
+        onClick={onClick}
+        className={`h-12 w-12 rounded-xl transition-all duration-200 ${
+          active 
+            ? variant === 'danger' 
+              ? 'bg-red-600 hover:bg-red-700 text-white border border-red-500/50 shadow-lg shadow-red-500/25'
+              : variant === 'success'
+                ? 'bg-green-600 hover:bg-green-700 text-white border border-green-500/50 shadow-lg shadow-green-500/25'
+                : 'bg-purple-600 hover:bg-purple-700 text-white border border-purple-500/50 shadow-lg shadow-purple-500/25'
+            : 'hover:bg-purple-500/10 text-white border border-purple-500/30 hover:border-purple-500/50 hover:scale-105 hover:shadow-lg hover:shadow-purple-500/20'
+        }`}
+      >
+        {children}
+      </Button>
+      {showTooltip && (
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-zinc-800 text-white text-xs rounded-md whitespace-nowrap shadow-lg">
+          {tooltip}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ControlBar({
@@ -45,9 +90,13 @@ export function ControlBar({
   onToggleScreenShare,
   onSendReaction,
   onLeave,
+  onToggleChat,
+  onToggleParticipants,
+  isChatOpen,
+  isParticipantsOpen,
 }: ControlBarProps) {
   
-  const reactions = ["", "", "", ""];
+  const reactions = ["👍", "👏", "❤️", "😂"];
 
   return (
     <div className="fixed bottom-0 left-0 right-0 h-20 bg-[#0a0a0f]/95 backdrop-blur-md border-t border-purple-500/20 flex items-center justify-center px-6 z-50">
@@ -106,7 +155,7 @@ export function ControlBar({
           onClick={onToggleScreenShare}
           className={`h-12 px-4 rounded-xl transition-all ${
             isScreenSharing 
-              ? "bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white border-transparent shadow-lg shadow-purple-500/25" 
+              ? "bg-linear-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white border-transparent shadow-lg shadow-purple-500/25" 
               : "text-white border border-purple-500/30 hover:bg-purple-500/10 hover:border-purple-500/50"
           }`}
         >
@@ -120,13 +169,13 @@ export function ControlBar({
             <Button
               variant="ghost"
               size="lg"
-              className="h-12 px-4 rounded-xl hover:bg-purple-500/10 text-white border border-purple-500/30 hover:border-purple-500/50 transition-all"
+              className="h-12 px-4 rounded-xl hover:bg-purple-500/10 text-white border border-purple-500/30 hover:border-purple-500/50 transition-all hover:scale-105"
             >
-              <span className="text-lg mr-1"></span>
+              <span className="text-lg mr-1">👍</span>
               <span className="text-sm font-medium ml-1">Reactions</span>
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-auto p-2 glass border-purple-500/30" side="top">
+          <PopoverContent className="w-auto p-3 glass border-purple-500/30" side="top">
             <div className="flex gap-2">
               {reactions.map((emoji) => (
                 <Button
@@ -134,7 +183,7 @@ export function ControlBar({
                   variant="ghost"
                   size="icon"
                   onClick={() => onSendReaction(emoji)}
-                  className="h-10 w-10 text-2xl hover:bg-purple-500/20 transition-colors"
+                  className="h-12 w-12 text-2xl hover:bg-purple-500/20 hover:scale-125 transition-all rounded-lg"
                 >
                   {emoji}
                 </Button>
@@ -144,50 +193,43 @@ export function ControlBar({
         </Popover>
 
         {/* Chat */}
-        <Button
-          variant="ghost"
-          size="lg"
-          className="h-12 px-4 rounded-xl hover:bg-purple-500/10 text-white border border-purple-500/30 hover:border-purple-500/50 transition-all"
+        <TooltipButton 
+          tooltip={isChatOpen ? "Close chat" : "Open chat"}
+          onClick={onToggleChat}
+          active={isChatOpen}
         >
-          <MessageSquare className="h-5 w-5 mr-2" />
-          <span className="text-sm font-medium">Chat</span>
-        </Button>
+          <MessageSquare className="h-5 w-5" />
+        </TooltipButton>
 
         {/* Participants */}
-        <Button
-          variant="ghost"
-          size="lg"
-          className="h-12 px-4 rounded-xl hover:bg-purple-500/10 text-white border border-purple-500/30 hover:border-purple-500/50 transition-all"
+        <TooltipButton 
+          tooltip={isParticipantsOpen ? "Close participants" : "View participants"}
+          onClick={onToggleParticipants}
+          active={isParticipantsOpen}
         >
-          <Users className="h-5 w-5 mr-2" />
-          <span className="text-sm font-medium">Participants</span>
-        </Button>
+          <Users className="h-5 w-5" />
+        </TooltipButton>
 
         <div className="h-8 w-px bg-purple-500/20 mx-1" />
 
         {/* Leave */}
-        <Button
-          variant="destructive"
-          size="lg"
+        <TooltipButton 
+          tooltip="Leave meeting"
           onClick={onLeave}
-          className="h-12 px-6 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold border border-red-500/50 shadow-lg shadow-red-500/25 transition-all"
+          variant="danger"
         >
-          Leave
-        </Button>
+          <PhoneOff className="h-5 w-5" />
+        </TooltipButton>
       </div>
 
       {/* Record indicator - positioned on the right */}
       <div className="absolute right-6 top-1/2 -translate-y-1/2">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-12 w-12 rounded-xl hover:bg-purple-500/10 text-white border border-purple-500/30 hover:border-purple-500/50 transition-all"
-        >
+        <TooltipButton tooltip="Start recording">
           <div className="relative">
             <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse" />
             <div className="w-6 h-6 rounded-full border-2 border-purple-400/50" />
           </div>
-        </Button>
+        </TooltipButton>
       </div>
     </div>
   );

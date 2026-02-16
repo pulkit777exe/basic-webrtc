@@ -25,7 +25,7 @@ export function VideoTile({
   }, [stream]);
 
   return (
-    <Card className="relative border-purple-500/20 rounded-lg overflow-hidden aspect-video bg-gradient-to-br from-purple-900/20 to-violet-900/20">
+    <Card className="relative border-purple-500/20 rounded-lg overflow-hidden aspect-video bg-linear-to-br from-purple-900/20 to-violet-900/20">
       <video
         ref={videoRef}
         autoPlay

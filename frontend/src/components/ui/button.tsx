@@ -4,7 +4,6 @@ import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 
-// eslint-disable-next-line react-refresh/only-export-components
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium ring-offset-background transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/50 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
@@ -19,6 +18,10 @@ const buttonVariants = cva(
           "bg-purple-500/15 text-purple-300 border border-purple-500/20 hover:bg-purple-500/25 hover:text-purple-200",
         ghost: "text-zinc-400 hover:bg-purple-500/10 hover:text-white",
         link: "text-purple-400 underline-offset-4 hover:underline hover:text-purple-300",
+        black: "bg-[#1F1F1F] text-white hover:bg-black shadow-md",
+        white: "bg-white text-[#1F1F1F] border border-[#E5E5E5] hover:bg-gray-50",
+        sage: "bg-[#D4E2D4] text-[#1F1F1F] hover:bg-[#C5D6C4]",
+        clay: "bg-[#EAD4CE] text-[#1F1F1F] hover:bg-[#DFC5BC]",
       },
       size: {
         default: "h-10 px-4 py-2",

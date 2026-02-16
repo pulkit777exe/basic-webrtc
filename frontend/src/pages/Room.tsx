@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAtom } from "jotai";
 import {
@@ -14,12 +14,15 @@ import {
   isHandRaisedAtom,
   raisedHandsAtom,
   isRoomLockedAtom,
+  reactionsAtom,
+  screenSharerIdAtom,
 } from "../store/roomStore";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useWebRTC } from "../hooks/useWebRTC";
 import { VideoGrid } from "../components/VideoGrid";
 import { ControlBar } from "../components/ControlBar";
 import { Chat } from "../components/Chat";
+import { ParticipantList } from "../components/ParticipantList";
 import { type WSMessage, type ChatMessage, type Peer } from "../types";
 import { toast } from "sonner";
 import { Video } from "lucide-react";
@@ -39,13 +42,15 @@ export function Room() {
   const [, setUnreadCount] = useAtom(unreadCountAtom);
   const [isHandRaised, setIsHandRaised] = useAtom(isHandRaisedAtom);
   const [, setRaisedHands] = useAtom(raisedHandsAtom);
+  const [, setScreenSharerId] = useAtom(screenSharerIdAtom);
   const [isRoomLocked, setIsRoomLocked] = useAtom(isRoomLockedAtom);
+  const [, setReactions] = useAtom(reactionsAtom);
+  const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
 
   const hasJoinedRef = useRef(false);
   const hasInitializedMediaRef = useRef(false);
   const hasSentJoinRef = useRef(false);
 
-  // --- Refs to break TDZ / circular deps ---
   const handleWSMessageRef = useRef<(m: WSMessage) => void>(() => {});
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, Peer>>(new Map());
@@ -65,7 +70,6 @@ export function Room() {
     handleWSMessageRef.current(message);
   });
 
-  // Stable ref for send function to prevent infinite loops in useEffect
   const sendRef = useRef(send);
   useEffect(() => {
     sendRef.current = send;
@@ -113,7 +117,6 @@ export function Room() {
       switch (message.type) {
         case "room-joined":
           hasJoinedRef.current = true;
-          // Batch all peer updates into a single state update
           setPeers((prev) => {
             const map = new Map(prev);
             message.payload.participants.forEach((p: Peer) => {
@@ -131,7 +134,6 @@ export function Room() {
 
           toast.success("Successfully joined the room");
           
-          // Create offers to all existing participants after a short delay
           if (localStreamRef.current && message.payload.participants.length > 0) {
             setTimeout(() => {
               message.payload.participants.forEach((p: Peer) => {
@@ -238,6 +240,24 @@ export function Room() {
           });
           break;
 
+        case "user-reaction":
+          // Add reaction to state, will be displayed in VideoGrid
+          setReactions((prev) => [
+            ...prev,
+            {
+              id: `${Date.now()}-${message.payload.userId}`,
+              userId: message.payload.userId,
+              username: message.payload.username,
+              emoji: message.payload.emoji,
+              timestamp: Date.now(),
+            },
+          ]);
+          // Auto-remove reaction after 3 seconds
+          setTimeout(() => {
+            setReactions((prev) => prev.filter((r) => r.id !== `${Date.now()}-${message.payload.userId}`));
+          }, 3000);
+          break;
+
         case "force-mute":
           webRTCActionsRef.current.toggleAudio?.();
           toast.error("You have been muted by the host");
@@ -251,6 +271,19 @@ export function Room() {
         case "error":
           toast.error(message.payload.error);
           break;
+
+        case "start-screen-share":
+          // Another user started screen sharing
+          console.log("[Room]", message.payload.username, "started screen sharing");
+          setScreenSharerId(message.payload.userId);
+          toast.info(`${message.payload.username} is sharing their screen`);
+          break;
+
+        case "stop-screen-share":
+          // Another user stopped screen sharing
+          console.log("[Room]", message.payload.username, "stopped screen sharing");
+          setScreenSharerId(null);
+          break;
       }
     },
     [
@@ -262,6 +295,8 @@ export function Room() {
       setUnreadCount,
       setRaisedHands,
       navigate,
+      setReactions,
+      setScreenSharerId,
     ],
   );
 
@@ -314,7 +349,8 @@ export function Room() {
       hasSentJoinRef.current = false;
       cleanup();
     };
-  }, [urlRoomId, userId, username, navigate, setRoomId /* initializeMedia and cleanup removed to prevent infinite loops */]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlRoomId, userId, username, navigate, setRoomId]);
 
   useEffect(() => {
     console.log("[Room] Join effect triggered:", {
@@ -381,6 +417,20 @@ export function Room() {
   }
 };
 
+const handleToggleParticipants = () => {
+  setIsParticipantsOpen(!isParticipantsOpen);
+  if (!isParticipantsOpen) {
+    setIsChatOpen(false);
+  }
+};
+
+const handleToggleChat = () => {
+  setIsChatOpen(!isChatOpen);
+  if (!isChatOpen) {
+    setIsParticipantsOpen(false);
+  }
+};
+
   const handleToggleHandRaise = () => {
     const next = !isHandRaised;
     setIsHandRaised(next);
@@ -424,16 +474,16 @@ export function Room() {
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden text-white relative">
       {/* Background gradient effects */}
-      <div className="absolute inset-0 bg-gradient-to-br from-[#0a0a0f] via-[#0f0f1a] to-[#0a0a0f]" />
+      <div className="absolute inset-0 bg-linear-to-br from-[#0a0a0f] via-[#0f0f1a] to-[#0a0a0f]" />
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-violet-600/10 rounded-full blur-3xl pointer-events-none" />
 
       <div className="relative z-10 h-16 px-6 flex items-center justify-between border-b border-purple-500/20 bg-[#0a0a0f]/80 backdrop-blur-sm">
         <div className="flex items-center gap-3">
-          <div className="bg-gradient-to-br from-purple-600 to-violet-600 p-2 rounded-lg shadow-lg shadow-purple-500/25">
+          <div className="bg-linear-to-br from-purple-600 to-violet-600 p-2 rounded-lg shadow-lg shadow-purple-500/25">
             <Video className="w-5 h-5 text-white" />
           </div>
-          <span className="font-semibold text-xl tracking-tight bg-gradient-to-r from-purple-400 to-violet-400 bg-clip-text text-transparent">FlexMeet</span>
+          <span className="font-semibold text-xl tracking-tight bg-linear-to-r from-purple-400 to-violet-400 bg-clip-text text-transparent">FlexMeet</span>
         </div>
 
         <div className="flex items-center gap-3 px-4 py-2 bg-purple-500/10 border border-purple-500/30 rounded-full">
@@ -473,6 +523,35 @@ export function Room() {
             </div>
           </div>
         </div>
+
+        {/* Participants Sidebar */}
+        <div
+          className={`fixed top-16 right-0 bottom-20 w-90 bg-[#0a0a0f]/90 backdrop-blur-xl border-l border-purple-500/20 transform transition-transform duration-300 z-40 ${
+            isParticipantsOpen ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          <div className="flex flex-col h-full">
+            <div className="p-4 border-b border-purple-500/20 flex justify-between">
+              <h2 className="font-semibold text-lg text-white flex items-center gap-2">
+                Participants
+                <span className="bg-purple-500/20 text-purple-300 text-xs px-2 py-0.5 rounded-full">
+                  {peers.size + 1}
+                </span>
+              </h2>
+              <button 
+                onClick={() => setIsParticipantsOpen(false)} 
+                className="text-zinc-400 hover:text-white transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <ParticipantList />
+            </div>
+          </div>
+        </div>
       </div>
 
       <ControlBar
@@ -493,6 +572,10 @@ export function Room() {
         onLockRoom={handleLockRoom}
         onUnlockRoom={handleUnlockRoom}
         onLeave={handleLeave}
+        onToggleChat={handleToggleChat}
+        onToggleParticipants={handleToggleParticipants}
+        isChatOpen={isChatOpen}
+        isParticipantsOpen={isParticipantsOpen}
       />
     </div>
   );

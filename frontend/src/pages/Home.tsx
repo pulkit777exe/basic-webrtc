@@ -9,11 +9,10 @@ export function Home() {
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      {/* Background gradient effects */}
-      <div className="absolute inset-0 bg-gradient-to-br from-[#0a0a0f] via-[#0f0f1a] to-[#0a0a0f]" />
+      <div className="absolute inset-0 bg-linear-to-br from-[#0a0a0f] via-[#0f0f1a] to-[#0a0a0f]" />
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl" />
       <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-violet-600/20 rounded-full blur-3xl" />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-purple-500/10 rounded-full blur-3xl" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-200 h-200 bg-purple-500/10 rounded-full blur-3xl" />
 
       <section className="relative z-10 min-h-screen flex flex-col items-center justify-center px-6 overflow-hidden">
         <div className="absolute top-20 left-10 w-72 h-72 bg-purple-600/20 rounded-full blur-3xl" />
@@ -29,7 +28,7 @@ export function Home() {
           </div>
 
           <h1 className="text-5xl md:text-7xl font-bold mb-6">
-            <span className="bg-gradient-to-r from-purple-400 via-violet-400 to-purple-500 bg-clip-text text-transparent">
+            <span className="bg-linear-to-r from-purple-400 via-violet-400 to-purple-500 bg-clip-text text-transparent">
               Connect Face-to-Face
             </span>
           </h1>
@@ -41,7 +40,7 @@ export function Home() {
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
             <button
               onClick={() => navigate("/landing")}
-              className="px-8 py-4 bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 rounded-xl font-semibold text-lg shadow-lg shadow-purple-500/25 transition-all hover:scale-105"
+              className="px-8 py-4 bg-linear-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 rounded-xl font-semibold text-lg shadow-lg shadow-purple-500/25 transition-all hover:scale-105"
             >
               Start Meeting
             </button>
@@ -61,8 +60,8 @@ export function Home() {
                 <div className="w-3 h-3 rounded-full bg-green-500" />
               </div>
               <div className="bg-[#0a0a0f] rounded-lg p-4 grid grid-cols-2 gap-4">
-                <div className="aspect-video bg-gradient-to-br from-purple-900/30 to-violet-900/30 rounded-lg flex items-center justify-center border border-purple-500/20">
-                  <div className="w-16 h-16 rounded-full bg-gradient-to-br from-purple-600/50 to-violet-600/50 flex items-center justify-center border border-purple-500/30">
+                <div className="aspect-video bg-linear-to-br from-purple-900/30 to-violet-900/30 rounded-lg flex items-center justify-center border border-purple-500/20">
+                  <div className="w-16 h-16 rounded-full bg-linear-to-br from-purple-600/50 to-violet-600/50 flex items-center justify-center border border-purple-500/30">
                     <svg
                       className="w-8 h-8 text-purple-300"
                       fill="currentColor"
@@ -72,8 +71,8 @@ export function Home() {
                     </svg>
                   </div>
                 </div>
-                <div className="aspect-video bg-gradient-to-br from-violet-900/30 to-purple-900/30 rounded-lg flex items-center justify-center border border-purple-500/20">
-                  <div className="w-16 h-16 rounded-full bg-gradient-to-br from-violet-600/50 to-purple-600/50 flex items-center justify-center border border-purple-500/30">
+                <div className="aspect-video bg-linear-to-br from-violet-900/30 to-purple-900/30 rounded-lg flex items-center justify-center border border-purple-500/20">
+                  <div className="w-16 h-16 rounded-full bg-linear-to-br from-violet-600/50 to-purple-600/50 flex items-center justify-center border border-purple-500/30">
                     <svg
                       className="w-8 h-8 text-violet-300"
                       fill="currentColor"
@@ -117,7 +116,7 @@ export function Home() {
 
           <div className="grid md:grid-cols-3 gap-6">
             <div className="glass rounded-2xl p-8 border border-purple-500/20 hover:border-purple-500/40 transition-all group hover:shadow-lg hover:shadow-purple-500/10">
-              <div className="w-14 h-14 bg-gradient-to-br from-purple-600/20 to-violet-600/20 rounded-xl flex items-center justify-center mb-6 group-hover:from-purple-600/30 group-hover:to-violet-600/30 transition-colors border border-purple-500/30">
+              <div className="w-14 h-14 bg-linear-to-br from-purple-600/20 to-violet-600/20 rounded-xl flex items-center justify-center mb-6 group-hover:from-purple-600/30 group-hover:to-violet-600/30 transition-colors border border-purple-500/30">
                 <svg
                   className="w-7 h-7 text-purple-400"
                   fill="currentColor"
@@ -134,7 +133,7 @@ export function Home() {
             </div>
 
             <div className="glass rounded-2xl p-8 border border-purple-500/20 hover:border-purple-500/40 transition-all group hover:shadow-lg hover:shadow-purple-500/10">
-              <div className="w-14 h-14 bg-gradient-to-br from-purple-600/20 to-violet-600/20 rounded-xl flex items-center justify-center mb-6 group-hover:from-purple-600/30 group-hover:to-violet-600/30 transition-colors border border-purple-500/30">
+              <div className="w-14 h-14 bg-linear-to-br from-purple-600/20 to-violet-600/20 rounded-xl flex items-center justify-center mb-6 group-hover:from-purple-600/30 group-hover:to-violet-600/30 transition-colors border border-purple-500/30">
                 <svg
                   className="w-7 h-7 text-purple-400"
                   fill="currentColor"
@@ -155,7 +154,7 @@ export function Home() {
             </div>
 
             <div className="glass rounded-2xl p-8 border border-purple-500/20 hover:border-purple-500/40 transition-all group hover:shadow-lg hover:shadow-purple-500/10">
-              <div className="w-14 h-14 bg-gradient-to-br from-purple-600/20 to-violet-600/20 rounded-xl flex items-center justify-center mb-6 group-hover:from-purple-600/30 group-hover:to-violet-600/30 transition-colors border border-purple-500/30">
+              <div className="w-14 h-14 bg-linear-to-br from-purple-600/20 to-violet-600/20 rounded-xl flex items-center justify-center mb-6 group-hover:from-purple-600/30 group-hover:to-violet-600/30 transition-colors border border-purple-500/30">
                 <svg
                   className="w-7 h-7 text-purple-400"
                   fill="currentColor"
@@ -190,7 +189,7 @@ export function Home() {
             </p>
             <button
               onClick={() => navigate("/landing")}
-              className="px-10 py-4 bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white rounded-xl font-semibold text-lg transition-all hover:scale-105 shadow-lg shadow-purple-500/25"
+              className="px-10 py-4 bg-linear-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white rounded-xl font-semibold text-lg transition-all hover:scale-105 shadow-lg shadow-purple-500/25"
             >
               Get Started Free
             </button>

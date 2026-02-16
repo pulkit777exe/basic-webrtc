@@ -9,7 +9,7 @@ export function HandRaise({ isRaised, onToggle }: HandRaiseProps) {
       onClick={onToggle}
       className={`p-4 rounded-full transition-all ${
         isRaised 
-          ? 'bg-gradient-to-r from-yellow-500 to-orange-500 shadow-lg shadow-yellow-500/25' 
+          ? 'bg-linear-to-r from-yellow-500 to-orange-500 shadow-lg shadow-yellow-500/25' 
           : 'bg-white/5 border border-purple-500/30 hover:bg-purple-500/10 hover:border-purple-500/50'
       }`}
       title={isRaised ? 'Lower Hand' : 'Raise Hand'}

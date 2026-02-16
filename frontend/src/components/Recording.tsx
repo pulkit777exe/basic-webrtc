@@ -63,7 +63,7 @@ export function Recording() {
       onClick={isRecording ? stopRecording : startRecording}
       className={`p-4 rounded-full transition-all ${
         isRecording 
-          ? "bg-gradient-to-r from-red-600 to-red-500 animate-pulse shadow-lg shadow-red-500/25" 
+          ? "bg-linear-to-r from-red-600 to-red-500 animate-pulse shadow-lg shadow-red-500/25" 
           : "bg-white/5 border border-purple-500/30 hover:bg-purple-500/10 hover:border-purple-500/50"
       }`}
       title={isRecording ? "Stop Recording" : "Start Recording"}

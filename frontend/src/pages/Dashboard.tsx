@@ -103,7 +103,7 @@ export function Dashboard() {
   return (
     <div className="min-h-screen relative overflow-hidden">
       {/* Background gradient effects */}
-      <div className="absolute inset-0 bg-gradient-to-br from-[#0a0a0f] via-[#0f0f1a] to-[#0a0a0f]" />
+      <div className="absolute inset-0 bg-linear-to-br from-[#0a0a0f] via-[#0f0f1a] to-[#0a0a0f]" />
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl" />
       <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-violet-600/20 rounded-full blur-3xl" />
 
@@ -113,7 +113,7 @@ export function Dashboard() {
           <div className="flex justify-between items-center mb-8">
             <div>
               <h1 className="text-3xl font-bold">
-                <span className="bg-gradient-to-r from-purple-400 to-violet-400 bg-clip-text text-transparent">
+                <span className="bg-linear-to-r from-purple-400 to-violet-400 bg-clip-text text-transparent">
                   Dashboard
                 </span>
               </h1>
@@ -134,7 +134,7 @@ export function Dashboard() {
                 <button
                   onClick={() => handleCreateRoom("open")}
                   disabled={isCreating}
-                  className="flex-1 py-3 bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 rounded-xl font-semibold transition-all disabled:opacity-50 shadow-lg shadow-purple-500/25"
+                  className="flex-1 py-3 bg-linear-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 rounded-xl font-semibold transition-all disabled:opacity-50 shadow-lg shadow-purple-500/25"
                 >
                   Create Open Room
                 </button>
@@ -245,7 +245,7 @@ export function Dashboard() {
 
                   <button
                     onClick={() => navigate(`/room/${room.roomCode}`)}
-                    className="w-full py-3 bg-white/5 border border-purple-500/30 hover:bg-gradient-to-r hover:from-purple-600 hover:to-violet-600 rounded-xl font-semibold transition-all group-hover:border-transparent"
+                    className="w-full py-3 bg-white/5 border border-purple-500/30 hover:bg-linear-to-r hover:from-purple-600 hover:to-violet-600 rounded-xl font-semibold transition-all group-hover:border-transparent"
                   >
                     Enter Room
                   </button>

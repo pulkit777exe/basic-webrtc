@@ -206,7 +206,7 @@ export function Chat({ sendMessage }: ChatProps) {
               <div
                 className={`max-w-[75%] rounded-lg p-3 ${
                   msg.userId === userId 
-                    ? "bg-gradient-to-r from-purple-600 to-violet-600" 
+                    ? "bg-linear-to-r from-purple-600 to-violet-600" 
                     : "glass border border-purple-500/20"
                 }`}
               >
@@ -313,7 +313,7 @@ export function Chat({ sendMessage }: ChatProps) {
           <button
             onClick={handleSend}
             disabled={!inputText.trim() && !selectedFile}
-            className="bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-all shadow-lg shadow-purple-500/25 disabled:shadow-none"
+            className="bg-linear-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 disabled:from-gray-600 disabled:to-gray-600 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-all shadow-lg shadow-purple-500/25 disabled:shadow-none"
           >
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
               <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />

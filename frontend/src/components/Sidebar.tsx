@@ -15,14 +15,14 @@ export function Sidebar({ isOpen, onClose, sendMessage }: SidebarProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="w-[300px] h-full bg-[#0a0a0f] border-l border-purple-500/20 flex flex-col">
+    <div className="w-75 h-full bg-[#0a0a0f] border-l border-purple-500/20 flex flex-col">
       <div className="flex items-center justify-between p-4 border-b border-purple-500/20">
         <div className="flex bg-purple-500/10 rounded-lg p-1 border border-purple-500/20">
           <button
             onClick={() => setActiveTab("chat")}
             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
               activeTab === "chat" 
-                ? "bg-gradient-to-r from-purple-600 to-violet-600 text-white shadow-lg shadow-purple-500/25" 
+                ? "bg-linear-to-r from-purple-600 to-violet-600 text-white shadow-lg shadow-purple-500/25" 
                 : "text-zinc-400 hover:text-white"
             }`}
           >
@@ -32,7 +32,7 @@ export function Sidebar({ isOpen, onClose, sendMessage }: SidebarProps) {
             onClick={() => setActiveTab("participants")}
             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
               activeTab === "participants" 
-                ? "bg-gradient-to-r from-purple-600 to-violet-600 text-white shadow-lg shadow-purple-500/25" 
+                ? "bg-linear-to-r from-purple-600 to-violet-600 text-white shadow-lg shadow-purple-500/25" 
                 : "text-zinc-400 hover:text-white"
             }`}
           >

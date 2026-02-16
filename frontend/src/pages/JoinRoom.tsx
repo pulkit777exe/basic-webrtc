@@ -63,13 +63,13 @@ export function JoinRoom() {
   return (
     <div className="min-h-screen relative overflow-hidden flex items-center justify-center">
       {/* Background gradient effects */}
-      <div className="absolute inset-0 bg-gradient-to-br from-[#0a0a0f] via-[#0f0f1a] to-[#0a0a0f]" />
+      <div className="absolute inset-0 bg-linear-to-br from-[#0a0a0f] via-[#0f0f1a] to-[#0a0a0f]" />
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl" />
       <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-violet-600/20 rounded-full blur-3xl" />
 
       <div className="relative z-10 glass-strong rounded-2xl shadow-2xl shadow-purple-500/10 p-8 w-full max-w-md border border-purple-500/20">
         <h1 className="text-3xl font-bold text-center mb-8">
-          <span className="bg-gradient-to-r from-purple-400 to-violet-400 bg-clip-text text-transparent">
+          <span className="bg-linear-to-r from-purple-400 to-violet-400 bg-clip-text text-transparent">
             WebRTC Meet
           </span>
         </h1>
@@ -89,7 +89,7 @@ export function JoinRoom() {
 
           <button
             onClick={handleCreateRoom}
-            className="w-full py-3 bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 rounded-lg font-semibold transition-all shadow-lg shadow-purple-500/25"
+            className="w-full py-3 bg-linear-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 rounded-lg font-semibold transition-all shadow-lg shadow-purple-500/25"
           >
             Create New Room
           </button>

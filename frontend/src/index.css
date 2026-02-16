@@ -50,3 +50,23 @@ body {
   outline: 2px solid rgba(139, 92, 246, 0.5);
   outline-offset: 2px;
 }
+
+/* Floating reaction animation */
+@keyframes float-up {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-50px) scale(1.2);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-100px) scale(0.8);
+  }
+}
+
+.animate-float-up {
+  animation: float-up 3s ease-out forwards;
+}
