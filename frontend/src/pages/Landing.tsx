@@ -53,7 +53,6 @@ export function Landing() {
   const [roomCode, setRoomCode] = useState("");
   const [showJoinInput, setShowJoinInput] = useState(false);
   
-  // GSAP refs
   const containerRef = useRef<HTMLDivElement>(null);
   const heroRef = useRef<HTMLDivElement>(null);
   const featuresRef = useRef<HTMLDivElement>(null);
@@ -152,9 +151,8 @@ export function Landing() {
   };
 
   return (
-    <div ref={containerRef} className="min-h-screen" style={{ backgroundColor: '#FCFCFA' }}>
-      {/* Navigation */}
-      <nav className="px-6 py-5 flex items-center justify-between max-w-7xl mx-auto">
+    <div ref={containerRef} className="min-h-screen w-full" style={{ backgroundColor: '#FCFCFA' }}>
+      <nav className="w-full px-6 py-6 flex items-center justify-between max-w-7xl mx-auto">
         <div className="flex items-center gap-2">
           <Flower2 className="w-8 h-8" style={{ color: '#1F1F1F' }} />
           <span className="text-2xl font-serif" style={{ color: '#1F1F1F', fontFamily: 'Playfair Display, serif' }}>
@@ -178,11 +176,10 @@ export function Landing() {
         </div>
       </nav>
 
-      {/* Hero Section */}
-      <section ref={heroRef} className="px-6 py-16 md:py-24">
+      <section ref={heroRef} className="w-full px-6 py-20 md:py-32">
         <div className="max-w-4xl mx-auto text-center">
           <h1 
-            className="hero-title text-5xl md:text-6xl lg:text-7xl font-serif mb-6 leading-tight"
+            className="hero-title text-5xl md:text-6xl lg:text-7xl font-serif mb-8 leading-tight"
             style={{ color: '#1F1F1F', fontFamily: 'Playfair Display, serif' }}
           >
             Collaboration,
@@ -190,198 +187,179 @@ export function Landing() {
           </h1>
           
           <p 
-            className="hero-subtitle text-lg md:text-xl mb-10 max-w-2xl mx-auto"
+            className="hero-subtitle text-lg md:text-xl mb-12 max-w-2xl mx-auto leading-relaxed"
             style={{ color: '#666666', fontFamily: 'Inter, sans-serif' }}
           >
             High-fidelity video for creative teams. 4K audio, AI summaries, and zero installs.
           </p>
 
-          {/* Split Pill Container */}
-          <div 
-            className="hero-input inline-flex items-center rounded-full px-2 py-1.5 shadow-lg max-w-lg mx-auto"
-            style={{ backgroundColor: '#FFFFFF', border: '1px solid #E5E5E5' }}
-          >
-            <div className="flex-1 px-4">
-              <Input
-                type="text"
-                value={showJoinInput ? roomCode : ""}
-                onChange={(e) => setRoomCode(e.target.value.toLowerCase())}
-                onFocus={() => setShowJoinInput(true)}
-                placeholder="Enter room code"
-                className="border-0 shadow-none bg-transparent text-base"
-                style={{ color: '#1F1F1F' }}
-                maxLength={7}
-              />
-            </div>
-            <Button
-              variant="black"
-              onClick={handleJoinRoom}
-              disabled={!showJoinInput}
-              className="rounded-full px-6"
+          <div className="w-full flex justify-center mb-6">
+            <div 
+              className="hero-input inline-flex items-center rounded-full px-2 py-1.5 shadow-lg w-full max-w-lg"
+              style={{ backgroundColor: '#FFFFFF', border: '1px solid #E5E5E5' }}
             >
-              Join Room
-            </Button>
+              <div className="flex-1 px-4">
+                <Input
+                  type="text"
+                  value={showJoinInput ? roomCode : ""}
+                  onChange={(e) => setRoomCode(e.target.value.toLowerCase())}
+                  onFocus={() => setShowJoinInput(true)}
+                  placeholder="Enter room code"
+                  className="border-0 shadow-none bg-transparent text-base"
+                  style={{ color: '#1F1F1F' }}
+                  maxLength={7}
+                />
+              </div>
+              <Button
+                variant="black"
+                onClick={handleJoinRoom}
+                disabled={!showJoinInput}
+                className="rounded-full px-6"
+              >
+                Join Room
+              </Button>
+            </div>
           </div>
 
-          <div className="mt-4">
+          <div className="mb-10">
             <button 
               onClick={handleCreateRoom}
-              className="text-base font-medium underline"
+              className="text-base font-medium underline hover:opacity-70 transition-opacity"
               style={{ color: '#666666' }}
             >
               Or start a personal meeting →
             </button>
           </div>
 
-          {/* REC indicator */}
-          <div className="mt-8 inline-flex items-center gap-2 px-3 py-1 rounded-full" style={{ backgroundColor: '#EAD4CE' }}>
-            <span className="w-2 h-2 rounded-full bg-red-500"></span>
-            <span className="text-sm font-medium" style={{ color: '#1F1F1F' }}>REC</span>
+          <div className="flex justify-center mb-16">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full" style={{ backgroundColor: '#EAD4CE' }}>
+              <span className="w-2 h-2 rounded-full bg-red-500"></span>
+              <span className="text-sm font-medium" style={{ color: '#1F1F1F' }}>REC</span>
+            </div>
           </div>
 
-          {/* Browser Mockup */}
-          <div className="mt-12 mx-auto max-w-5xl">
-            <div 
-              className="rounded-2xl overflow-hidden shadow-2xl"
-              style={{ 
-                backgroundColor: '#FFFFFF', 
-                border: '1px solid #E5E5E5',
-                transform: 'rotate(-1deg)'
-              }}
-            >
-              {/* Browser chrome */}
-              <div className="px-4 py-3 flex items-center gap-2" style={{ borderBottom: '1px solid #E5E5E5' }}>
-                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#EAD4CE' }}></div>
-                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#D4E2D4' }}></div>
-                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#E5E5E5' }}></div>
-                <div className="flex-1 mx-4 rounded-md px-3 py-1" style={{ backgroundColor: '#FCFCFA', border: '1px solid #E5E5E5' }}>
-                  <span className="text-xs" style={{ color: '#666666' }}>popcorn.space</span>
+          <div className="w-full flex justify-center">
+            <div className="w-full max-w-5xl relative">
+              <div 
+                className="hero-mockup rounded-2xl overflow-hidden shadow-2xl"
+                style={{ 
+                  backgroundColor: '#FFFFFF', 
+                  border: '1px solid #E5E5E5',
+                  transform: 'rotate(-1deg)'
+                }}
+              >
+                <div className="px-4 py-3 flex items-center gap-2" style={{ borderBottom: '1px solid #E5E5E5' }}>
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#EAD4CE' }}></div>
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#D4E2D4' }}></div>
+                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#E5E5E5' }}></div>
+                  <div className="flex-1 mx-4 rounded-md px-3 py-1" style={{ backgroundColor: '#FCFCFA', border: '1px solid #E5E5E5' }}>
+                    <span className="text-xs" style={{ color: '#666666' }}>popcorn.meet</span>
+                  </div>
                 </div>
-              </div>
-              
-              {/* Video Grid Mockup */}
-              <div className="p-6 grid grid-cols-2 gap-4" style={{ backgroundColor: '#FCFCFA' }}>
-                {[1, 2, 3, 4].map((i) => (
-                  <div 
-                    key={i}
-                    className="aspect-video rounded-xl overflow-hidden relative"
-                    style={{ 
-                      backgroundColor: i === 1 ? '#D4E2D4' : '#E5E5E5',
-                      border: '1px solid #E5E5E5'
-                    }}
-                  >
-                    {/* Mock video with person */}
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div 
-                        className="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-serif"
-                        style={{ backgroundColor: '#FFFFFF', color: '#1F1F1F' }}
-                      >
-                        {['S', 'D', 'K', 'M'][i-1]}
+                
+                <div className="p-6 grid grid-cols-2 gap-4" style={{ backgroundColor: '#FCFCFA' }}>
+                  {[1, 2, 3, 4].map((i) => (
+                    <div 
+                      key={i}
+                      className="aspect-video rounded-xl overflow-hidden relative"
+                      style={{ 
+                        backgroundColor: i === 1 ? '#D4E2D4' : '#E5E5E5',
+                        border: '1px solid #E5E5E5'
+                      }}
+                    >
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div 
+                          className="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-serif"
+                          style={{ backgroundColor: '#FFFFFF', color: '#1F1F1F' }}
+                        >
+                          {['S', 'D', 'K', 'M'][i-1]}
+                        </div>
+                      </div>
+                      <div className="absolute bottom-2 left-2 right-2">
+                        <span 
+                          className="text-xs px-2 py-1 rounded"
+                          style={{ backgroundColor: 'rgba(0,0,0,0.5)', color: '#FFFFFF' }}
+                        >
+                          {['Sarah', 'Davide', 'Kenji', 'You'][i-1]}
+                        </span>
                       </div>
                     </div>
-                    {/* Name tag */}
-                    <div className="absolute bottom-2 left-2 right-2">
-                      <span 
-                        className="text-xs px-2 py-1 rounded"
-                        style={{ backgroundColor: 'rgba(0,0,0,0.5)', color: '#FFFFFF' }}
-                      >
-                        {['Sarah', 'Davide', 'Kenji', 'You'][i-1]}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
 
-              {/* Control bar mockup */}
-              <div className="px-6 py-4 flex items-center justify-center gap-4" style={{ borderTop: '1px solid #E5E5E5' }}>
-                <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: '#1F1F1F' }}>
-                  <Mic className="w-5 h-5 text-white" />
-                </div>
-                <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: '#1F1F1F' }}>
-                  <Video className="w-5 h-5 text-white" />
-                </div>
-                <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: '#D4E2D4' }}>
-                  <Monitor className="w-5 h-5" style={{ color: '#1F1F1F' }} />
-                </div>
-                <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: '#EAD4CE' }}>
-                  <Users className="w-5 h-5" style={{ color: '#1F1F1F' }} />
+                <div className="px-6 py-4 flex items-center justify-center gap-4" style={{ borderTop: '1px solid #E5E5E5' }}>
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: '#1F1F1F' }}>
+                    <Mic className="w-5 h-5 text-white" />
+                  </div>
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: '#1F1F1F' }}>
+                    <Video className="w-5 h-5 text-white" />
+                  </div>
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: '#D4E2D4' }}>
+                    <Monitor className="w-5 h-5" style={{ color: '#1F1F1F' }} />
+                  </div>
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: '#EAD4CE' }}>
+                    <Users className="w-5 h-5" style={{ color: '#1F1F1F' }} />
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-
-          {/* Decorative circle behind mockup */}
-          <div 
-            className="mx-auto rounded-full"
-            style={{ 
-              backgroundColor: '#F1F5F1', 
-              width: '600px', 
-              height: '600px',
-              marginTop: '-500px',
-              position: 'relative',
-              zIndex: -1
-            }}
-          ></div>
         </div>
       </section>
 
-      {/* Feature Grid */}
-      <section ref={featuresRef} className="px-6 py-20" style={{ backgroundColor: '#FCFCFA' }}>
-        <div className="max-w-5xl mx-auto">
-          <div className="grid md:grid-cols-3 gap-8">
-            {/* Feature 1 */}
+      <section ref={featuresRef} className="w-full px-6 py-24" style={{ backgroundColor: '#FCFCFA' }}>
+        <div className="max-w-6xl mx-auto">
+          <div className="grid md:grid-cols-3 gap-12">
             <div className="feature-card text-center">
               <div 
-                className="w-16 h-16 rounded-full mx-auto mb-4 flex items-center justify-center"
+                className="w-16 h-16 rounded-full mx-auto mb-6 flex items-center justify-center"
                 style={{ backgroundColor: '#D4E2D4' }}
               >
                 <Zap className="w-8 h-8" style={{ color: '#1F1F1F' }} />
               </div>
               <h3 
-                className="text-xl font-serif mb-2"
+                className="text-xl font-serif mb-3"
                 style={{ color: '#1F1F1F', fontFamily: 'Playfair Display, serif' }}
               >
                 Instant Flow
               </h3>
-              <p className="text-base" style={{ color: '#666666' }}>
+              <p className="text-base leading-relaxed" style={{ color: '#666666' }}>
                 No downloads. Just send a link and you're live in the browser.
               </p>
             </div>
 
-            {/* Feature 2 */}
             <div className="feature-card text-center">
               <div 
-                className="w-16 h-16 rounded-full mx-auto mb-4 flex items-center justify-center"
+                className="w-16 h-16 rounded-full mx-auto mb-6 flex items-center justify-center"
                 style={{ backgroundColor: '#EAD4CE' }}
               >
                 <Waves className="w-8 h-8" style={{ color: '#1F1F1F' }} />
               </div>
               <h3 
-                className="text-xl font-serif mb-2"
+                className="text-xl font-serif mb-3"
                 style={{ color: '#1F1F1F', fontFamily: 'Playfair Display, serif' }}
               >
                 Studio Sound
               </h3>
-              <p className="text-base" style={{ color: '#666666' }}>
+              <p className="text-base leading-relaxed" style={{ color: '#666666' }}>
                 Crystal clear 4K audio so you hear every breath and bass drop.
               </p>
             </div>
 
-            {/* Feature 3 */}
             <div className="feature-card text-center">
               <div 
-                className="w-16 h-16 rounded-full mx-auto mb-4 flex items-center justify-center"
+                className="w-16 h-16 rounded-full mx-auto mb-6 flex items-center justify-center"
                 style={{ backgroundColor: '#D4E2D4' }}
               >
                 <Sparkles className="w-8 h-8" style={{ color: '#1F1F1F' }} />
               </div>
               <h3 
-                className="text-xl font-serif mb-2"
+                className="text-xl font-serif mb-3"
                 style={{ color: '#1F1F1F', fontFamily: 'Playfair Display, serif' }}
               >
                 AI Scribe
               </h3>
-              <p className="text-base" style={{ color: '#666666' }}>
+              <p className="text-base leading-relaxed" style={{ color: '#666666' }}>
                 Focus on the art. We'll transcribe and summarize the critique.
               </p>
             </div>
@@ -389,21 +367,20 @@ export function Landing() {
         </div>
       </section>
 
-      {/* Creative Workflow Section */}
-      <section ref={workflowRef} className="px-6 py-20" style={{ backgroundColor: '#FAF5F4' }}>
-        <div className="max-w-5xl mx-auto">
-          <div className="grid md:grid-cols-2 gap-12 items-center">
+      <section ref={workflowRef} className="w-full px-6 py-24" style={{ backgroundColor: '#FAF5F4' }}>
+        <div className="max-w-6xl mx-auto">
+          <div className="grid md:grid-cols-2 gap-16 items-center">
             <div className="workflow-text">
               <h2 
-                className="text-4xl font-serif mb-4"
+                className="text-4xl font-serif mb-6 leading-tight"
                 style={{ color: '#1F1F1F', fontFamily: 'Playfair Display, serif' }}
               >
                 Share pixels, not blurry approximations.
               </h2>
-              <p className="text-lg mb-6" style={{ color: '#666666' }}>
+              <p className="text-lg mb-8 leading-relaxed" style={{ color: '#666666' }}>
                 Screen sharing optimized for design software. True color accuracy and 60fps framerate.
               </p>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
                 <span className="text-base font-medium" style={{ color: '#1F1F1F' }}>
                   Noise Cancellation:
                 </span>
@@ -421,17 +398,15 @@ export function Landing() {
             </div>
 
             <div 
-              className="workflow-card rounded-xl p-6 relative"
+              className="workflow-card rounded-xl p-8 relative"
               style={{ backgroundColor: '#FFFFFF', border: '1px solid #E5E5E5' }}
             >
-              <div className="aspect-video rounded-lg mb-4" style={{ backgroundColor: '#F1F5F1' }}>
-                {/* Screen share mockup */}
+              <div className="aspect-video rounded-lg mb-6" style={{ backgroundColor: '#F1F5F1' }}>
                 <div className="w-full h-full flex items-center justify-center">
                   <Monitor className="w-16 h-16" style={{ color: '#666666' }} />
                 </div>
               </div>
               
-              {/* Notification badge */}
               <div 
                 className="absolute -right-4 top-4 px-4 py-2 rounded-full shadow-lg flex items-center gap-2"
                 style={{ backgroundColor: '#1F1F1F' }}
@@ -449,16 +424,14 @@ export function Landing() {
         </div>
       </section>
 
-      {/* Social Proof */}
-      <section ref={testimonialsRef} className="px-6 py-20" style={{ backgroundColor: '#FCFCFA' }}>
-        <div className="max-w-5xl mx-auto">
-          <div className="flex gap-6 overflow-x-auto pb-4">
-            {/* Card 1 */}
+      <section ref={testimonialsRef} className="w-full px-6 py-24" style={{ backgroundColor: '#FCFCFA' }}>
+        <div className="max-w-6xl mx-auto">
+          <div className="flex justify-center gap-6 overflow-x-auto pb-4">
             <div 
-              className="testimonial-card shrink-0 w-80 p-6 rounded-xl"
+              className="testimonial-card shrink-0 w-80 p-8 rounded-xl"
               style={{ backgroundColor: '#FFFFFF', border: '1px solid #E5E5E5' }}
             >
-              <p className="text-lg mb-4" style={{ color: '#1F1F1F' }}>
+              <p className="text-lg mb-6 leading-relaxed" style={{ color: '#1F1F1F' }}>
                 "Finally, a video tool that doesn't compress my Figma designs."
               </p>
               <div className="flex items-center gap-3">
@@ -475,12 +448,11 @@ export function Landing() {
               </div>
             </div>
 
-            {/* Card 2 */}
             <div 
-              className="testimonial-card shrink-0 w-80 p-6 rounded-xl"
+              className="testimonial-card shrink-0 w-80 p-8 rounded-xl"
               style={{ backgroundColor: '#FFFFFF', border: '1px solid #E5E5E5' }}
             >
-              <p className="text-lg mb-4" style={{ color: '#1F1F1F' }}>
+              <p className="text-lg mb-6 leading-relaxed" style={{ color: '#1F1F1F' }}>
                 "The AI summaries save me 20 minutes after every sync."
               </p>
               <div className="flex items-center gap-3">
@@ -497,12 +469,11 @@ export function Landing() {
               </div>
             </div>
 
-            {/* Card 3 */}
             <div 
-              className="testimonial-card shrink-0 w-80 p-6 rounded-xl"
+              className="testimonial-card shrink-0 w-80 p-8 rounded-xl"
               style={{ backgroundColor: '#FFFFFF', border: '1px solid #E5E5E5' }}
             >
-              <p className="text-lg mb-4" style={{ color: '#1F1F1F' }}>
+              <p className="text-lg mb-6 leading-relaxed" style={{ color: '#1F1F1F' }}>
                 "The audio quality is actually good enough for music production review."
               </p>
               <div className="flex items-center gap-3">
@@ -522,41 +493,43 @@ export function Landing() {
         </div>
       </section>
 
-      {/* Footer / Pre-Footer */}
-      <section ref={ctaRef} className="px-6 py-16">
-        <div 
-          className="max-w-5xl mx-auto rounded-2xl p-12 text-center"
-          style={{ backgroundColor: '#1F1F1F' }}
-        >
-          <h2 
-            className="text-4xl md:text-5xl font-serif mb-4"
-            style={{ color: '#FFFFFF', fontFamily: 'Playfair Display, serif' }}
+      <section ref={ctaRef} className="w-full px-6 py-24">
+        <div className="max-w-6xl mx-auto flex justify-center">
+          <div 
+            className="w-full max-w-5xl rounded-2xl p-16 text-center"
+            style={{ backgroundColor: '#1F1F1F' }}
           >
-            Ready to flow?
-          </h2>
-          
-          <div className="mb-6">
-            <span className="text-5xl font-medium" style={{ color: '#FFFFFF' }}>$0</span>
-            <span className="text-lg ml-2" style={{ color: '#666666' }}>/mo</span>
+            <h2 
+              className="text-4xl md:text-5xl font-serif mb-6"
+              style={{ color: '#FFFFFF', fontFamily: 'Playfair Display, serif' }}
+            >
+              Ready to flow?
+            </h2>
+            
+            <div className="mb-8">
+              <span className="text-5xl font-medium" style={{ color: '#FFFFFF' }}>$0</span>
+              <span className="text-lg ml-2" style={{ color: '#999999' }}>/mo</span>
+            </div>
+            
+            <p className="text-base mb-10" style={{ color: '#999999' }}>
+              Free for personal use.
+            </p>
+            
+            <div className="flex justify-center">
+              <Button
+                variant="white"
+                onClick={handleCreateRoom}
+                className="rounded-full px-8 py-3 text-lg inline-flex items-center"
+              >
+                Start Meeting Now <ArrowRight className="ml-2 w-5 h-5" />
+              </Button>
+            </div>
           </div>
-          
-          <p className="text-base mb-8" style={{ color: '#666666' }}>
-            Free for personal use.
-          </p>
-          
-          <Button
-            variant="white"
-            onClick={handleCreateRoom}
-            className="rounded-full px-8 py-3 text-lg"
-          >
-            Start Meeting Now <ArrowRight className="ml-2 w-5 h-5" />
-          </Button>
         </div>
       </section>
 
-      {/* Final Footer */}
-      <footer className="px-6 py-8 border-t" style={{ borderColor: '#E5E5E5' }}>
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+      <footer className="w-full px-6 py-10 border-t" style={{ borderColor: '#E5E5E5' }}>
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-2">
             <Flower2 className="w-6 h-6" style={{ color: '#1F1F1F' }} />
             <span className="text-lg font-serif" style={{ color: '#1F1F1F', fontFamily: 'Playfair Display, serif' }}>
@@ -564,14 +537,14 @@ export function Landing() {
             </span>
           </div>
           
-          <div className="flex items-center gap-6 text-sm" style={{ color: '#666666' }}>
+          <div className="flex items-center gap-8 text-sm" style={{ color: '#666666' }}>
             <a href="#" className="hover:text-black transition-colors">Privacy</a>
             <a href="#" className="hover:text-black transition-colors">Terms</a>
             <a href="#" className="hover:text-black transition-colors">Contact</a>
           </div>
           
           <p className="text-sm" style={{ color: '#666666' }}>
-            © 2024 Popcorn. All rights reserved.
+            © {new Date().getFullYear()} Popcorn. All rights reserved.
           </p>
         </div>
       </footer>

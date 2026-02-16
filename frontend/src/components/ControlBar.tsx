@@ -63,17 +63,17 @@ function TooltipButton({ children, tooltip, onClick, active, variant }: {
         className={`h-12 w-12 rounded-xl transition-all duration-200 ${
           active 
             ? variant === 'danger' 
-              ? 'bg-red-600 hover:bg-red-700 text-white border border-red-500/50 shadow-lg shadow-red-500/25'
+              ? 'bg-red-500 hover:bg-red-600 text-gray-900 border border-red-500/50 shadow-lg shadow-red-500/25'
               : variant === 'success'
-                ? 'bg-green-600 hover:bg-green-700 text-white border border-green-500/50 shadow-lg shadow-green-500/25'
-                : 'bg-purple-600 hover:bg-purple-700 text-white border border-purple-500/50 shadow-lg shadow-purple-500/25'
-            : 'hover:bg-purple-500/10 text-white border border-purple-500/30 hover:border-purple-500/50 hover:scale-105 hover:shadow-lg hover:shadow-purple-500/20'
+                ? 'bg-green-600 hover:bg-green-700 text-gray-900 border border-green-500/50 shadow-lg shadow-green-500/25'
+                : 'bg-gray-900 hover:bg-gray-800 text-gray-900 border border-gray-400 shadow-lg shadow-gray-300/50'
+            : 'hover:bg-gray-100 text-gray-900 border border-gray-300 hover:border-gray-400 hover:scale-105 hover:shadow-lg hover:shadow-purple-500/20'
         }`}
       >
         {children}
       </Button>
       {showTooltip && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-zinc-800 text-white text-xs rounded-md whitespace-nowrap shadow-lg">
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-zinc-800 text-gray-900 text-xs rounded-md whitespace-nowrap shadow-lg">
           {tooltip}
         </div>
       )}
@@ -99,18 +99,18 @@ export function ControlBar({
   const reactions = ["👍", "👏", "❤️", "😂"];
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 h-20 bg-[#0a0a0f]/95 backdrop-blur-md border-t border-purple-500/20 flex items-center justify-center px-6 z-50">
+    <div className="fixed bottom-0 left-0 right-0 h-20 bg-white border border-t border-gray-200 flex items-center justify-center px-6 z-50">
       <div className="flex items-center gap-3">
         {/* Settings */}
         <Button
           variant="ghost"
           size="icon"
-          className="h-12 w-12 rounded-xl hover:bg-purple-500/10 text-zinc-400 hover:text-white border border-transparent hover:border-purple-500/30 transition-all"
+          className="h-12 w-12 rounded-xl hover:bg-gray-100 text-gray-500 hover:text-gray-900 border border-transparent hover:border-gray-300 transition-all"
         >
           <Settings className="h-5 w-5" />
         </Button>
 
-        <div className="h-8 w-px bg-purple-500/20 mx-1" />
+        <div className="h-8 w-px bg-gray-300 mx-1" />
 
         {/* Mute */}
         <Button
@@ -119,8 +119,8 @@ export function ControlBar({
           onClick={onToggleAudio}
           className={`h-12 w-12 rounded-xl transition-all ${
             isAudioEnabled 
-              ? "hover:bg-purple-500/10 text-white border border-purple-500/30 hover:border-purple-500/50" 
-              : "bg-red-600 hover:bg-red-700 text-white border border-red-500/50 shadow-lg shadow-red-500/25"
+              ? "hover:bg-gray-100 text-gray-900 border border-gray-300 hover:border-gray-400" 
+              : "bg-red-500 hover:bg-red-600 text-gray-900 border border-red-500/50 shadow-lg shadow-red-500/25"
           }`}
         >
           {isAudioEnabled ? (
@@ -137,8 +137,8 @@ export function ControlBar({
           onClick={onToggleVideo}
           className={`h-12 w-12 rounded-xl transition-all ${
             isVideoEnabled 
-              ? "hover:bg-purple-500/10 text-white border border-purple-500/30 hover:border-purple-500/50" 
-              : "bg-red-600 hover:bg-red-700 text-white border border-red-500/50 shadow-lg shadow-red-500/25"
+              ? "hover:bg-gray-100 text-gray-900 border border-gray-300 hover:border-gray-400" 
+              : "bg-red-500 hover:bg-red-600 text-gray-900 border border-red-500/50 shadow-lg shadow-red-500/25"
           }`}
         >
           {isVideoEnabled ? (
@@ -155,8 +155,8 @@ export function ControlBar({
           onClick={onToggleScreenShare}
           className={`h-12 px-4 rounded-xl transition-all ${
             isScreenSharing 
-              ? "bg-linear-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-white border-transparent shadow-lg shadow-purple-500/25" 
-              : "text-white border border-purple-500/30 hover:bg-purple-500/10 hover:border-purple-500/50"
+              ? "bg-linear-to-r from-purple-600 to-violet-600 hover:from-purple-500 hover:to-violet-500 text-gray-900 border-transparent shadow-lg shadow-gray-300/50" 
+              : "text-gray-900 border border-gray-300 hover:bg-gray-100 hover:border-gray-400"
           }`}
         >
           <MonitorUp className="h-5 w-5 mr-2" />
@@ -169,13 +169,13 @@ export function ControlBar({
             <Button
               variant="ghost"
               size="lg"
-              className="h-12 px-4 rounded-xl hover:bg-purple-500/10 text-white border border-purple-500/30 hover:border-purple-500/50 transition-all hover:scale-105"
+              className="h-12 px-4 rounded-xl hover:bg-gray-100 text-gray-900 border border-gray-300 hover:border-gray-400 transition-all hover:scale-105"
             >
               <span className="text-lg mr-1">👍</span>
               <span className="text-sm font-medium ml-1">Reactions</span>
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-auto p-3 glass border-purple-500/30" side="top">
+          <PopoverContent className="w-auto p-3 glass border-gray-300" side="top">
             <div className="flex gap-2">
               {reactions.map((emoji) => (
                 <Button
@@ -183,7 +183,7 @@ export function ControlBar({
                   variant="ghost"
                   size="icon"
                   onClick={() => onSendReaction(emoji)}
-                  className="h-12 w-12 text-2xl hover:bg-purple-500/20 hover:scale-125 transition-all rounded-lg"
+                  className="h-12 w-12 text-2xl hover:bg-gray-300 hover:scale-125 transition-all rounded-lg"
                 >
                   {emoji}
                 </Button>
@@ -210,7 +210,7 @@ export function ControlBar({
           <Users className="h-5 w-5" />
         </TooltipButton>
 
-        <div className="h-8 w-px bg-purple-500/20 mx-1" />
+        <div className="h-8 w-px bg-gray-300 mx-1" />
 
         {/* Leave */}
         <TooltipButton 

@@ -19,7 +19,6 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Custom scrollbar for the purple theme */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -39,19 +38,16 @@ body {
   background: rgba(139, 92, 246, 0.5);
 }
 
-/* Selection styling */
 ::selection {
   background: rgba(139, 92, 246, 0.4);
   color: #f4f4f5;
 }
 
-/* Focus visible styling */
 :focus-visible {
   outline: 2px solid rgba(139, 92, 246, 0.5);
   outline-offset: 2px;
 }
 
-/* Floating reaction animation */
 @keyframes float-up {
   0% {
     opacity: 1;

@@ -16,6 +16,7 @@ import {
   isRoomLockedAtom,
   reactionsAtom,
   screenSharerIdAtom,
+  screenStreamAtom,
 } from "../store/roomStore";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useWebRTC } from "../hooks/useWebRTC";
@@ -43,6 +44,7 @@ export function Room() {
   const [isHandRaised, setIsHandRaised] = useAtom(isHandRaisedAtom);
   const [, setRaisedHands] = useAtom(raisedHandsAtom);
   const [, setScreenSharerId] = useAtom(screenSharerIdAtom);
+  const [screenStream] = useAtom(screenStreamAtom);
   const [isRoomLocked, setIsRoomLocked] = useAtom(isRoomLockedAtom);
   const [, setReactions] = useAtom(reactionsAtom);
   const [isParticipantsOpen, setIsParticipantsOpen] = useState(false);
@@ -53,6 +55,7 @@ export function Room() {
 
   const handleWSMessageRef = useRef<(m: WSMessage) => void>(() => {});
   const localStreamRef = useRef<MediaStream | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const webRTCActionsRef = useRef<{
     handleOffer?: (
@@ -95,6 +98,10 @@ export function Room() {
   useEffect(() => {
     localStreamRef.current = localStream ?? null;
   }, [localStream]);
+
+  useEffect(() => {
+    screenStreamRef.current = screenStream ?? null;
+  }, [screenStream]);
 
   useEffect(() => {
     peersRef.current = peers;
@@ -155,19 +162,26 @@ export function Room() {
             return map;
           });
           toast.info(`${message.payload.username} joined the room`);
-          // Create offer to the new user if we have local stream
+          // Send video stream to new user
           if (localStreamRef.current) {
-            // Use setTimeout to ensure the peer is added to the map first
             setTimeout(() => {
               if (userId > message.payload.userId) {
                 webRTCActionsRef.current.createOffer?.(message.payload.userId, localStreamRef.current!);
               }
             }, 100);
           }
+          // If WE are screen sharing, also send screen share to new user
+          if (screenStreamRef.current && isScreenSharing) {
+            console.log("[Room] Sending screen share to new user", message.payload.userId);
+            setTimeout(() => {
+              if (userId > message.payload.userId) {
+                webRTCActionsRef.current.createOffer?.(message.payload.userId, screenStreamRef.current!);
+              }
+            }, 200);
+          }
           break;
 
         case "user-left":
-          // Close the peer connection before removing using ref to get current peers
           {
             const leavingPeer = peersRef.current.get(message.payload.userId);
             if (leavingPeer?.connection) {
@@ -241,7 +255,6 @@ export function Room() {
           break;
 
         case "user-reaction":
-          // Add reaction to state, will be displayed in VideoGrid
           setReactions((prev) => [
             ...prev,
             {
@@ -252,7 +265,6 @@ export function Room() {
               timestamp: Date.now(),
             },
           ]);
-          // Auto-remove reaction after 3 seconds
           setTimeout(() => {
             setReactions((prev) => prev.filter((r) => r.id !== `${Date.now()}-${message.payload.userId}`));
           }, 3000);
@@ -273,14 +285,12 @@ export function Room() {
           break;
 
         case "start-screen-share":
-          // Another user started screen sharing
           console.log("[Room]", message.payload.username, "started screen sharing");
           setScreenSharerId(message.payload.userId);
           toast.info(`${message.payload.username} is sharing their screen`);
           break;
 
         case "stop-screen-share":
-          // Another user stopped screen sharing
           console.log("[Room]", message.payload.username, "stopped screen sharing");
           setScreenSharerId(null);
           break;
@@ -304,12 +314,9 @@ export function Room() {
     handleWSMessageRef.current = handleWSMessage;
   }, [handleWSMessage]);
 
-  // Track previous connection status to detect reconnections
   const prevConnectionStatusRef = useRef(connectionStatus);
 
   useEffect(() => {
-    // Only reset join flags when transitioning from disconnected/reconnecting to connected
-    // This prevents reset on every connectionId change
     const prevStatus = prevConnectionStatusRef.current;
     prevConnectionStatusRef.current = connectionStatus;
     
@@ -375,7 +382,6 @@ export function Room() {
       return;
     }
 
-    // Mark as sent to prevent duplicate join attempts
     hasSentJoinRef.current = true;
 
     console.log("[Room] Sending join-room for", urlRoomId);
@@ -472,46 +478,47 @@ const handleToggleChat = () => {
   };
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden text-white relative">
-      {/* Background gradient effects */}
-      <div className="absolute inset-0 bg-linear-to-br from-[#0a0a0f] via-[#0f0f1a] to-[#0a0a0f]" />
-      <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-violet-600/10 rounded-full blur-3xl pointer-events-none" />
+    <div className="h-screen w-screen flex flex-col overflow-hidden relative" style={{ backgroundColor: '#FCFCFA', color: '#1F1F1F' }}>
+      <div className="absolute inset-0" style={{ backgroundColor: '#FCFCFA' }} />
+      <div className="absolute top-20 left-10 w-64 h-64 rounded-full" style={{ backgroundColor: '#EAD4CE', opacity: 0.3 }} />
+      <div className="absolute bottom-20 right-10 w-80 h-80 rounded-full" style={{ backgroundColor: '#D4E2D4', opacity: 0.3 }} />
 
-      <div className="relative z-10 h-16 px-6 flex items-center justify-between border-b border-purple-500/20 bg-[#0a0a0f]/80 backdrop-blur-sm">
+      <div className="relative z-10 h-16 px-6 flex items-center justify-between border-b" style={{ borderColor: '#E5E5E5', backgroundColor: '#FCFCFA' }}>
         <div className="flex items-center gap-3">
-          <div className="bg-linear-to-br from-purple-600 to-violet-600 p-2 rounded-lg shadow-lg shadow-purple-500/25">
+          <div className="p-2 rounded-lg" style={{ backgroundColor: '#1F1F1F' }}>
             <Video className="w-5 h-5 text-white" />
           </div>
-          <span className="font-semibold text-xl tracking-tight bg-linear-to-r from-purple-400 to-violet-400 bg-clip-text text-transparent">FlexMeet</span>
+          <span className="font-semibold text-xl" style={{ fontFamily: 'Playfair Display, serif', color: '#1F1F1F' }}>Popcorn</span>
         </div>
 
-        <div className="flex items-center gap-3 px-4 py-2 bg-purple-500/10 border border-purple-500/30 rounded-full">
-          <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-          <span className="text-sm font-medium text-purple-300">Record</span>
+        <div className="flex items-center gap-3 px-4 py-2 rounded-full" style={{ backgroundColor: '#EAD4CE' }}>
+          <div className="w-3 h-3 rounded-full bg-red-500" />
+          <span className="text-sm font-medium" style={{ color: '#1F1F1F' }}>REC</span>
         </div>
       </div>
 
       <div className="relative z-10 flex-1 flex overflow-hidden">
         <div
           className={`flex-1 transition-all duration-300 ${
-            isChatOpen ? "mr-90" : ""
+            isChatOpen || isParticipantsOpen ? "mr-90" : ""
           }`}
         >
           <VideoGrid />
         </div>
 
         <div
-          className={`fixed top-16 right-0 bottom-20 w-90 bg-[#0a0a0f]/90 backdrop-blur-xl border-l border-purple-500/20 transform transition-transform duration-300 z-40 ${
+          className={`fixed top-16 right-0 bottom-20 w-90 backdrop-blur-xl border-l transform transition-transform duration-300 z-40 ${
             isChatOpen ? "translate-x-0" : "translate-x-full"
           }`}
+          style={{ backgroundColor: '#FFFFFF', borderColor: '#E5E5E5' }}
         >
           <div className="flex flex-col h-full">
-            <div className="p-4 border-b border-purple-500/20 flex justify-between">
-              <h2 className="font-semibold text-lg text-white">In-call Messages</h2>
+            <div className="p-4 border-b flex justify-between" style={{ borderColor: '#E5E5E5' }}>
+              <h2 className="font-semibold text-lg" style={{ color: '#1F1F1F' }}>In-call Messages</h2>
               <button 
                 onClick={() => setIsChatOpen(false)} 
-                className="text-zinc-400 hover:text-white transition-colors"
+                className="hover:opacity-70 transition-opacity"
+                style={{ color: '#666666' }}
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -524,23 +531,24 @@ const handleToggleChat = () => {
           </div>
         </div>
 
-        {/* Participants Sidebar */}
         <div
-          className={`fixed top-16 right-0 bottom-20 w-90 bg-[#0a0a0f]/90 backdrop-blur-xl border-l border-purple-500/20 transform transition-transform duration-300 z-40 ${
+          className={`fixed top-16 right-0 bottom-20 w-90 backdrop-blur-xl border-l transform transition-transform duration-300 z-40 ${
             isParticipantsOpen ? "translate-x-0" : "translate-x-full"
           }`}
+          style={{ backgroundColor: '#FFFFFF', borderColor: '#E5E5E5' }}
         >
           <div className="flex flex-col h-full">
-            <div className="p-4 border-b border-purple-500/20 flex justify-between">
-              <h2 className="font-semibold text-lg text-white flex items-center gap-2">
+            <div className="p-4 border-b flex justify-between" style={{ borderColor: '#E5E5E5' }}>
+              <h2 className="font-semibold text-lg flex items-center gap-2" style={{ color: '#1F1F1F' }}>
                 Participants
-                <span className="bg-purple-500/20 text-purple-300 text-xs px-2 py-0.5 rounded-full">
+                <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: '#D4E2D4', color: '#1F1F1F' }}>
                   {peers.size + 1}
                 </span>
               </h2>
               <button 
                 onClick={() => setIsParticipantsOpen(false)} 
-                className="text-zinc-400 hover:text-white transition-colors"
+                className="hover:opacity-70 transition-opacity"
+                style={{ color: '#666666' }}
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
