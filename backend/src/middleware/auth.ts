@@ -24,11 +24,7 @@ export interface AuthRequest extends Request {
   };
 }
 
-export function authenticate(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): void {
+export function authenticate(req: Request, res: Response, next: NextFunction): void {
   const token =
     req.headers.authorization?.startsWith('Bearer ')
       ? req.headers.authorization.slice(7)
@@ -70,11 +66,7 @@ export async function logoutRevoke(accessToken: string): Promise<string | null> 
   return decoded.userId;
 }
 
-export function authenticateToken(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): void {
+export function authenticateToken(req: Request, res: Response, next: NextFunction): void {
   authenticate(req, res, next);
 }
 
@@ -83,15 +75,18 @@ export function optionalAuthenticate(req: Request, _res: Response, next: NextFun
     req.headers.authorization?.startsWith('Bearer ')
       ? req.headers.authorization.slice(7)
       : req.cookies?.accessToken ?? req.body?.accessToken;
+
   if (!token) {
     next();
     return;
   }
+
   const payload = verifyAccessToken(token);
   if (!payload) {
     next();
     return;
   }
+
   isBlocklisted(payload.jti)
     .then((blocked) => {
       if (!blocked) {

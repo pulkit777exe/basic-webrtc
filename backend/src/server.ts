@@ -30,7 +30,10 @@ app.use(cookieParser());
 app.use(passport.initialize());
 
 app.use('/api/auth', authLimiter);
-app.use('/api', optionalAuthenticate, apiLimiter);
+app.use('/api/auth', authRoutes);
+app.use('/api/oauth', oauthRoutes);
+app.use('/api/rooms', optionalAuthenticate, apiLimiter, roomRoutes);
+app.use('/api/ice-servers', optionalAuthenticate, apiLimiter, iceRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

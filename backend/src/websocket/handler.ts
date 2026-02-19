@@ -87,7 +87,7 @@ export class WebSocketHandler {
       }
     });
 
-    wss.on('connection', (ws: WebSocket, req: unknown) => {
+    this.wss.on('connection', (ws: WebSocket, req: unknown) => {
       const ext = ws as ExtendedWebSocket;
       const userId = ext.userId;
       const roomId = ext.roomId;
@@ -306,11 +306,11 @@ export class WebSocketHandler {
         if (action === 'promote' && signal.targetUserId) {
           await setPeerRole(roomId, signal.targetUserId, 'co-host');
         }
-        if (action === 'admit' && signal.userId) {
-          await removeFromWaitingRoom(roomId, signal.userId);
+        if (action === 'admit' && signal.targetUserId) {
+          await removeFromWaitingRoom(roomId, signal.targetUserId);
         }
-        if (action === 'deny' && signal.userId) {
-          await removeFromWaitingRoom(roomId, signal.userId);
+        if (action === 'deny' && signal.targetUserId) {
+          await removeFromWaitingRoom(roomId, signal.targetUserId);
         }
         this.publish(roomId, { ...signal, from: userId, roomId });
         return;

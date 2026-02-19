@@ -1,4 +1,4 @@
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { createRedisStore } from '../lib/redis-rate-limit-store.js';
 
 export const authLimiter = rateLimit({
@@ -8,7 +8,7 @@ export const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   store: createRedisStore(),
-  keyGenerator: (req) => req.ip ?? 'unknown',
+  keyGenerator: (req) => ipKeyGenerator(req as unknown as string),
 });
 
 export const apiLimiter = rateLimit({
@@ -20,7 +20,7 @@ export const apiLimiter = rateLimit({
   store: createRedisStore(),
   keyGenerator: (req) => {
     const u = (req as { user?: { id: string } }).user;
-    return u?.id ?? req.ip ?? 'unknown';
+    return u?.id ?? ipKeyGenerator(req as unknown as string);
   },
 });
 
@@ -32,5 +32,5 @@ export const otpLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   store: createRedisStore(),
-  keyGenerator: (req) => req.ip ?? 'unknown',
+  keyGenerator: (req) => ipKeyGenerator(req as unknown as string),
 });
