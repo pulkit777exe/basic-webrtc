@@ -1,24 +1,36 @@
 import rateLimit from 'express-rate-limit';
+import { createRedisStore } from '../lib/redis-rate-limit-store.js';
 
 export const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 requests per window
-  message: 'Too many authentication attempts, please try again later',
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { error: 'Too many authentication attempts, please try again later', code: 'RATE_LIMIT' },
   standardHeaders: true,
   legacyHeaders: false,
+  store: createRedisStore(),
+  keyGenerator: (req) => req.ip ?? 'unknown',
 });
 
 export const apiLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 100, // 100 requests per minute
-  message: 'Too many requests, please try again later',
+  windowMs: 60 * 1000,
+  max: 100,
+  message: { error: 'Too many requests, please try again later', code: 'RATE_LIMIT' },
   standardHeaders: true,
   legacyHeaders: false,
+  store: createRedisStore(),
+  keyGenerator: (req) => {
+    const u = (req as { user?: { id: string } }).user;
+    return u?.id ?? req.ip ?? 'unknown';
+  },
 });
 
 export const otpLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 3, // 3 OTP requests per hour
-  message: 'Too many OTP requests, please try again later',
+  windowMs: 60 * 60 * 1000,
+  max: 3,
+  message: { error: 'Too many OTP requests, please try again later', code: 'RATE_LIMIT' },
   skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: createRedisStore(),
+  keyGenerator: (req) => req.ip ?? 'unknown',
 });

@@ -65,7 +65,7 @@ export interface SignalingPayload {
   signal: RTCSessionDescriptionInit | RTCIceCandidateInit;
 }
 export interface SignupPayload {
-  username: string;
+  name: string;
   email: string;
   password: string;
 }
@@ -88,11 +88,13 @@ export interface TokenPayload {
 export interface AuthResponse {
   user: {
     id: string;
-    username: string;
+    name: string;
     email: string;
     emailVerified: boolean;
+    avatarUrl?: string | null;
   };
   accessToken?: string;
+  refreshToken?: string;
 }
 
 export interface FileAttachment {

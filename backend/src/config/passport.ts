@@ -12,13 +12,13 @@ passport.use(
     async (accessToken, refreshToken, profile, done) => {
       try {
         const email = profile.emails?.[0]?.value;
-        const username = profile.displayName || email?.split('@')[0] || 'user';
+        const name = profile.displayName || email?.split('@')[0] || 'User';
 
         if (!email) {
           return done(new Error('No email from Google'), undefined);
         }
 
-        const result = await googleOAuthLogin(profile.id, email, username);
+        const result = await googleOAuthLogin(profile.id, email, name);
         done(null, result);
       } catch (error) {
         done(error as Error, undefined);

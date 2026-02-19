@@ -1,67 +1,65 @@
-interface RateLimitEntry {
-  timestamp: number;
-  id: string;
+import Redis from 'ioredis';
+
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+
+export const redis = new Redis(REDIS_URL, {
+  maxRetriesPerRequest: 3,
+  retryStrategy(times) {
+    const delay = Math.min(times * 100, 3000);
+    return delay;
+  },
+});
+
+export const redisSub = new Redis(REDIS_URL, {
+  maxRetriesPerRequest: 3,
+  retryStrategy(times) {
+    const delay = Math.min(times * 100, 3000);
+    return delay;
+  },
+});
+
+redis.on('error', (err) => {
+  console.error('[Redis]', err.message);
+});
+
+redisSub.on('error', (err) => {
+  console.error('[Redis Sub]', err.message);
+});
+
+const REFRESH_SESSION_TTL_SEC = 7 * 24 * 60 * 60;
+
+export function userSessionKey(userId: string): string {
+  return `user:${userId}:session`;
 }
 
-interface SessionData {
-  data: object;
-  expiry: number;
+export function blocklistKey(tokenOrJti: string): string {
+  return `blocklist:${tokenOrJti}`;
 }
 
-const rateLimitStore: Map<string, RateLimitEntry[]> = new Map();
-const sessionStore: Map<string, SessionData> = new Map();
+export async function setRefreshSession(userId: string, tokenHash: string): Promise<void> {
+  const key = userSessionKey(userId);
+  await redis.set(key, tokenHash, 'EX', REFRESH_SESSION_TTL_SEC);
+}
 
-export const redis = {
-  on: (event: string, callback: (...args: any[]) => void) => {
-    if (event === "connect") {
-      setTimeout(callback, 100);
-    }
-  },
-  zremrangebyscore: async (key: string, min: number, max: number) => {
-    const entries = rateLimitStore.get(key) || [];
-    const filtered = entries.filter(entry => entry.timestamp > max);
-    rateLimitStore.set(key, filtered);
-  },
-  zcard: async (key: string) => {
-    const entries = rateLimitStore.get(key) || [];
-    return entries.length;
-  },
-  zrange: async (key: string, start: number, end: number, withScores: string) => {
-    const entries = rateLimitStore.get(key) || [];
-    const sorted = entries.sort((a, b) => a.timestamp - b.timestamp);
-    const range = sorted.slice(start, end + 1);
-    if (withScores === "WITHSCORES") {
-      return range.flatMap(entry => [entry.id, entry.timestamp.toString()]);
-    }
-    return range.map(entry => entry.id);
-  },
-  zadd: async (key: string, score: number, member: string) => {
-    const entries = rateLimitStore.get(key) || [];
-    entries.push({ timestamp: score, id: member });
-    rateLimitStore.set(key, entries);
-  },
-  expire: async (key: string, seconds: number) => {
-    // add expire logic
-  },
-  set: async (key: string, value: string, ex: string, seconds: number) => {
-    sessionStore.set(key, {
-      data: JSON.parse(value),
-      expiry: Date.now() + seconds * 1000,
-    });
-  },
-  get: async (key: string) => {
-    const session = sessionStore.get(key);
-    if (!session) return null;
-    if (Date.now() > session.expiry) {
-      sessionStore.delete(key);
-      return null;
-    }
-    return JSON.stringify(session.data);
-  },
-  del: async (key: string) => {
-    sessionStore.delete(key);
-  },
-};
+export async function getRefreshSession(userId: string): Promise<string | null> {
+  return redis.get(userSessionKey(userId));
+}
+
+export async function deleteRefreshSession(userId: string): Promise<void> {
+  await redis.del(userSessionKey(userId));
+}
+
+export async function addToBlocklist(tokenOrJti: string, ttlSeconds: number): Promise<void> {
+  if (ttlSeconds <= 0) return;
+  const key = blocklistKey(tokenOrJti);
+  await redis.set(key, '1', 'EX', ttlSeconds);
+}
+
+export async function isBlocklisted(tokenOrJti: string): Promise<boolean> {
+  const key = blocklistKey(tokenOrJti);
+  const v = await redis.get(key);
+  return v !== null;
+}
 
 export async function checkRateLimit(
   key: string,
@@ -71,24 +69,25 @@ export async function checkRateLimit(
   const now = Math.floor(Date.now() / 1000);
   const windowStart = now - windowSeconds;
 
-  const entries = rateLimitStore.get(key) || [];
-  const filtered = entries.filter(entry => entry.timestamp > windowStart);
-  rateLimitStore.set(key, filtered);
-
-  const currentCount = filtered.length;
+  const pipe = redis.pipeline();
+  pipe.zremrangebyscore(key, 0, windowStart);
+  pipe.zcard(key);
+  const results = await pipe.exec();
+  if (!results) {
+    return { allowed: false, remaining: 0, resetIn: windowSeconds };
+  }
+  const [, count] = results[1];
+  const currentCount = typeof count === 'number' ? count : parseInt(String(count), 10);
 
   if (currentCount >= maxRequests) {
-    const sorted = filtered.sort((a, b) => a.timestamp - b.timestamp);
-    const oldest = sorted[0];
-    const resetIn = Math.max(0, oldest.timestamp + windowSeconds - now);
+    const ttlResult = await redis.zrange(key, 0, 0, 'WITHSCORES');
+    const oldest = ttlResult.length ? Math.floor(parseFloat(ttlResult[1])) : now;
+    const resetIn = Math.max(0, oldest + windowSeconds - now);
     return { allowed: false, remaining: 0, resetIn };
   }
 
-  filtered.push({
-    timestamp: now,
-    id: `${now}-${Math.random()}`,
-  });
-  rateLimitStore.set(key, filtered);
+  await redis.zadd(key, now, `${now}-${Math.random()}`);
+  await redis.expire(key, windowSeconds);
 
   return {
     allowed: true,
@@ -97,7 +96,7 @@ export async function checkRateLimit(
   };
 }
 
-export const OTP_RATE_LIMIT_KEY_PREFIX = "otp_rate_limit:";
+export const OTP_RATE_LIMIT_KEY_PREFIX = 'otp_rate_limit:';
 export const OTP_MAX_REQUESTS_PER_HOUR = 3;
 export const OTP_RATE_LIMIT_WINDOW = 3600;
 
@@ -115,22 +114,21 @@ export async function setSession(
   data: object,
   expirySeconds: number,
 ): Promise<void> {
-  sessionStore.set(`session:${sessionId}`, {
-    data,
-    expiry: Date.now() + expirySeconds * 1000,
-  });
+  const key = `session:${sessionId}`;
+  await redis.set(key, JSON.stringify(data), 'EX', expirySeconds);
 }
 
 export async function getSession<T>(sessionId: string): Promise<T | null> {
-  const session = sessionStore.get(`session:${sessionId}`);
-  if (!session) return null;
-  if (Date.now() > session.expiry) {
-    sessionStore.delete(`session:${sessionId}`);
+  const key = `session:${sessionId}`;
+  const raw = await redis.get(key);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
     return null;
   }
-  return session.data as T;
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
-  sessionStore.delete(`session:${sessionId}`);
+  await redis.del(`session:${sessionId}`);
 }

@@ -1,11 +1,11 @@
+import { customAlphabet } from 'nanoid';
+
+const nanoid10 = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz', 10);
+
 export function validateRoomId(roomId: string): boolean {
-  const regex = /^[a-z]{3}-[a-z]{3}$/;
-  return regex.test(roomId);
+  return /^[a-zA-Z0-9]{10}$/.test(roomId);
 }
 
 export function generateRoomId(): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyz';
-  const part1 = Array.from({ length: 3 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-  const part2 = Array.from({ length: 3 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-  return `${part1}-${part2}`;
+  return nanoid10();
 }

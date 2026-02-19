@@ -1,571 +1,359 @@
-import { WebSocket, WebSocketServer } from "ws";
-import { RoomManager } from "./roomManager";
-import { ChatManager } from "./chatManager";
+import { WebSocket, WebSocketServer } from 'ws';
+import { db } from '../db';
+import { users, messages } from '../db/schema';
+import { eq } from 'drizzle-orm';
+import { verifyRoomToken } from '../utils/jwt';
+import { validateRoomId } from '../utils/validation';
 import {
-  WSMessage,
-  JoinRoomPayload,
-  SignalingPayload,
-  ChatMessage,
-} from "../types";
-import { validateRoomId } from "../utils/validation";
+  addPeerToRoom,
+  removePeerFromRoom,
+  getRoomMeta,
+  getRoomPeerCount,
+  getPeerRole,
+  setRoomLocked,
+  setPeerRole,
+  setPeerMedia,
+  removeFromWaitingRoom,
+  roomSignalChannel,
+  roomEndedChannel,
+  type RoomRole,
+} from '../lib/redis-rooms';
+import { redis } from '../config/redis';
+import { redisSub } from '../config/redis';
+import type { Signal, PublicUser, AdminAction } from '../lib/signals';
+import { isSignal } from '../lib/signals';
+import { sanitizeText } from '../utils/sanitize';
+import { logger } from '../lib/logger';
+
+const HEARTBEAT_INTERVAL_MS = 30000;
+
+interface ExtendedWebSocket extends WebSocket {
+  userId?: string;
+  roomId?: string;
+  isAlive?: boolean;
+  user?: PublicUser;
+}
 
 export class WebSocketHandler {
-  private roomManager: RoomManager;
-  private chatManager: ChatManager;
+  private rooms: Map<string, Map<string, ExtendedWebSocket>> = new Map();
+  private subscribedChannels: Set<string> = new Set();
 
   constructor(private wss: WebSocketServer) {
-    this.roomManager = new RoomManager();
-    this.chatManager = new ChatManager();
     this.initialize();
   }
 
   private initialize(): void {
-    // Heartbeat interval for connection health check
     setInterval(() => {
-      this.wss.clients.forEach((ws: any) => {
-        if (ws.isAlive === false) return ws.terminate();
-        ws.isAlive = false;
+      this.wss.clients.forEach((ws: WebSocket) => {
+        const ext = ws as ExtendedWebSocket;
+        if (ext.isAlive === false) {
+          this.handleDisconnect(ext);
+          return ws.terminate();
+        }
+        ext.isAlive = false;
         ws.ping();
       });
-    }, 30000);
+    }, HEARTBEAT_INTERVAL_MS);
 
-    this.wss.on("connection", (ws: any) => {
-      console.log("[WS] New client connected");
-      
-      // Initialize heartbeat tracking
-      ws.isAlive = true;
-      ws.on("pong", () => {
-        ws.isAlive = true;
-      });
-
-      ws.on("message", (data: Buffer) => {
-        try {
-          const message: WSMessage = JSON.parse(data.toString());
-          this.handleMessage(ws, message);
-        } catch (error) {
-          console.error("[WS] Error parsing message:", error);
-          this.sendError(ws, "Invalid message format");
+    redisSub.on('message', (channel: string, message: string) => {
+      try {
+        if (channel.endsWith(':ended')) {
+          const roomId = channel.replace(/^room:(.+):ended$/, '$1');
+          const room = this.rooms.get(roomId);
+          if (room) {
+            room.forEach((peer) => {
+              if (this.isOpen(peer)) {
+                this.send(peer, { type: 'error', message: 'Room has ended' });
+                peer.close();
+              }
+            });
+            this.rooms.delete(roomId);
+            this.unsubscribeRoom(roomId);
+          }
+          return;
         }
-      });
-
-      ws.on("close", () => {
-        console.log("[WS] Client disconnected");
-        this.handleDisconnect(ws);
-      });
-
-      ws.on("error", (error) => {
-        console.error("[WS] WebSocket error:", error);
-      });
-    });
-  }
-
-  private handleMessage(ws: WebSocket, message: WSMessage): void {
-    switch (message.type) {
-      case "join-room":
-        this.handleJoinRoom(ws, message.payload);
-        break;
-      case "request-join":
-        this.handleRequestJoin(ws, message.payload);
-        break;
-      case "approve-join":
-        this.handleApproveJoin(ws, message.payload);
-        break;
-      case "reject-join":
-        this.handleRejectJoin(ws, message.payload);
-        break;
-      case "offer":
-      case "answer":
-      case "ice-candidate":
-        this.handleSignaling(ws, message);
-        break;
-      case "start-screen-share":
-        this.handleScreenShare(ws, message.payload, true);
-        break;
-      case "stop-screen-share":
-        this.handleScreenShare(ws, message.payload, false);
-        break;
-      case "chat-message":
-        this.handleChatMessage(ws, message.payload);
-        break;
-      case "get-chat-history":
-        this.handleGetChatHistory(ws, message.payload);
-        break;
-      case "user-left":
-        this.handleUserLeft(ws, message.payload);
-        break;
-      case "send-reaction":
-        this.handleReaction(ws, message.payload);
-        break;
-      case "raise-hand":
-        this.handleHandRaise(ws, message.payload, true);
-        break;
-      case "lower-hand":
-        this.handleHandRaise(ws, message.payload, false);
-        break;
-      case "kick-user":
-        this.handleKickUser(ws, message.payload);
-        break;
-      case "mute-all":
-        this.handleMuteAll(ws, message.payload);
-        break;
-      case "lock-room":
-        this.handleLockRoom(ws, message.payload);
-        break;
-      case "unlock-room":
-        this.handleUnlockRoom(ws, message.payload);
-        break;
-
-      default:
-        this.sendError(ws, "Unknown message type");
-    }
-  }
-
-  private handleJoinRoom(ws: WebSocket, payload: JoinRoomPayload): void {
-    const { roomId, userId, username, roomType, isHost } = payload;
-
-    if (!validateRoomId(roomId)) {
-      this.sendError(ws, "Invalid room ID format");
-      return;
-    }
-
-    let room = this.roomManager.getRoom(roomId);
-
-    if (!room && isHost) {
-      room = this.roomManager.createRoom(roomId, userId, roomType || "open");
-    }
-
-    if (!room) {
-      this.sendError(ws, "Room not found");
-      return;
-    }
-
-    if (room.type === "locked" && room.hostId !== userId) {
-      this.sendError(ws, "Room is locked. Please request to join.");
-      return;
-    }
-
-    const added = this.roomManager.addParticipant(roomId, {
-      id: userId,
-      username,
-      ws,
-      joinedAt: Date.now(),
-    });
-
-    if (!added) {
-      this.sendError(ws, "Room is full or error adding participant");
-      return;
-    }
-
-    const participants = this.roomManager.getRoomParticipants(roomId);
-
-    participants.forEach((p) => {
-      if (p.id !== userId) {
-        this.send(p.ws, {
-          type: "user-joined",
-          payload: { userId, username, isHost: room!.hostId === userId },
-        });
+        const data = JSON.parse(message) as {
+          type: string;
+          from?: string;
+          to?: string;
+          roomId: string;
+          userId?: string;
+          user?: PublicUser;
+          payload?: unknown;
+        };
+        this.forwardFromRedis(channel, data);
+      } catch (err) {
+        console.error('[WS] Redis message parse error', err);
       }
     });
 
-    this.send(ws, {
-      type: "room-joined",
-      payload: {
-        roomId,
-        participants: participants
-          .filter((p) => p.id !== userId)
-          .map((p) => ({ userId: p.id, username: p.username })),
-        isHost: room.hostId === userId,
-        chatHistory: this.chatManager.getMessages(roomId),
-      },
-    });
-  }
+    wss.on('connection', (ws: WebSocket, req: unknown) => {
+      const ext = ws as ExtendedWebSocket;
+      const userId = ext.userId;
+      const roomId = ext.roomId;
+      if (!userId || !roomId) {
+        this.sendError(ext, 'Missing user or room');
+        ws.close();
+        return;
+      }
+      if (!validateRoomId(roomId)) {
+        this.sendError(ext, 'Invalid room ID');
+        ws.close();
+        return;
+      }
 
-  private handleRequestJoin(ws: WebSocket, payload: JoinRoomPayload): void {
-    const { roomId, userId, username } = payload;
-    const room = this.roomManager.getRoom(roomId);
-
-    if (!room || room.type !== "locked") {
-      this.sendError(ws, "Invalid room or room is not locked");
-      return;
-    }
-
-    const added = this.roomManager.addPendingRequest(roomId, {
-      userId,
-      username,
-      ws,
-      requestedAt: Date.now(),
-    });
-
-    if (!added) {
-      this.sendError(ws, "Error adding request");
-      return;
-    }
-
-    const host = room.participants.get(room.hostId);
-    if (host) {
-      this.send(host.ws, {
-        type: "join-request",
-        payload: { userId, username },
-      });
-    }
-  }
-
-  private handleApproveJoin(
-    ws: WebSocket,
-    payload: { roomId: string; userId: string },
-  ): void {
-    const { roomId, userId } = payload;
-    const room = this.roomManager.getRoom(roomId);
-
-    if (!room) return;
-
-    const request = this.roomManager.removePendingRequest(roomId, userId);
-    if (!request) return;
-
-    const added = this.roomManager.addParticipant(roomId, {
-      id: request.userId,
-      username: request.username,
-      ws: request.ws,
-      joinedAt: Date.now(),
-    });
-
-    if (added) {
-      const participants = this.roomManager.getRoomParticipants(roomId);
-
-      this.send(request.ws, {
-        type: "join-approved",
-        payload: {
-          roomId,
-          participants: participants
-            .filter((p) => p.id !== userId)
-            .map((p) => ({ userId: p.id, username: p.username })),
-          chatHistory: this.chatManager.getMessages(roomId),
-        },
+      ext.isAlive = true;
+      ws.on('pong', () => {
+        ext.isAlive = true;
       });
 
-      participants.forEach((p) => {
-        if (p.id !== userId) {
-          this.send(p.ws, {
-            type: "user-joined",
-            payload: { userId, username: request.username },
+      db.select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1)
+        .then(async ([u]) => {
+          if (!u) {
+            this.sendError(ext, 'User not found');
+            ws.close();
+            return;
+          }
+          const publicUser: PublicUser = { id: u.id, name: u.name, avatarUrl: u.avatarUrl ?? undefined };
+          ext.user = publicUser;
+
+          const meta = await getRoomMeta(roomId);
+          if (!meta) {
+            this.sendError(ext, 'Room not found or ended');
+            ws.close();
+            return;
+          }
+          const count = await getRoomPeerCount(roomId);
+          const max = parseInt(meta.maxParticipants, 10) || 50;
+          if (count >= max) {
+            this.sendError(ext, 'Room is full');
+            ws.close();
+            return;
+          }
+
+          const role: RoomRole = meta.hostId === userId ? 'host' : 'participant';
+          addPeerToRoom(roomId, userId, role).catch((e) => logger.error('Redis addPeer', { roomId, userId, err: String(e) }));
+          this.addToMap(roomId, userId, ext);
+          this.subscribeRoom(roomId);
+
+          logger.info('WS join', { roomId, userId, name: publicUser.name });
+          const joinSignal: Signal = { type: 'join', roomId, user: publicUser };
+          this.publish(roomId, { ...joinSignal, from: userId });
+
+          ws.on('message', (data: Buffer) => this.handleMessage(ext, data));
+          ws.on('close', () => this.handleDisconnect(ext));
+          ws.on('error', (err) => {
+            console.error('[WS] Error', err);
+            this.handleDisconnect(ext);
           });
-        }
-      });
+        })
+        .catch((err) => {
+          console.error('[WS] Connection setup error', err);
+          this.sendError(ext, 'Server error');
+          ws.close();
+        });
+    });
+  }
+
+  private addToMap(roomId: string, userId: string, ws: ExtendedWebSocket): void {
+    let room = this.rooms.get(roomId);
+    if (!room) {
+      room = new Map();
+      this.rooms.set(roomId, room);
+    }
+    room.set(userId, ws);
+  }
+
+  private removeFromMap(roomId: string, userId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    room.delete(userId);
+    if (room.size === 0) {
+      this.rooms.delete(roomId);
+      this.unsubscribeRoom(roomId);
     }
   }
 
-  private handleRejectJoin(
-    ws: WebSocket,
-    payload: { roomId: string; userId: string },
-  ): void {
-    const { roomId, userId } = payload;
-    const request = this.roomManager.removePendingRequest(roomId, userId);
+  private subscribeRoom(roomId: string): void {
+    const ch = roomSignalChannel(roomId);
+    if (this.subscribedChannels.has(ch)) return;
+    this.subscribedChannels.add(ch);
+    redisSub.subscribe(ch);
+    redisSub.subscribe(roomEndedChannel(roomId));
+  }
 
-    if (request) {
-      this.send(request.ws, {
-        type: "join-rejected",
-        payload: { roomId },
-      });
+  private unsubscribeRoom(roomId: string): void {
+    const ch = roomSignalChannel(roomId);
+    const endCh = roomEndedChannel(roomId);
+    if (this.subscribedChannels.has(ch)) {
+      redisSub.unsubscribe(ch);
+      redisSub.unsubscribe(endCh);
+      this.subscribedChannels.delete(ch);
     }
   }
 
-  private handleSignaling(ws: WebSocket, message: WSMessage): void {
-    const { roomId, targetUserId, fromUserId, signal } =
-      message.payload as SignalingPayload;
-    const room = this.roomManager.getRoom(roomId);
+  private publish(roomId: string, payload: Record<string, unknown>): void {
+    redis.publish(roomSignalChannel(roomId), JSON.stringify(payload)).catch((e) => console.error('[WS] Publish', e));
+  }
 
+  private forwardFromRedis(channel: string, data: { type: string; from?: string; to?: string; roomId: string; [k: string]: unknown }): void {
+    const roomId = data.roomId;
+    const room = this.rooms.get(roomId);
     if (!room) return;
 
-    const targetParticipant = room.participants.get(targetUserId);
-    if (targetParticipant) {
-      this.send(targetParticipant.ws, {
-        type: message.type,
-        payload: { fromUserId, signal },
+    if (data.type === 'leave') {
+      const userId = data.userId as string;
+      room.forEach((peer) => {
+        if (this.isOpen(peer)) peer.send(JSON.stringify({ type: 'leave', userId }));
       });
+      return;
     }
-  }
 
-  private handleScreenShare(
-    ws: WebSocket,
-    payload: { roomId: string; userId: string },
-    isSharing: boolean,
-  ): void {
-    const { roomId, userId } = payload;
-    const participants = this.roomManager.getRoomParticipants(roomId);
+    if (data.type === 'join') {
+      const from = data.from as string;
+      room.forEach((peer, uid) => {
+        if (uid !== from && this.isOpen(peer)) {
+          peer.send(JSON.stringify({ type: 'join', roomId, user: data.user }));
+        }
+      });
+      return;
+    }
 
-    participants.forEach((p) => {
-      if (p.id !== userId) {
-        this.send(p.ws, {
-          type: isSharing
-            ? "user-started-screen-share"
-            : "user-stopped-screen-share",
-          payload: { userId },
-        });
+    if (data.to) {
+      const target = room.get(data.to as string);
+      if (target && this.isOpen(target)) {
+        target.send(JSON.stringify(data));
       }
-    });
-  }
-
-  private handleReaction(
-    ws: WebSocket,
-    payload: {
-      roomId: string;
-      userId: string;
-      username: string;
-      emoji: string;
-    },
-  ): void {
-    const { roomId, userId, username, emoji } = payload;
-    const participants = this.roomManager.getRoomParticipants(roomId);
-
-    participants.forEach((p) => {
-      this.send(p.ws, {
-        type: "user-reaction",
-        payload: { userId, username, emoji, timestamp: Date.now() },
-      });
-    });
-  }
-
-  private handleHandRaise(
-    ws: WebSocket,
-    payload: { roomId: string; userId: string; username: string },
-    raised: boolean,
-  ): void {
-    const { roomId, userId, username } = payload;
-    const participants = this.roomManager.getRoomParticipants(roomId);
-
-    participants.forEach((p) => {
-      this.send(p.ws, {
-        type: raised ? "hand-raised" : "hand-lowered",
-        payload: { userId, username, timestamp: Date.now() },
-      });
-    });
-  }
-
-  private handleKickUser(
-    ws: WebSocket,
-    payload: { roomId: string; hostId: string; targetUserId: string },
-  ): void {
-    const { roomId, hostId, targetUserId } = payload;
-    const room = this.roomManager.getRoom(roomId);
-
-    if (!room || room.hostId !== hostId) {
-      this.sendError(ws, "Unauthorized");
       return;
     }
 
-    const targetParticipant = room.participants.get(targetUserId);
-    if (targetParticipant) {
-      this.send(targetParticipant.ws, {
-        type: "kicked",
-        payload: { roomId },
-      });
-
-      this.roomManager.removeParticipant(roomId, targetUserId);
-
-      // Notify others
-      const participants = this.roomManager.getRoomParticipants(roomId);
-      participants.forEach((p) => {
-        this.send(p.ws, {
-          type: "user-left",
-          payload: { userId: targetUserId },
-        });
-      });
-    }
+    room.forEach((peer) => {
+      if (this.isOpen(peer)) peer.send(JSON.stringify(data));
+    });
   }
 
-  private handleMuteAll(
-    ws: WebSocket,
-    payload: { roomId: string; hostId: string },
-  ): void {
-    const { roomId, hostId } = payload;
-    const room = this.roomManager.getRoom(roomId);
-
-    if (!room || room.hostId !== hostId) {
-      this.sendError(ws, "Unauthorized");
-      return;
-    }
-
-    const participants = this.roomManager.getRoomParticipants(roomId);
-    participants.forEach((p) => {
-      if (p.id !== hostId) {
-        this.send(p.ws, {
-          type: "force-mute",
-          payload: {},
-        });
+  private async handleMessage(ws: ExtendedWebSocket, data: Buffer): Promise<void> {
+    try {
+      const raw = JSON.parse(data.toString());
+      if (!isSignal(raw)) {
+        this.sendError(ws, 'Invalid message');
+        return;
       }
-    });
-  }
+      const signal = raw as Signal;
+      const userId = ws.userId!;
+      const roomId = ws.roomId!;
 
-  private handleLockRoom(
-    ws: WebSocket,
-    payload: { roomId: string; hostId: string },
-  ): void {
-    const { roomId, hostId } = payload;
-    const room = this.roomManager.getRoom(roomId);
-
-    if (!room || room.hostId !== hostId) {
-      this.sendError(ws, "Unauthorized");
-      return;
-    }
-
-    room.type = "locked";
-    console.log(`[RoomManager] Room ${roomId} locked by host`);
-  }
-
-  private handleUnlockRoom(
-    ws: WebSocket,
-    payload: { roomId: string; hostId: string },
-  ): void {
-    const { roomId, hostId } = payload;
-    const room = this.roomManager.getRoom(roomId);
-
-    if (!room || room.hostId !== hostId) {
-      this.sendError(ws, "Unauthorized");
-      return;
-    }
-
-    room.type = "open";
-    console.log(`[RoomManager] Room ${roomId} unlocked by host`);
-  }
-
-  private handleChatMessage(
-    ws: WebSocket,
-    payload: {
-      roomId: string;
-      userId: string;
-      username: string;
-      text: string;
-      file?: {
-        name: string;
-        type: string;
-        mimeType: string;
-        data: string;
-        size: number;
-      };
-    },
-  ): void {
-    const { roomId, userId, username, text, file } = payload;
-
-    // At least text or file must be present
-    if ((!text || text.trim().length === 0) && !file) {
-      this.sendError(ws, "Message cannot be empty");
-      return;
-    }
-
-    if (text && text.length > 500) {
-      this.sendError(ws, "Message too long (max 500 characters)");
-      return;
-    }
-
-    // Validate file if present
-    let validatedFile: ChatMessage["file"] = undefined;
-    if (file) {
-      const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
-      const ALLOWED_IMAGE_TYPES = [
-        "image/jpeg",
-        "image/png",
-        "image/gif",
-        "image/webp",
-      ];
-      const ALLOWED_PDF_TYPE = "application/pdf";
-
-      if (file.size > MAX_FILE_SIZE) {
-        this.sendError(ws, "File too large (max 5MB)");
+      if (signal.type === 'ping') {
+        this.send(ws, { type: 'pong' });
         return;
       }
 
-      if (ALLOWED_IMAGE_TYPES.includes(file.mimeType)) {
-        validatedFile = {
-          name: file.name,
-          type: "image",
-          mimeType: file.mimeType,
-          data: file.data,
-          size: file.size,
-        };
-      } else if (file.mimeType === ALLOWED_PDF_TYPE) {
-        validatedFile = {
-          name: file.name,
-          type: "pdf",
-          mimeType: file.mimeType,
-          data: file.data,
-          size: file.size,
-        };
-      } else {
-        this.sendError(
-          ws,
-          "Invalid file type. Only images (jpg, png, gif, webp) and PDFs are allowed.",
-        );
+      if (signal.type === 'offer' || signal.type === 'answer' || signal.type === 'ice') {
+        this.publish(roomId, { ...signal, from: userId, roomId });
         return;
       }
+
+      if (signal.type === 'chat') {
+        const content = sanitizeText(String(signal.content ?? '').slice(0, 500));
+        if (!content.trim()) return;
+        const payload = { type: 'chat', content, timestamp: signal.timestamp ?? Date.now(), from: userId, roomId };
+        setImmediate(() => {
+          db.insert(messages)
+            .values({ roomId, userId, content, type: 'text' })
+            .catch((e) => console.error('[WS] Chat persist', e));
+        });
+        this.publish(roomId, payload);
+        return;
+      }
+
+      if (signal.type === 'media-state') {
+        setPeerMedia(roomId, userId, {
+          video: signal.video,
+          audio: signal.audio,
+          screen: signal.screen,
+        }).catch(() => {});
+        this.publish(roomId, { ...signal, from: userId, roomId });
+        return;
+      }
+
+      if (signal.type === 'admin') {
+        const role = await getPeerRole(roomId, userId);
+        const allowed = role === 'host' || role === 'co-host';
+        if (!allowed) {
+          this.sendError(ws, 'Unauthorized');
+          return;
+        }
+        const action = signal.action as AdminAction;
+        if (action === 'remove-user' && signal.targetUserId) {
+          logger.info('Admin remove-user', { roomId, from: userId, target: signal.targetUserId });
+          this.publish(roomId, { type: 'admin', action, targetUserId: signal.targetUserId, from: userId, roomId });
+          const room = this.rooms.get(roomId);
+          const target = room?.get(signal.targetUserId);
+          if (target && this.isOpen(target)) {
+            this.send(target, { type: 'kicked' });
+            target.close();
+            this.removeFromMap(roomId, signal.targetUserId);
+            removePeerFromRoom(roomId, signal.targetUserId).catch(() => {});
+          }
+          return;
+        }
+        if (action === 'lock-room') {
+          await setRoomLocked(roomId, true);
+        }
+        if (action === 'promote' && signal.targetUserId) {
+          await setPeerRole(roomId, signal.targetUserId, 'co-host');
+        }
+        if (action === 'admit' && signal.userId) {
+          await removeFromWaitingRoom(roomId, signal.userId);
+        }
+        if (action === 'deny' && signal.userId) {
+          await removeFromWaitingRoom(roomId, signal.userId);
+        }
+        this.publish(roomId, { ...signal, from: userId, roomId });
+        return;
+      }
+
+      if (signal.type === 'waiting') {
+        const role = await getPeerRole(roomId, userId);
+        if (role !== 'host' && role !== 'co-host') {
+          this.sendError(ws, 'Unauthorized');
+          return;
+        }
+        this.publish(roomId, { ...signal, from: userId, roomId });
+        return;
+      }
+
+      this.sendError(ws, 'Unknown message type');
+    } catch (err) {
+      console.error('[WS] Handle message error', err);
+      this.sendError(ws, 'Invalid message');
     }
-
-    const message: ChatMessage = {
-      id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      roomId,
-      userId,
-      username,
-      text: text?.trim() || "",
-      timestamp: Date.now(),
-      file: validatedFile,
-    };
-
-    this.chatManager.addMessage(roomId, message);
-
-    const participants = this.roomManager.getRoomParticipants(roomId);
-    participants.forEach((p) => {
-      this.send(p.ws, {
-        type: "chat-message",
-        payload: message,
-      });
-    });
   }
 
-  private handleGetChatHistory(
-    ws: WebSocket,
-    payload: { roomId: string },
-  ): void {
-    const { roomId } = payload;
-    const messages = this.chatManager.getMessages(roomId);
-
-    this.send(ws, {
-      type: "chat-history",
-      payload: { messages },
-    });
+  private handleDisconnect(ws: ExtendedWebSocket): void {
+    const userId = ws.userId;
+    const roomId = ws.roomId;
+    if (!userId || !roomId) return;
+    logger.info('WS leave', { roomId, userId });
+    this.removeFromMap(roomId, userId);
+    removePeerFromRoom(roomId, userId).catch(() => {});
+    this.publish(roomId, { type: 'leave', userId, roomId });
   }
 
-  private handleUserLeft(
-    ws: WebSocket,
-    payload: { roomId: string; userId: string },
-  ): void {
-    const { roomId, userId } = payload;
-    this.roomManager.removeParticipant(roomId, userId);
-
-    const participants = this.roomManager.getRoomParticipants(roomId);
-
-    if (participants.length === 0) {
-      this.chatManager.clearRoom(roomId);
-    }
-
-    participants.forEach((p) => {
-      this.send(p.ws, {
-        type: "user-left",
-        payload: { userId },
-      });
-    });
-  }
-
-  private handleDisconnect(ws: WebSocket): void {
-    // Cleanup - simplified version
-    // In production, maintain ws to userId mapping
-  }
-
-  private send(ws: WebSocket, message: any): void {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(message));
+  private send(ws: WebSocket, msg: object): void {
+    if (this.isOpen(ws)) {
+      ws.send(JSON.stringify(msg));
     }
   }
 
-  private sendError(ws: WebSocket, error: string): void {
-    this.send(ws, { type: "error", payload: { error } });
+  private sendError(ws: WebSocket, message: string): void {
+    this.send(ws, { type: 'error', message });
+  }
+
+  private isOpen(ws: WebSocket): boolean {
+    return ws.readyState === WebSocket.OPEN;
   }
 }
