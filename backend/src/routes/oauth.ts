@@ -12,7 +12,13 @@ router.get(
   '/google/callback',
   passport.authenticate('google', { session: false, failureRedirect: '/login' }),
   (req, res) => {
-    const user = req.user as { accessToken: string; refreshToken?: string };
+    const user = req.user as
+      | { accessToken?: string; refreshToken?: string }
+      | undefined;
+    if (!user?.accessToken) {
+      res.status(401).json({ error: 'OAuth authentication failed', code: 'UNAUTHORIZED' });
+      return;
+    }
     if (user.refreshToken) {
       res.cookie('refreshToken', user.refreshToken, {
         httpOnly: true,
@@ -21,7 +27,7 @@ router.get(
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
     }
-    res.redirect(`http://localhost:3000/dashboard?token=${user.accessToken}`);
+    res.redirect(`http://localhost:3000/dashboard?token=${encodeURIComponent(user.accessToken)}`);
   }
 );
 

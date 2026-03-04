@@ -89,7 +89,7 @@ router.post(
   }
 );
 
-router.get('/:id', async (req: Request, res: Response): Promise<void> => {
+router.get('/:id', async (req: Request<{ id: string }>, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
 
@@ -131,7 +131,7 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
 router.delete(
   '/:id',
   authenticateToken,
-  async (req: Request, res: Response): Promise<void> => {
+  async (req: Request<{ id: string }>, res: Response): Promise<void> => {
     try {
       const { id } = req.params;
       const userId = req.user!.id;
@@ -162,7 +162,7 @@ router.delete(
 router.post(
   '/:id/join',
   authenticateToken,
-  async (req: Request, res: Response): Promise<void> => {
+  async (req: Request<{ id: string }, unknown, { passcode?: string }>, res: Response): Promise<void> => {
     try {
       const { id } = req.params;
       const userId = req.user!.id;
@@ -219,11 +219,13 @@ router.post(
 
 router.get(
   '/:id/messages',
-  async (req: Request, res: Response): Promise<void> => {
+  async (req: Request<{ id: string }, unknown, unknown, { token?: string | string[] }>, res: Response): Promise<void> => {
     try {
       const { id } = req.params;
       const authHeader = req.headers.authorization;
-      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : req.query.token as string;
+      const queryToken = req.query.token;
+      const tokenFromQuery = typeof queryToken === 'string' ? queryToken : undefined;
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : tokenFromQuery;
 
       const roomPayload = token ? verifyRoomToken(token) : null;
       const userPayload = req.user;
