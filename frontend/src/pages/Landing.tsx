@@ -168,7 +168,7 @@ export function Landing() {
           )}
           <Button
             onClick={handleCreateRoom}
-            variant="black"
+            variant="default"
             className="rounded-full px-8"
           >
             Start a meeting
@@ -211,7 +211,7 @@ export function Landing() {
                 />
               </div>
               <Button
-                variant="black"
+                variant="default"
                 onClick={handleJoinRoom}
                 disabled={!showJoinInput}
                 className="rounded-full px-6"
@@ -517,7 +517,7 @@ export function Landing() {
             
             <div className="flex justify-center">
               <Button
-                variant="white"
+                variant="secondary"
                 onClick={handleCreateRoom}
                 className="rounded-full px-8 py-3 text-lg inline-flex items-center"
               >

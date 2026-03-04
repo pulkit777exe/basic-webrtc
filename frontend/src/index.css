@@ -1,68 +1,210 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:wght@400;500;700&display=swap");
 @import "tailwindcss";
 
+@theme inline {
+  --font-sans: "Space Grotesk", "DM Sans", sans-serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", monospace;
+  --radius: 1rem;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+:root {
+  --background: #f2f7ff;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --primary: #0f6fff;
+  --primary-foreground: #f8fbff;
+  --secondary: #e7eefb;
+  --secondary-foreground: #1d293d;
+  --muted: #edf2fb;
+  --muted-foreground: #5f6c82;
+  --accent: #dce9ff;
+  --accent-foreground: #0e3b92;
+  --destructive: #dd3f4b;
+  --border: #cfdbec;
+  --input: #d6e0ee;
+  --ring: #64a4ff;
+  --meet-bg: #f2f7ff;
+  --meet-surface: #ffffff;
+  --meet-elevated: #f7fbff;
+  --meet-border: #d6e2f2;
+  --meet-text: #0f172a;
+  --meet-text-muted: #5b6a80;
+  --meet-accent: #0f6fff;
+  --meet-accent-soft: #e6f0ff;
+  --meet-danger: #dd3f4b;
+  --meet-shadow: 0 20px 50px -30px rgba(15, 23, 42, 0.35);
+  --room-bg: #eff5ff;
+  --room-header: rgba(255, 255, 255, 0.82);
+  --room-surface: rgba(255, 255, 255, 0.86);
+  --room-border: rgba(167, 186, 215, 0.7);
+  --room-elevated: #f7faff;
+  --room-text: #0f172a;
+  --room-muted: #5e6d85;
+  --room-strong: rgba(17, 24, 39, 0.72);
+  --app-background:
+    radial-gradient(circle at 10% 10%, rgba(66, 153, 255, 0.14) 0%, transparent 46%),
+    radial-gradient(circle at 95% 0%, rgba(34, 211, 188, 0.12) 0%, transparent 38%),
+    linear-gradient(180deg, #f7fbff 0%, #eef4ff 100%);
+}
+
+.dark {
+  --background: #070f1c;
+  --foreground: #e6eefb;
+  --card: #101c2d;
+  --card-foreground: #e6eefb;
+  --popover: #101c2d;
+  --popover-foreground: #e6eefb;
+  --primary: #5ba2ff;
+  --primary-foreground: #04142f;
+  --secondary: #1a2a41;
+  --secondary-foreground: #d8e5fa;
+  --muted: #152337;
+  --muted-foreground: #9eb0cc;
+  --accent: #223857;
+  --accent-foreground: #d9e7ff;
+  --destructive: #ec6570;
+  --border: #263851;
+  --input: #2c405c;
+  --ring: #67a6ff;
+  --meet-bg: #070f1c;
+  --meet-surface: #101c2d;
+  --meet-elevated: #15243a;
+  --meet-border: #273b57;
+  --meet-text: #e6eefb;
+  --meet-text-muted: #9eb0cc;
+  --meet-accent: #5ba2ff;
+  --meet-accent-soft: #203654;
+  --meet-danger: #ec6570;
+  --meet-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.72);
+  --room-bg: #020814;
+  --room-header: rgba(4, 10, 20, 0.82);
+  --room-surface: rgba(9, 16, 29, 0.9);
+  --room-border: rgba(101, 126, 164, 0.34);
+  --room-elevated: #0e1b2d;
+  --room-text: #e8f0fc;
+  --room-muted: #9baecc;
+  --room-strong: rgba(3, 9, 18, 0.76);
+  --app-background:
+    radial-gradient(circle at 10% 10%, rgba(37, 99, 235, 0.18) 0%, transparent 48%),
+    radial-gradient(circle at 95% 0%, rgba(8, 145, 178, 0.12) 0%, transparent 40%),
+    linear-gradient(180deg, #060f1d 0%, #040a15 100%);
+}
+
 * {
-  margin: 0;
-  padding: 0;
   box-sizing: border-box;
 }
 
-html {
-  color-scheme: dark;
+html,
+body,
+#root {
+  min-height: 100%;
 }
 
 body {
-  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: #0a0a0f;
-  color: #f4f4f5;
-  min-height: 100vh;
+  margin: 0;
+  font-family: var(--font-sans);
+  color: var(--foreground);
+  background: var(--app-background);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+html {
+  color-scheme: light;
 }
 
-::-webkit-scrollbar-track {
-  background: rgba(20, 20, 30, 0.5);
-  border-radius: 4px;
+html.dark {
+  color-scheme: dark;
 }
 
-::-webkit-scrollbar-thumb {
-  background: rgba(139, 92, 246, 0.3);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(139, 92, 246, 0.5);
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  letter-spacing: -0.02em;
 }
 
 ::selection {
-  background: rgba(139, 92, 246, 0.4);
-  color: #f4f4f5;
+  background: rgba(15, 111, 255, 0.2);
 }
 
-:focus-visible {
-  outline: 2px solid rgba(139, 92, 246, 0.5);
-  outline-offset: 2px;
+body,
+[data-slot="card"],
+[data-slot="button"],
+[data-slot="input"],
+[data-slot="textarea"],
+[data-slot="dialog-content"],
+[data-slot="select-trigger"],
+[data-slot="select-content"],
+[data-slot="badge"] {
+  transition:
+    background-color 260ms ease,
+    border-color 260ms ease,
+    color 260ms ease,
+    box-shadow 260ms ease,
+    fill 260ms ease,
+    stroke 260ms ease;
 }
 
-@keyframes float-up {
-  0% {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-  50% {
-    opacity: 1;
-    transform: translateY(-50px) scale(1.2);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-100px) scale(0.8);
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
   }
 }
 
-.animate-float-up {
-  animation: float-up 3s ease-out forwards;
+@layer base {
+  * {
+    @apply border-border;
+  }
+}
+
+@layer utilities {
+  .glass {
+    background: color-mix(in srgb, var(--meet-surface) 78%, transparent);
+    border: 1px solid color-mix(in srgb, var(--meet-border) 88%, transparent);
+    backdrop-filter: blur(14px);
+  }
+
+  .glass-strong {
+    background: color-mix(in srgb, var(--meet-surface) 90%, transparent);
+    border: 1px solid color-mix(in srgb, var(--meet-border) 92%, transparent);
+    backdrop-filter: blur(20px);
+  }
+
+  .bg-grid {
+    background-image:
+      linear-gradient(color-mix(in srgb, var(--meet-text) 6%, transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in srgb, var(--meet-text) 6%, transparent) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+
+  .card-glow {
+    box-shadow: var(--meet-shadow);
+  }
 }
