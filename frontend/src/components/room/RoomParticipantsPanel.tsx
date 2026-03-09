@@ -2,14 +2,16 @@ import { useRef } from 'react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
 import { useAtomValue } from 'jotai';
-import { participantsAtom, userAtom } from '@/store/atoms';
+import { participantsAtom, pinnedParticipantsAtom, userAtom } from '@/store/atoms';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { X } from 'lucide-react';
+import { AdminPanel } from '@/components/room/AdminPanel';
 
 export function RoomParticipantsPanel({ onClose }: { onClose: () => void }) {
   const participants = useAtomValue(participantsAtom);
+  const pinnedParticipants = useAtomValue(pinnedParticipantsAtom);
   const user = useAtomValue(userAtom);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -32,6 +34,9 @@ export function RoomParticipantsPanel({ onClose }: { onClose: () => void }) {
           <Badge variant="secondary" className="h-5 rounded-full border-0 bg-[var(--room-elevated)] px-2 text-[10px] text-[var(--room-text)] hover:bg-[var(--room-elevated)]">
             {participants.length}
           </Badge>
+          <Badge variant="secondary" className="h-5 rounded-full border-0 bg-cyan-500/20 px-2 text-[10px] text-cyan-300 hover:bg-cyan-500/20">
+            Pinned ({pinnedParticipants.size}/6)
+          </Badge>
         </div>
         <Button variant="ghost" size="icon-sm" className="rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)]" onClick={onClose}>
           <X className="h-4 w-4" />
@@ -39,6 +44,7 @@ export function RoomParticipantsPanel({ onClose }: { onClose: () => void }) {
       </div>
       <Separator className="bg-[var(--room-border)]" />
       <div className="flex-1 space-y-2 overflow-y-auto p-4 sm:p-5">
+        <AdminPanel />
         {participants.map((p) => (
           <div
             key={p.userId}

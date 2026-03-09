@@ -112,6 +112,7 @@ export const api = {
         maxParticipants: number;
         participantCount: number;
         hostName: string;
+        hasPasscode: boolean;
         createdAt: string;
         endedAt: string | null;
       };
@@ -132,6 +133,16 @@ export const api = {
 
   async getIceServers() {
     return request<{ iceServers: RTCIceServer[] }>('/api/ice-servers');
+  },
+
+  async mergeRecordings(roomId: string) {
+    return request<{ ok: boolean; outputPath: string; skipped: string[] }>(`/api/recordings/${roomId}/merge`, {
+      method: 'POST',
+    });
+  },
+
+  getRecordingDownloadUrl(roomId: string) {
+    return `${API_BASE}/api/recordings/${roomId}/download`;
   },
 
   async verifyOtp(email: string, code: string) {

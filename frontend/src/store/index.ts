@@ -11,6 +11,20 @@ import {
   uiAtom,
   consentAtom,
   speakingPeersAtom,
+  layoutModeAtom,
+  selfViewModeAtom,
+  pinnedParticipantsAtom,
+  activeSpeakerAtom,
+  reactionsEnabledAtom,
+  roomLockedAtom,
+  recordingAtom,
+  recordingUploadsAtom,
+  mutedByHostAtom,
+  pinnedChatMessageAtom,
+  captionsEnabledAtom,
+  captionsAtom,
+  audioOutputDeviceIdAtom,
+  chatReactionsAtom,
 } from './atoms';
 
 export const store = createStore();
@@ -26,6 +40,20 @@ export {
   uiAtom,
   consentAtom,
   speakingPeersAtom,
+  layoutModeAtom,
+  selfViewModeAtom,
+  pinnedParticipantsAtom,
+  activeSpeakerAtom,
+  reactionsEnabledAtom,
+  roomLockedAtom,
+  recordingAtom,
+  recordingUploadsAtom,
+  mutedByHostAtom,
+  pinnedChatMessageAtom,
+  captionsEnabledAtom,
+  captionsAtom,
+  audioOutputDeviceIdAtom,
+  chatReactionsAtom,
 };
 
 export type { Message, PeerState, Participant };

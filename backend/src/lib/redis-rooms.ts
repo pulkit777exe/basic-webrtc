@@ -29,6 +29,8 @@ export interface RoomMeta {
   title: string;
   isLocked: string;
   maxParticipants: string;
+  reactionsEnabled?: string;
+  pinnedMessage?: string;
   settings?: string;
 }
 
@@ -39,6 +41,8 @@ export async function setRoomMeta(
     title: string;
     isLocked: boolean;
     maxParticipants: number;
+    reactionsEnabled?: boolean;
+    pinnedMessage?: string;
     settings?: string;
   },
 ): Promise<void> {
@@ -50,6 +54,8 @@ export async function setRoomMeta(
       title: meta.title,
       isLocked: meta.isLocked ? '1' : '0',
       maxParticipants: String(meta.maxParticipants),
+      ...(meta.reactionsEnabled !== undefined && { reactionsEnabled: meta.reactionsEnabled ? '1' : '0' }),
+      ...(meta.pinnedMessage !== undefined && { pinnedMessage: meta.pinnedMessage }),
       ...(meta.settings !== undefined && { settings: meta.settings }),
     })
     .expire(key, ROOM_TTL_SEC)
@@ -125,6 +131,73 @@ export async function isInWaitingRoom(roomId: string, userId: string): Promise<b
 export async function setRoomLocked(roomId: string, isLocked: boolean): Promise<void> {
   await redis.hset(roomKey(roomId), 'isLocked', isLocked ? '1' : '0');
   await redis.expire(roomKey(roomId), ROOM_TTL_SEC);
+}
+
+export async function isRoomLocked(roomId: string): Promise<boolean> {
+  const value = await redis.hget(roomKey(roomId), 'isLocked');
+  return value === '1';
+}
+
+export async function setRoomReactionsEnabled(roomId: string, enabled: boolean): Promise<void> {
+  await redis.hset(roomKey(roomId), 'reactionsEnabled', enabled ? '1' : '0');
+  await redis.expire(roomKey(roomId), ROOM_TTL_SEC);
+}
+
+export async function getRoomReactionsEnabled(roomId: string): Promise<boolean> {
+  const value = await redis.hget(roomKey(roomId), 'reactionsEnabled');
+  return value !== '0';
+}
+
+export async function setRoomPinnedMessage(
+  roomId: string,
+  pinnedMessage: { messageId: string; text: string; authorName: string } | null
+): Promise<void> {
+  if (!pinnedMessage) {
+    await redis.hdel(roomKey(roomId), 'pinnedMessage');
+  } else {
+    await redis.hset(roomKey(roomId), 'pinnedMessage', JSON.stringify(pinnedMessage));
+    await redis.expire(roomKey(roomId), ROOM_TTL_SEC);
+  }
+}
+
+export async function getRoomPinnedMessage(
+  roomId: string
+): Promise<{ messageId: string; text: string; authorName: string } | null> {
+  const raw = await redis.hget(roomKey(roomId), 'pinnedMessage');
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { messageId: string; text: string; authorName: string };
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function canPerformAdminAction(
+  roomId: string,
+  actorId: string,
+  action: 'mute-all' | 'mute' | 'kick' | 'promote' | 'lock' | 'reactions',
+  targetId?: string
+): Promise<boolean> {
+  const actorRole = await getPeerRole(roomId, actorId);
+  if (actorRole !== 'host' && actorRole !== 'co-host') {
+    return false;
+  }
+  // This room's moderation actions are host-authoritative.
+  if (action === 'lock' || action === 'reactions' || action === 'promote' || action === 'mute-all' || action === 'mute' || action === 'kick') {
+    if (actorRole !== 'host') {
+      return false;
+    }
+  }
+  if (!targetId) {
+    return true;
+  }
+
+  const targetRole = await getPeerRole(roomId, targetId);
+  if (!targetRole) return true;
+  if (targetRole === 'host') return false;
+  if (actorRole === 'co-host' && targetRole === 'co-host') return false;
+  return true;
 }
 
 export async function clearRoomState(roomId: string): Promise<void> {

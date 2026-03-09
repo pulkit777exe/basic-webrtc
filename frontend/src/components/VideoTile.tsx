@@ -1,54 +1,156 @@
-import { useEffect, useRef } from 'react';
-import { Card } from '../components/ui/card';
+import { memo, useEffect, useMemo, useRef } from 'react';
+import { ExternalLink, MicOff, Monitor, Pin, PinOff, VideoOff } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
-interface VideoTileProps {
-  stream: MediaStream | undefined;
-  username: string;
-  isMuted?: boolean;
-  isLocal?: boolean;
-  isScreenShare?: boolean;
+export interface VideoTileProps {
+  stream: MediaStream | null;
+  participantId: string;
+  name: string;
+  isLocal: boolean;
+  isPinned: boolean;
+  isSpeaking: boolean;
+  audioMuted: boolean;
+  videoMuted: boolean;
+  isScreenShare: boolean;
+  canPin?: boolean;
+  onTogglePin?: (participantId: string) => void;
+  onPopOutScreen?: (participantId: string) => void;
+  registerVideoElement?: (participantId: string, element: HTMLVideoElement | null) => void;
+  audioOutputDeviceId?: string | null;
+  className?: string;
 }
 
-export function VideoTile({
+export const VideoTile = memo(function VideoTile({
   stream,
-  username,
-  isMuted,
+  participantId,
+  name,
   isLocal,
+  isPinned,
+  isSpeaking,
+  audioMuted,
+  videoMuted,
   isScreenShare,
+  canPin = false,
+  onTogglePin,
+  onPopOutScreen,
+  registerVideoElement,
+  audioOutputDeviceId,
+  className,
 }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const initials = useMemo(
+    () =>
+      name
+        .split(/\s+/)
+        .map((w) => w[0] ?? '')
+        .join('')
+        .slice(0, 2)
+        .toUpperCase(),
+    [name]
+  );
 
   useEffect(() => {
-    if (videoRef.current && stream) {
+    if (videoRef.current && stream && videoRef.current.srcObject !== stream) {
       videoRef.current.srcObject = stream;
     }
   }, [stream]);
 
+  useEffect(() => {
+    registerVideoElement?.(participantId, videoRef.current);
+    return () => registerVideoElement?.(participantId, null);
+  }, [participantId, registerVideoElement]);
+
+  useEffect(() => {
+    const element = videoRef.current as (HTMLVideoElement & { setSinkId?: (deviceId: string) => Promise<void> }) | null;
+    if (!element?.setSinkId || !audioOutputDeviceId) return;
+    element.setSinkId(audioOutputDeviceId).catch(() => {});
+  }, [audioOutputDeviceId]);
+
   return (
-    <Card className="relative border-purple-500/20 rounded-lg overflow-hidden aspect-video bg-linear-to-br from-purple-900/20 to-violet-900/20">
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted={isLocal || isMuted}
-        className="w-full h-full object-cover"
-      />
-
-      <div className="absolute bottom-2 left-2 glass px-3 py-1 rounded-full text-sm text-white border border-purple-500/30">
-        {username} {isLocal && '(You)'} {isScreenShare && '(Screen)'}
-      </div>
-
-      {isMuted && (
-        <div className="absolute top-2 right-2 bg-red-500/20 p-2 rounded-full border border-red-500/30">
-          <svg className="w-4 h-4 text-red-400" fill="currentColor" viewBox="0 0 20 20">
-            <path
-              fillRule="evenodd"
-              d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 018.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z"
-              clipRule="evenodd"
-            />
-          </svg>
+    <div
+      className={cn(
+        'group relative aspect-video overflow-hidden rounded-2xl border bg-[var(--room-strong)] transition-all duration-300',
+        isPinned ? 'border-cyan-400 ring-2 ring-cyan-400/45' : 'border-[var(--room-border)]',
+        isSpeaking ? 'shadow-[0_0_0_2px_rgba(34,197,94,0.45),0_0_28px_rgba(34,197,94,0.45)]' : '',
+        className
+      )}
+    >
+      {!videoMuted && stream ? (
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted={isLocal}
+          className={cn('h-full w-full object-cover', isLocal && !isScreenShare ? '[transform:scaleX(-1)]' : '')}
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_25%_25%,rgba(59,130,246,0.25),transparent_45%),radial-gradient(circle_at_80%_20%,rgba(34,211,238,0.2),transparent_40%),rgba(2,6,23,0.72)]">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full border border-white/20 bg-black/30 text-2xl font-semibold text-white">
+            {initials || '?'}
+          </div>
         </div>
       )}
-    </Card>
+
+      <div className="absolute left-2.5 top-2.5 flex items-center gap-1.5">
+        {isScreenShare && (
+          <>
+            <Badge className="h-6 rounded-full border-0 bg-cyan-500/90 px-2.5 text-[11px] text-white hover:bg-cyan-500/90">
+              <Monitor className="mr-1 h-3.5 w-3.5" />
+              Sharing
+            </Badge>
+            {onPopOutScreen && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="h-7 w-7 rounded-full border border-white/20 bg-black/45 text-white hover:bg-black/65"
+                onClick={() => onPopOutScreen(participantId)}
+                title="Pop out shared screen"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </>
+        )}
+      </div>
+
+      <div className="absolute right-2.5 top-2.5 flex items-center gap-1.5">
+        {canPin && onTogglePin && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className={cn(
+              'h-7 w-7 rounded-full border border-white/20 bg-black/45 text-white opacity-0 transition-opacity hover:bg-black/65 group-hover:opacity-100',
+              isPinned ? 'opacity-100' : ''
+            )}
+            onClick={() => onTogglePin(participantId)}
+            title={isPinned ? 'Unpin participant' : 'Pin participant'}
+          >
+            {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+          </Button>
+        )}
+
+        {videoMuted && (
+          <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/20 bg-black/45 text-white">
+            <VideoOff className="h-3.5 w-3.5" />
+          </span>
+        )}
+        {audioMuted && (
+          <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-rose-500/90 text-white">
+            <MicOff className="h-3.5 w-3.5" />
+          </span>
+        )}
+      </div>
+
+      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/85 via-black/35 to-transparent px-3 py-2.5">
+        <span className="truncate text-sm font-medium text-white">
+          {name}
+          {isLocal ? ' (You)' : ''}
+        </span>
+      </div>
+    </div>
   );
-}
+});

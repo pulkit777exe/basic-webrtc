@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { ArrowRight, DoorOpen, PlusSquare, Sparkles } from 'lucide-react';
 
@@ -27,6 +28,10 @@ export function DashboardPage() {
   const [joinCode, setJoinCode] = useState('');
   const [joinPasscode, setJoinPasscode] = useState('');
   const [joinLoading, setJoinLoading] = useState(false);
+  const [passcodeModalOpen, setPasscodeModalOpen] = useState(false);
+  const [modalPasscode, setModalPasscode] = useState('');
+  const [pendingJoinRoomId, setPendingJoinRoomId] = useState<string | null>(null);
+  const [passcodeShake, setPasscodeShake] = useState(false);
 
   const setRoom = useSetAtom(roomAtom);
   const setRoomToken = useSetAtom(roomTokenAtom);
@@ -44,12 +49,17 @@ export function DashboardPage() {
   );
 
   async function handleCreate() {
+    const passcode = createPasscode.trim();
+    if (passcode && passcode.length !== 6) {
+      toast.error('Passcode must be 6 characters');
+      return;
+    }
     setCreateLoading(true);
     setCreatedRoomId(null);
     try {
       const { room } = await api.createRoom({
         title: createTitle.trim() || 'Meeting',
-        passcode: createPasscode || undefined,
+        passcode: passcode || undefined,
         isLocked: createLocked,
         waitingRoomEnabled: createWaitingRoom,
         muteOnJoin: createMuteOnJoin,
@@ -87,27 +97,18 @@ export function DashboardPage() {
     }
     setJoinLoading(true);
     try {
-      const res = await api.joinRoom(code, joinPasscode || undefined);
-      if (res.status === 'waiting') {
-        toast.info('Waiting for host to admit you');
+      const { room } = await api.getRoom(code);
+      if (room.hasPasscode && joinPasscode.trim() && joinPasscode.trim().length !== 6) {
+        toast.error('Passcode must be 6 characters');
         return;
       }
-      if (res.status === 'joined' && res.roomToken) {
-        setRoomToken(res.roomToken);
-        const { room } = await api.getRoom(code);
-        setRoom({
-          id: room.id,
-          hostId: room.hostId,
-          title: room.title,
-          isLocked: room.isLocked,
-          maxParticipants: room.maxParticipants,
-          participantCount: room.participantCount,
-          hostName: room.hostName,
-          createdAt: room.createdAt,
-          endedAt: room.endedAt,
-        });
-        navigate(`/room/${room.id}/lobby`);
+      if (room.hasPasscode && !joinPasscode.trim()) {
+        setPendingJoinRoomId(code);
+        setModalPasscode('');
+        setPasscodeModalOpen(true);
+        return;
       }
+      await joinRoomWithPasscode(code, joinPasscode || undefined, room);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to join');
     } finally {
@@ -115,8 +116,60 @@ export function DashboardPage() {
     }
   }
 
+  async function joinRoomWithPasscode(
+    code: string,
+    passcode: string | undefined,
+    roomData?: Awaited<ReturnType<typeof api.getRoom>>['room']
+  ) {
+    const res = await api.joinRoom(code, passcode);
+    if (res.status === 'waiting') {
+      toast.info('Waiting for host to admit you');
+      return;
+    }
+    if (res.status === 'joined' && res.roomToken) {
+      const room = roomData ?? (await api.getRoom(code)).room;
+      setRoomToken(res.roomToken);
+      setRoom({
+        id: room.id,
+        hostId: room.hostId,
+        title: room.title,
+        isLocked: room.isLocked,
+        maxParticipants: room.maxParticipants,
+        participantCount: room.participantCount,
+        hostName: room.hostName,
+        createdAt: room.createdAt,
+        endedAt: room.endedAt,
+        hasPasscode: room.hasPasscode,
+      });
+      setPasscodeModalOpen(false);
+      navigate(`/room/${room.id}/lobby`);
+    }
+  }
+
   function goToLobby(roomId: string) {
     navigate(`/room/${roomId}/lobby`);
+  }
+
+  async function handleModalJoin() {
+    if (!pendingJoinRoomId) return;
+    if (modalPasscode.trim().length !== 6) {
+      toast.error('Enter a valid 6-character passcode');
+      return;
+    }
+    setJoinLoading(true);
+    try {
+      await joinRoomWithPasscode(pendingJoinRoomId, modalPasscode.trim() || undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid passcode';
+      if (message.toLowerCase().includes('passcode')) {
+        setPasscodeShake(true);
+        setTimeout(() => setPasscodeShake(false), 360);
+        return;
+      }
+      toast.error(message);
+    } finally {
+      setJoinLoading(false);
+    }
   }
 
   return (
@@ -161,8 +214,9 @@ export function DashboardPage() {
                   type="password"
                   placeholder="••••••"
                   value={createPasscode}
-                  onChange={(e) => setCreatePasscode(e.target.value)}
+                  onChange={(e) => setCreatePasscode(e.target.value.slice(0, 6))}
                   className="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)]"
+                  maxLength={6}
                 />
               </div>
 
@@ -239,8 +293,9 @@ export function DashboardPage() {
                   type="password"
                   placeholder="••••••"
                   value={joinPasscode}
-                  onChange={(e) => setJoinPasscode(e.target.value)}
+                  onChange={(e) => setJoinPasscode(e.target.value.slice(0, 6))}
                   className="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)]"
+                  maxLength={6}
                 />
               </div>
               <Button
@@ -256,6 +311,48 @@ export function DashboardPage() {
           </Card>
         </div>
       </div>
+
+      <Dialog open={passcodeModalOpen} onOpenChange={setPasscodeModalOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Enter room passcode</DialogTitle>
+            <DialogDescription>This room is protected. Enter the 6-character passcode shared by the host.</DialogDescription>
+          </DialogHeader>
+          <div className={`space-y-2 ${passcodeShake ? 'animate-[shake_0.35s_ease-in-out]' : ''}`}>
+            <Label className="text-xs text-[var(--meet-text-muted)]">Passcode</Label>
+            <Input
+              autoFocus
+              value={modalPasscode}
+              onChange={(event) => setModalPasscode(event.target.value.slice(0, 6))}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  void handleModalJoin();
+                }
+              }}
+              placeholder="••••••"
+              maxLength={6}
+              className="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)] text-center font-mono text-lg tracking-[0.35em]"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setPasscodeModalOpen(false);
+                setPendingJoinRoomId(null);
+                setModalPasscode('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={() => void handleModalJoin()} disabled={joinLoading}>
+              {joinLoading ? 'Verifying…' : 'Join room'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

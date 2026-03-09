@@ -15,6 +15,7 @@ export interface Room {
   isLocked: boolean;
   maxParticipants: number;
   participantCount: number;
+  hasPasscode?: boolean;
   hostName?: string;
   createdAt: string;
   endedAt?: string | null;
@@ -47,6 +48,20 @@ export interface Message {
   createdAt?: string;
 }
 
+export interface PinnedChatMessage {
+  messageId: string;
+  text: string;
+  authorName: string;
+}
+
+export interface CaptionLine {
+  id: string;
+  participantId: string;
+  participantName: string;
+  text: string;
+  timestamp: number;
+}
+
 export interface Participant {
   userId: string;
   user: { id: string; name: string; avatarUrl?: string | null };
@@ -62,6 +77,9 @@ export interface UIState {
   pinnedPeer: string | null;
   handRaised: boolean;
 }
+
+export type LayoutMode = 'auto' | 'tiled' | 'spotlight' | 'sidebar';
+export type SelfViewMode = 'floating' | 'grid' | 'hidden';
 
 export interface ConsentState {
   essential: boolean;
@@ -87,6 +105,28 @@ export const consentAtom = atom<ConsentState | null>(null);
 export const speakingPeersAtom = atom<Set<string>>(new Set<string>());
 export const waitingRoomEnabledAtom = atom<boolean>(false);
 export const isWaitingAtom = atom<boolean>(false);
+export const layoutModeAtom = atom<LayoutMode>('auto');
+export const selfViewModeAtom = atom<SelfViewMode>('floating');
+export const pinnedParticipantsAtom = atom<Set<string>>(new Set<string>());
+export const activeSpeakerAtom = atom<string | null>(null);
+export const reactionsEnabledAtom = atom<boolean>(true);
+export const roomLockedAtom = atom<boolean>(false);
+export const recordingAtom = atom<{
+  active: boolean;
+  startedAt: number | null;
+  uploading: boolean;
+}>({
+  active: false,
+  startedAt: null,
+  uploading: false,
+});
+export const recordingUploadsAtom = atom<Map<string, number>>(new Map<string, number>());
+export const mutedByHostAtom = atom<boolean>(false);
+export const pinnedChatMessageAtom = atom<PinnedChatMessage | null>(null);
+export const captionsEnabledAtom = atom<boolean>(false);
+export const captionsAtom = atom<CaptionLine[]>([]);
+export const audioOutputDeviceIdAtom = atom<string | null>(null);
+export const chatReactionsAtom = atom<Record<string, Record<string, number>>>({});
 
 export const isHostAtom = atom((get) => {
   const user = get(userAtom);

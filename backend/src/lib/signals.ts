@@ -6,6 +6,7 @@ export type AdminAction =
   | 'remove-user'
   | 'lock-room'
   | 'promote'
+  | 'reactions-toggle'
   | 'admit'
   | 'deny';
 
@@ -16,9 +17,22 @@ export type Signal =
   | { type: 'join'; roomId: string; user: PublicUser }
   | { type: 'leave'; userId: string }
   | { type: 'chat'; content: string; timestamp: number }
+  | { type: 'chat_pin'; messageId: string; text: string; authorName: string }
+  | { type: 'chat_reaction'; messageId: string; emoji: string }
   | { type: 'admin'; action: AdminAction; targetUserId?: string }
+  | { type: 'admin_mute'; targetId: string }
+  | { type: 'admin_mute_all' }
+  | { type: 'admin_kick'; targetId: string }
+  | { type: 'admin_promote'; targetId: string }
+  | { type: 'admin_reactions_toggle'; enabled: boolean }
+  | { type: 'room_locked'; locked: boolean }
+  | { type: 'recording_start'; startedAt: number }
+  | { type: 'recording_stop' }
+  | { type: 'recording_upload_progress'; participantId: string; progress: number }
   | { type: 'media-state'; video: boolean; audio: boolean; screen: boolean }
+  | { type: 'audio-activity'; level: number; speaking: boolean }
   | { type: 'waiting'; action: 'admit' | 'deny'; userId: string }
+  | { type: 'caption'; text: string; timestamp: number }
   | { type: 'ping' }
   | { type: 'pong' }
   | { type: 'error'; message: string }
@@ -34,9 +48,22 @@ export function isSignal(obj: unknown): obj is Signal {
     'join',
     'leave',
     'chat',
+    'chat_pin',
+    'chat_reaction',
     'admin',
+    'admin_mute',
+    'admin_mute_all',
+    'admin_kick',
+    'admin_promote',
+    'admin_reactions_toggle',
+    'room_locked',
+    'recording_start',
+    'recording_stop',
+    'recording_upload_progress',
     'media-state',
+    'audio-activity',
     'waiting',
+    'caption',
     'ping',
     'pong',
     'error',

@@ -18,6 +18,7 @@ import {
   getRoomPeerCount,
   addToWaitingRoom,
   clearRoomState,
+  isRoomLocked,
   roomEndedChannel,
 } from '../lib/redis-rooms';
 import { redis } from '../config/redis';
@@ -67,6 +68,7 @@ router.post(
         title: String(title).slice(0, 255) || 'Meeting',
         isLocked: Boolean(isLocked),
         maxParticipants: Math.min(100, Math.max(1, Number(maxParticipants) || 50)),
+        reactionsEnabled: true,
         settings: JSON.stringify({
           allowScreenShare: true,
           allowChat: true,
@@ -103,6 +105,7 @@ router.get('/:id', async (req: Request<{ id: string }>, res: Response): Promise<
         createdAt: rooms.createdAt,
         endedAt: rooms.endedAt,
         hostName: users.name,
+        hasPasscode: rooms.passcodeHash,
       })
       .from(rooms)
       .leftJoin(users, eq(rooms.hostId, users.id))
@@ -119,9 +122,9 @@ router.get('/:id', async (req: Request<{ id: string }>, res: Response): Promise<
       return;
     }
 
-    const participantCount = await getRoomPeerCount(id);
+      const participantCount = await getRoomPeerCount(id);
 
-    res.json({ room: { ...room, participantCount } });
+    res.json({ room: { ...room, participantCount, hasPasscode: Boolean(room.hasPasscode) } });
   } catch (error) {
     console.error('[Get Room Error]', error);
     res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
@@ -178,6 +181,13 @@ router.post(
         return;
       }
 
+      const redisMeta = await getRoomMeta(id);
+      const locked = redisMeta ? redisMeta.isLocked === '1' : room.isLocked || (await isRoomLocked(id));
+      if (locked) {
+        res.status(423).json({ error: 'Room is locked by the host', code: 'ROOM_LOCKED' });
+        return;
+      }
+
       const count = await getRoomPeerCount(id);
       if (count >= room.maxParticipants) {
         res.status(400).json({ error: 'Room is full', code: 'ROOM_FULL' });
@@ -186,12 +196,12 @@ router.post(
 
       if (room.passcodeHash) {
         if (!passcode) {
-          res.status(400).json({ error: 'Passcode required', code: 'PASSCODE_REQUIRED' });
+          res.status(401).json({ error: 'Passcode required', code: 'PASSCODE_REQUIRED' });
           return;
         }
         const valid = await bcrypt.compare(String(passcode), room.passcodeHash);
         if (!valid) {
-          res.status(403).json({ error: 'Invalid passcode', code: 'INVALID_PASSCODE' });
+          res.status(401).json({ error: 'Invalid passcode', code: 'INVALID_PASSCODE' });
           return;
         }
       }

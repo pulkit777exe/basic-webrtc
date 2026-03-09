@@ -1,15 +1,18 @@
 import { WebSocket, WebSocketServer } from 'ws';
 import { db } from '../db';
-import { users, messages } from '../db/schema';
+import { users, messages, rooms } from '../db/schema';
 import { eq } from 'drizzle-orm';
-import { verifyRoomToken } from '../utils/jwt';
 import { validateRoomId } from '../utils/validation';
 import {
   addPeerToRoom,
+  canPerformAdminAction,
+  getRoomReactionsEnabled,
   removePeerFromRoom,
   getRoomMeta,
   getRoomPeerCount,
   getPeerRole,
+  setRoomReactionsEnabled,
+  setRoomPinnedMessage,
   setRoomLocked,
   setPeerRole,
   setPeerMedia,
@@ -139,6 +142,18 @@ export class WebSocketHandler {
           this.addToMap(roomId, userId, ext);
           this.subscribeRoom(roomId);
 
+          const reactionsEnabled = await getRoomReactionsEnabled(roomId);
+          this.send(ext, { type: 'admin_reactions_toggle', enabled: reactionsEnabled });
+          this.send(ext, { type: 'room_locked', locked: meta.isLocked === '1' });
+          if (meta.pinnedMessage) {
+            try {
+              const pinned = JSON.parse(meta.pinnedMessage) as { messageId: string; text: string; authorName: string };
+              this.send(ext, { type: 'chat_pin', ...pinned });
+            } catch {
+              // ignore malformed pinned payload
+            }
+          }
+
           logger.info('WS join', { roomId, userId, name: publicUser.name });
           const joinSignal: Signal = { type: 'join', roomId, user: publicUser };
           this.publish(roomId, { ...joinSignal, from: userId });
@@ -257,7 +272,7 @@ export class WebSocketHandler {
       }
 
       if (signal.type === 'chat') {
-        const content = sanitizeText(String(signal.content ?? '').slice(0, 500));
+        const content = sanitizeText(String(signal.content ?? '').slice(0, 2000));
         if (!content.trim()) return;
         const payload = { type: 'chat', content, timestamp: signal.timestamp ?? Date.now(), from: userId, roomId };
         setImmediate(() => {
@@ -266,6 +281,37 @@ export class WebSocketHandler {
             .catch((e) => console.error('[WS] Chat persist', e));
         });
         this.publish(roomId, payload);
+        return;
+      }
+
+      if (signal.type === 'chat_pin') {
+        const role = await getPeerRole(roomId, userId);
+        if (role !== 'host' && role !== 'co-host') {
+          this.sendError(ws, 'Unauthorized');
+          return;
+        }
+        const pinnedMessage = {
+          messageId: sanitizeText(String(signal.messageId ?? '')).slice(0, 128),
+          text: sanitizeText(String(signal.text ?? '')).slice(0, 500),
+          authorName: sanitizeText(String(signal.authorName ?? '')).slice(0, 120),
+        };
+        if (!pinnedMessage.messageId || !pinnedMessage.text) {
+          this.sendError(ws, 'Invalid pinned message');
+          return;
+        }
+        await setRoomPinnedMessage(roomId, pinnedMessage);
+        this.publish(roomId, { type: 'chat_pin', ...pinnedMessage, from: userId, roomId });
+        return;
+      }
+
+      if (signal.type === 'chat_reaction') {
+        const messageId = sanitizeText(String(signal.messageId ?? '')).slice(0, 128);
+        const emoji = sanitizeText(String(signal.emoji ?? '')).slice(0, 16);
+        if (!messageId || !emoji) {
+          this.sendError(ws, 'Invalid chat reaction');
+          return;
+        }
+        this.publish(roomId, { type: 'chat_reaction', messageId, emoji, from: userId, roomId });
         return;
       }
 
@@ -279,41 +325,151 @@ export class WebSocketHandler {
         return;
       }
 
-      if (signal.type === 'admin') {
-        const role = await getPeerRole(roomId, userId);
-        const allowed = role === 'host' || role === 'co-host';
+      if (signal.type === 'audio-activity') {
+        this.publish(roomId, { ...signal, from: userId, roomId });
+        return;
+      }
+
+      if (signal.type === 'admin_mute_all') {
+        const allowed = await canPerformAdminAction(roomId, userId, 'mute-all');
         if (!allowed) {
           this.sendError(ws, 'Unauthorized');
           return;
         }
+        this.publish(roomId, { type: 'admin_mute_all', from: userId, roomId });
+        return;
+      }
+
+      if (signal.type === 'admin_mute') {
+        const allowed = await canPerformAdminAction(roomId, userId, 'mute', signal.targetId);
+        if (!allowed) {
+          this.sendError(ws, 'Unauthorized');
+          return;
+        }
+        this.publish(roomId, { type: 'admin_mute', targetId: signal.targetId, from: userId, roomId });
+        return;
+      }
+
+      if (signal.type === 'admin_kick') {
+        const allowed = await canPerformAdminAction(roomId, userId, 'kick', signal.targetId);
+        if (!allowed) {
+          this.sendError(ws, 'Unauthorized');
+          return;
+        }
+        this.publish(roomId, { type: 'admin_kick', targetId: signal.targetId, from: userId, roomId });
+        const room = this.rooms.get(roomId);
+        const target = room?.get(signal.targetId);
+        if (target && this.isOpen(target)) {
+          this.send(target, { type: 'kicked' });
+          target.close();
+        }
+        this.removeFromMap(roomId, signal.targetId);
+        removePeerFromRoom(roomId, signal.targetId).catch(() => {});
+        return;
+      }
+
+      if (signal.type === 'admin_promote') {
+        const allowed = await canPerformAdminAction(roomId, userId, 'promote', signal.targetId);
+        if (!allowed) {
+          this.sendError(ws, 'Unauthorized');
+          return;
+        }
+        await setPeerRole(roomId, signal.targetId, 'co-host');
+        this.publish(roomId, { type: 'admin_promote', targetId: signal.targetId, from: userId, roomId });
+        return;
+      }
+
+      if (signal.type === 'admin_reactions_toggle') {
+        const allowed = await canPerformAdminAction(roomId, userId, 'reactions');
+        if (!allowed) {
+          this.sendError(ws, 'Unauthorized');
+          return;
+        }
+        await setRoomReactionsEnabled(roomId, signal.enabled);
+        this.publish(roomId, { type: 'admin_reactions_toggle', enabled: signal.enabled, from: userId, roomId });
+        return;
+      }
+
+      if (signal.type === 'room_locked') {
+        const allowed = await canPerformAdminAction(roomId, userId, 'lock');
+        if (!allowed) {
+          this.sendError(ws, 'Unauthorized');
+          return;
+        }
+        await setRoomLocked(roomId, signal.locked);
+        await db.update(rooms).set({ isLocked: signal.locked }).where(eq(rooms.id, roomId));
+        this.publish(roomId, { type: 'room_locked', locked: signal.locked, from: userId, roomId });
+        return;
+      }
+
+      if (signal.type === 'recording_start' || signal.type === 'recording_stop') {
+        const role = await getPeerRole(roomId, userId);
+        if (role !== 'host') {
+          this.sendError(ws, 'Unauthorized');
+          return;
+        }
+        this.publish(roomId, { ...signal, from: userId, roomId });
+        return;
+      }
+
+      if (signal.type === 'recording_upload_progress') {
+        this.publish(roomId, { ...signal, from: userId, roomId });
+        return;
+      }
+
+      if (signal.type === 'caption') {
+        const text = sanitizeText(String(signal.text ?? '').slice(0, 2000));
+        if (!text.trim()) return;
+        this.publish(roomId, { type: 'caption', text, timestamp: signal.timestamp ?? Date.now(), from: userId, roomId });
+        return;
+      }
+
+      if (signal.type === 'admin') {
         const action = signal.action as AdminAction;
+        if (action === 'mute-all') {
+          const allowed = await canPerformAdminAction(roomId, userId, 'mute-all');
+          if (!allowed) {
+            this.sendError(ws, 'Unauthorized');
+            return;
+          }
+          this.publish(roomId, { type: 'admin_mute_all', from: userId, roomId });
+          return;
+        }
+        if (action === 'mute-user' && signal.targetUserId) {
+          const allowed = await canPerformAdminAction(roomId, userId, 'mute', signal.targetUserId);
+          if (!allowed) {
+            this.sendError(ws, 'Unauthorized');
+            return;
+          }
+          this.publish(roomId, { type: 'admin_mute', targetId: signal.targetUserId, from: userId, roomId });
+          return;
+        }
         if (action === 'remove-user' && signal.targetUserId) {
-          logger.info('Admin remove-user', { roomId, from: userId, target: signal.targetUserId });
-          this.publish(roomId, { type: 'admin', action, targetUserId: signal.targetUserId, from: userId, roomId });
+          const allowed = await canPerformAdminAction(roomId, userId, 'kick', signal.targetUserId);
+          if (!allowed) {
+            this.sendError(ws, 'Unauthorized');
+            return;
+          }
+          this.publish(roomId, { type: 'admin_kick', targetId: signal.targetUserId, from: userId, roomId });
           const room = this.rooms.get(roomId);
           const target = room?.get(signal.targetUserId);
           if (target && this.isOpen(target)) {
             this.send(target, { type: 'kicked' });
             target.close();
-            this.removeFromMap(roomId, signal.targetUserId);
-            removePeerFromRoom(roomId, signal.targetUserId).catch(() => {});
           }
+          this.removeFromMap(roomId, signal.targetUserId);
+          removePeerFromRoom(roomId, signal.targetUserId).catch(() => {});
           return;
         }
-        if (action === 'lock-room') {
-          await setRoomLocked(roomId, true);
-        }
         if (action === 'promote' && signal.targetUserId) {
-          await setPeerRole(roomId, signal.targetUserId, 'co-host');
+          const allowed = await canPerformAdminAction(roomId, userId, 'promote', signal.targetUserId);
+          if (!allowed) {
+            this.sendError(ws, 'Unauthorized');
+            return;
+          }
+          this.publish(roomId, { type: 'admin_promote', targetId: signal.targetUserId, from: userId, roomId });
+          return;
         }
-        if (action === 'admit' && signal.targetUserId) {
-          await removeFromWaitingRoom(roomId, signal.targetUserId);
-        }
-        if (action === 'deny' && signal.targetUserId) {
-          await removeFromWaitingRoom(roomId, signal.targetUserId);
-        }
-        this.publish(roomId, { ...signal, from: userId, roomId });
-        return;
       }
 
       if (signal.type === 'waiting') {
@@ -322,6 +478,7 @@ export class WebSocketHandler {
           this.sendError(ws, 'Unauthorized');
           return;
         }
+        await removeFromWaitingRoom(roomId, signal.userId);
         this.publish(roomId, { ...signal, from: userId, roomId });
         return;
       }

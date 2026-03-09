@@ -1,25 +1,97 @@
-import { Mic, MicOff, Video, VideoOff, Monitor, MessageSquare, Users, PhoneOff } from 'lucide-react';
-import { useAtomValue } from 'jotai';
-import { localMediaAtom } from '@/store/atoms';
+import {
+  Captions,
+  Circle,
+  Focus,
+  GalleryVerticalEnd,
+  LayoutGrid,
+  MessageSquare,
+  Mic,
+  MicOff,
+  Monitor,
+  PanelRightOpen,
+  PhoneOff,
+  UserSquare2,
+  Users,
+  Video,
+  VideoOff,
+  Volume2,
+  Settings2,
+} from 'lucide-react';
+import { useAtomValue, useAtom } from 'jotai';
+import { useEffect, useMemo, useState } from 'react';
+import type { LayoutMode, SelfViewMode } from '@/store/atoms';
+import { audioOutputDeviceIdAtom, localMediaAtom, mutedByHostAtom } from '@/store/atoms';
 import { MediaManager } from '@/lib/media-manager';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 
 export function RoomControlBar({
   chatOpen,
   participantsOpen,
+  layoutMode,
+  selfViewMode,
+  isHost,
+  isRecording,
+  captionsEnabled,
   onToggleChat,
   onToggleParticipants,
+  onLayoutModeChange,
+  onSelfViewModeChange,
+  onToggleCaptions,
+  onToggleRecording,
   onLeave,
 }: {
   chatOpen: boolean;
   participantsOpen: boolean;
+  layoutMode: LayoutMode;
+  selfViewMode: SelfViewMode;
+  isHost: boolean;
+  isRecording: boolean;
+  captionsEnabled: boolean;
   onToggleChat: () => void;
   onToggleParticipants: () => void;
+  onLayoutModeChange: (mode: LayoutMode) => void;
+  onSelfViewModeChange: (mode: SelfViewMode) => void;
+  onToggleCaptions: () => void;
+  onToggleRecording: () => void;
   onLeave: () => void;
 }) {
-  const { video, audio, screen } = useAtomValue(localMediaAtom);
+  const localMedia = useAtomValue(localMediaAtom);
+  const { stream, video, audio, screen } = localMedia;
+  const mutedByHost = useAtomValue(mutedByHostAtom);
+  const [audioOutputDeviceId, setAudioOutputDeviceId] = useAtom(audioOutputDeviceIdAtom);
+  const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
+  const [videoInputs, setVideoInputs] = useState<MediaDeviceInfo[]>([]);
+  const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([]);
+
+  const selectedMicId = useMemo(() => stream?.getAudioTracks()[0]?.getSettings().deviceId ?? '', [stream]);
+  const selectedCameraId = useMemo(() => stream?.getVideoTracks()[0]?.getSettings().deviceId ?? '', [stream]);
+
+  useEffect(() => {
+    const loadDevices = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        setAudioInputs(devices.filter((device) => device.kind === 'audioinput'));
+        setVideoInputs(devices.filter((device) => device.kind === 'videoinput'));
+        setAudioOutputs(devices.filter((device) => device.kind === 'audiooutput'));
+      } catch {
+        // Ignore unavailable enumeration errors until permissions are granted.
+      }
+    };
+    void loadDevices();
+    navigator.mediaDevices.addEventListener('devicechange', loadDevices);
+    return () => navigator.mediaDevices.removeEventListener('devicechange', loadDevices);
+  }, []);
 
   async function handleScreenShare() {
     try {
@@ -47,7 +119,7 @@ export function RoomControlBar({
               {audio ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-rose-400" />}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{audio ? 'Mute' : 'Unmute'}</TooltipContent>
+          <TooltipContent>{audio ? 'Mute' : mutedByHost ? 'Unmute (host muted you)' : 'Unmute · Hold Space to talk'}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -76,6 +148,149 @@ export function RoomControlBar({
           <TooltipContent>{screen ? 'Stop sharing' : 'Share screen'}</TooltipContent>
         </Tooltip>
         <Tooltip>
+          <DropdownMenu>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10 rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)]"
+                >
+                  <Settings2 className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <DropdownMenuContent align="center" className="w-64">
+              <DropdownMenuLabel>Audio Input</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={selectedMicId}
+                onValueChange={(value) => {
+                  void MediaManager.switchAudioInput(value).catch((error) => {
+                    toast.error(error instanceof Error ? error.message : 'Unable to switch microphone');
+                  });
+                }}
+              >
+                {audioInputs.map((device) => (
+                  <DropdownMenuRadioItem key={device.deviceId} value={device.deviceId}>
+                    <Mic className="h-4 w-4" />
+                    {device.label || `Microphone ${device.deviceId.slice(0, 6)}`}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Video Input</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={selectedCameraId}
+                onValueChange={(value) => {
+                  void MediaManager.switchVideoInput(value).catch((error) => {
+                    toast.error(error instanceof Error ? error.message : 'Unable to switch camera');
+                  });
+                }}
+              >
+                {videoInputs.map((device) => (
+                  <DropdownMenuRadioItem key={device.deviceId} value={device.deviceId}>
+                    <Video className="h-4 w-4" />
+                    {device.label || `Camera ${device.deviceId.slice(0, 6)}`}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Audio Output</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={audioOutputDeviceId ?? ''}
+                onValueChange={(value) => {
+                  MediaManager.setAudioOutputDevice(value || null);
+                  setAudioOutputDeviceId(value || null);
+                }}
+              >
+                <DropdownMenuRadioItem value="">
+                  <Volume2 className="h-4 w-4" />
+                  System default
+                </DropdownMenuRadioItem>
+                {audioOutputs.map((device) => (
+                  <DropdownMenuRadioItem key={device.deviceId} value={device.deviceId}>
+                    <Volume2 className="h-4 w-4" />
+                    {device.label || `Speaker ${device.deviceId.slice(0, 6)}`}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <TooltipContent>Device settings</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <DropdownMenu>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10 rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)]"
+                >
+                  <LayoutGrid className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <DropdownMenuContent align="center" className="w-52">
+              <DropdownMenuLabel>Layout</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={layoutMode}
+                onValueChange={(value) => onLayoutModeChange(value as LayoutMode)}
+              >
+                <DropdownMenuRadioItem value="auto">
+                  <LayoutGrid className="h-4 w-4" />
+                  Auto
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="tiled">
+                  <GalleryVerticalEnd className="h-4 w-4" />
+                  Tiled
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="spotlight">
+                  <Focus className="h-4 w-4" />
+                  Spotlight
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="sidebar">
+                  <PanelRightOpen className="h-4 w-4" />
+                  Sidebar
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Self view</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={selfViewMode}
+                onValueChange={(value) => onSelfViewModeChange(value as SelfViewMode)}
+              >
+                <DropdownMenuRadioItem value="floating">
+                  <UserSquare2 className="h-4 w-4" />
+                  Floating PiP
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="grid">
+                  <LayoutGrid className="h-4 w-4" />
+                  In grid
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="hidden">
+                  <VideoOff className="h-4 w-4" />
+                  Hidden
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <TooltipContent>Layout and self-view</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={captionsEnabled ? 'secondary' : 'ghost'}
+              size="icon"
+              className={`h-10 w-10 rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)] ${captionsEnabled ? 'bg-[var(--room-elevated)]' : ''}`}
+              onClick={onToggleCaptions}
+            >
+              <Captions className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{captionsEnabled ? 'Hide captions' : 'Show live captions'}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant={chatOpen ? 'secondary' : 'ghost'}
@@ -101,6 +316,21 @@ export function RoomControlBar({
           </TooltipTrigger>
           <TooltipContent>Participants</TooltipContent>
         </Tooltip>
+        {isHost && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={isRecording ? 'destructive' : 'ghost'}
+                size="icon"
+                className={`h-10 w-10 rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)] ${isRecording ? 'animate-pulse bg-red-500 text-white hover:bg-red-600 hover:text-white' : ''}`}
+                onClick={onToggleRecording}
+              >
+                <Circle className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{isRecording ? 'Stop recording' : 'Start recording'}</TooltipContent>
+          </Tooltip>
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

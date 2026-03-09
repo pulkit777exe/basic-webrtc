@@ -10,6 +10,7 @@ import authRoutes from './routes/auth';
 import oauthRoutes from './routes/oauth';
 import roomRoutes from './routes/rooms';
 import iceRoutes from './routes/ice';
+import recordingsRoutes from './routes/recordings';
 import passport from './config/passport';
 import { setupSecurity } from './middleware/security';
 import { optionalAuthenticate } from './middleware/auth';
@@ -34,6 +35,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/oauth', oauthRoutes);
 app.use('/api/rooms', optionalAuthenticate, apiLimiter, roomRoutes);
 app.use('/api/ice-servers', optionalAuthenticate, apiLimiter, iceRoutes);
+app.use('/api/recordings', apiLimiter, recordingsRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
