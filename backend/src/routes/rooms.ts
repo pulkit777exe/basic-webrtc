@@ -20,6 +20,10 @@ import {
   clearRoomState,
   isRoomLocked,
   roomEndedChannel,
+  isKicked,
+  getRoomReactionsEnabled,
+  isForceMuted,
+  getActiveSpeaker,
 } from '../lib/redis-rooms';
 import { redis } from '../config/redis';
 import { verifyRoomToken } from '../utils/jwt';
@@ -83,7 +87,10 @@ router.post(
         .where(eq(rooms.id, roomId))
         .limit(1);
 
-      res.status(201).json({ room: { ...room, id: roomId } });
+      res.status(201).json({ 
+        roomId, 
+        hasPasscode: Boolean(passcode) 
+      });
     } catch (error) {
       console.error('[Create Room Error]', error);
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
@@ -170,35 +177,52 @@ router.post(
       const { id } = req.params;
       const userId = req.user!.id;
       const { passcode } = req.body;
+      const ip = req.ip || 'unknown';
 
+      // Step 1: Fetch room from PostgreSQL → 404 if not found
       const [room] = await db.select().from(rooms).where(eq(rooms.id, id)).limit(1);
       if (!room) {
         res.status(404).json({ error: 'Room not found', code: 'ROOM_NOT_FOUND' });
         return;
       }
+
+      // Step 2: Check room.status === 'ended' → 410 Gone
       if (room.endedAt) {
-        res.status(400).json({ error: 'Room has ended', code: 'ROOM_ENDED' });
+        res.status(410).json({ error: 'Room has ended', code: 'ROOM_ENDED' });
         return;
       }
 
-      const redisMeta = await getRoomMeta(id);
-      const locked = redisMeta ? redisMeta.isLocked === '1' : room.isLocked || (await isRoomLocked(id));
+      // Step 3: Check isRoomLocked(roomId) → 423 { error: 'ROOM_LOCKED' }
+      const locked = await isRoomLocked(id);
       if (locked) {
         res.status(423).json({ error: 'Room is locked by the host', code: 'ROOM_LOCKED' });
         return;
       }
 
-      const count = await getRoomPeerCount(id);
-      if (count >= room.maxParticipants) {
-        res.status(400).json({ error: 'Room is full', code: 'ROOM_FULL' });
+      // Step 4: Check isKicked(roomId, userId) → 403 { error: 'KICKED' }
+      if (await isKicked(id, userId)) {
+        res.status(403).json({ error: 'You have been kicked from this room', code: 'KICKED' });
         return;
       }
 
+      // Step 5: If room.passcodeHash is set:
       if (room.passcodeHash) {
         if (!passcode) {
           res.status(401).json({ error: 'Passcode required', code: 'PASSCODE_REQUIRED' });
           return;
         }
+
+        // Increment failed attempt counter in Redis
+        const attemptsKey = `passcode:attempts:${id}:${ip}`;
+        const attempts = await redis.incr(attemptsKey);
+        if (attempts === 1) {
+          await redis.expire(attemptsKey, 300); // 5 minutes
+        }
+        if (attempts > 5) {
+          res.status(429).json({ error: 'Too many failed attempts', code: 'TOO_MANY_ATTEMPTS' });
+          return;
+        }
+
         const valid = await bcrypt.compare(String(passcode), room.passcodeHash);
         if (!valid) {
           res.status(401).json({ error: 'Invalid passcode', code: 'INVALID_PASSCODE' });
@@ -206,22 +230,83 @@ router.post(
         }
       }
 
+      // Step 6: Check waiting room setting → 202 { status: 'waiting' } if enabled and not host
+      const [settings] = await db
+        .select()
+        .from(roomSettings)
+        .where(eq(roomSettings.roomId, id))
+        .limit(1);
+      if (settings?.waitingRoomEnabled && room.hostId !== userId) {
+        await addToWaitingRoom(id, userId);
+        res.json({ status: 'waiting' });
+        return;
+      }
+
+      // Step 7: Check participant count vs maxParticipants → 429 { error: 'ROOM_FULL' }
+      const count = await getRoomPeerCount(id);
+      if (count >= room.maxParticipants) {
+        res.status(429).json({ error: 'Room is full', code: 'ROOM_FULL' });
+        return;
+      }
+
+      // Step 8: Generate room token → return 200 with token
+      const roomToken = generateRoomToken(userId, id);
+      res.json({ status: 'joined', roomToken });
+    } catch (error) {
+      console.error('[Join Room Error]', error);
+      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
+    }
+  }
+);
+
+router.get(
+  '/:id/state',
+  async (req: Request<{ id: string }>, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
+
+      // Check if room exists
+      const [room] = await db.select().from(rooms).where(eq(rooms.id, id)).limit(1);
+      if (!room) {
+        res.status(404).json({ error: 'Room not found', code: 'ROOM_NOT_FOUND' });
+        return;
+      }
+
+      // Get room settings from PostgreSQL
       const [settings] = await db
         .select()
         .from(roomSettings)
         .where(eq(roomSettings.roomId, id))
         .limit(1);
 
-      if (settings?.waitingRoomEnabled) {
-        await addToWaitingRoom(id, userId);
-        res.json({ status: 'waiting' });
-        return;
-      }
+      // Get state from Redis
+      const [
+        redisMeta,
+        reactionsEnabled,
+        forceMuted,
+        activeSpeaker,
+        participantCount,
+      ] = await Promise.all([
+        getRoomMeta(id),
+        getRoomReactionsEnabled(id),
+        isForceMuted(id),
+        getActiveSpeaker(id),
+        getRoomPeerCount(id),
+      ]);
 
-      const roomToken = generateRoomToken(userId, id);
-      res.json({ status: 'joined', roomToken });
+      // Get pinned message from Redis
+      const pinnedMessage = redisMeta?.pinnedMessage ? JSON.parse(redisMeta.pinnedMessage) : null;
+
+      res.json({
+        pinnedMessage,
+        reactionsEnabled,
+        locked: redisMeta?.isLocked === '1' || room.isLocked,
+        forceMuted,
+        activeSpeaker,
+        participantCount,
+      });
     } catch (error) {
-      console.error('[Join Room Error]', error);
+      console.error('[Get Room State Error]', error);
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   }

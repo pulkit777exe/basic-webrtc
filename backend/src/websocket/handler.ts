@@ -1,6 +1,6 @@
 import { WebSocket, WebSocketServer } from 'ws';
 import { db } from '../db';
-import { users, messages, rooms } from '../db/schema';
+import { users, messages, rooms, roomParticipants, roomSettings } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { validateRoomId } from '../utils/validation';
 import {
@@ -20,6 +20,11 @@ import {
   roomSignalChannel,
   roomEndedChannel,
   type RoomRole,
+  isKicked,
+  addToKickedList,
+  setForceMuted,
+  setActiveSpeaker,
+  getParticipant,
 } from '../lib/redis-rooms';
 import { redis } from '../config/redis';
 import { redisSub } from '../config/redis';
@@ -27,8 +32,20 @@ import type { Signal, PublicUser, AdminAction } from '../lib/signals';
 import { isSignal } from '../lib/signals';
 import { sanitizeText } from '../utils/sanitize';
 import { logger } from '../lib/logger';
+import { publishSignal, readSignals } from '../lib/redis-streams';
 
 const HEARTBEAT_INTERVAL_MS = 30000;
+
+async function requireRole(
+  roomId: string,
+  senderId: string,
+  minRole: 'co-host' | 'host'
+): Promise<boolean> {
+  const participant = await getParticipant(roomId, senderId);
+  if (!participant) return false;
+  if (minRole === 'host') return participant.role === 'host';
+  return participant.role === 'host' || participant.role === 'co-host';
+}
 
 interface ExtendedWebSocket extends WebSocket {
   userId?: string;
@@ -90,36 +107,52 @@ export class WebSocketHandler {
       }
     });
 
-    this.wss.on('connection', (ws: WebSocket, req: unknown) => {
+     this.wss.on('connection', (ws: WebSocket, req: unknown) => {
       const ext = ws as ExtendedWebSocket;
       const userId = ext.userId;
       const roomId = ext.roomId;
       if (!userId || !roomId) {
         this.sendError(ext, 'Missing user or room');
-        ws.close();
+        ws.close(4001);
         return;
       }
       if (!validateRoomId(roomId)) {
         this.sendError(ext, 'Invalid room ID');
-        ws.close();
+        ws.close(4001);
         return;
       }
 
-      ext.isAlive = true;
-      ws.on('pong', () => {
-        ext.isAlive = true;
-      });
+      // Check if user is kicked
+      isKicked(roomId, userId).then(async (kicked) => {
+        if (kicked) {
+          ws.close(4003);
+          return;
+        }
 
-      db.select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl })
-        .from(users)
-        .where(eq(users.id, userId))
-        .limit(1)
-        .then(async ([u]) => {
+        // Check if participant exists in Redis
+        const participantRole = await getPeerRole(roomId, userId);
+        if (!participantRole) {
+          ws.close(4002);
+          return;
+        }
+
+        ext.isAlive = true;
+        ws.on('pong', () => {
+          ext.isAlive = true;
+        });
+
+        try {
+          const [u] = await db.select({ id: users.id, name: users.name, avatarUrl: users.avatarUrl })
+            .from(users)
+            .where(eq(users.id, userId))
+            .limit(1);
+          
           if (!u) {
             this.sendError(ext, 'User not found');
             ws.close();
             return;
           }
+          
           const publicUser: PublicUser = { id: u.id, name: u.name, avatarUrl: u.avatarUrl ?? undefined };
           ext.user = publicUser;
 
@@ -129,6 +162,7 @@ export class WebSocketHandler {
             ws.close();
             return;
           }
+          
           const count = await getRoomPeerCount(roomId);
           const max = parseInt(meta.maxParticipants, 10) || 50;
           if (count >= max) {
@@ -164,12 +198,12 @@ export class WebSocketHandler {
             console.error('[WS] Error', err);
             this.handleDisconnect(ext);
           });
-        })
-        .catch((err) => {
+        } catch (err) {
           console.error('[WS] Connection setup error', err);
           this.sendError(ext, 'Server error');
           ws.close();
-        });
+        }
+      });
     });
   }
 
@@ -252,6 +286,14 @@ export class WebSocketHandler {
 
   private async handleMessage(ws: ExtendedWebSocket, data: Buffer): Promise<void> {
     try {
+      // Per-room message rate limiting
+      const count = await redis.incr(`ratelimit:room:${ws.roomId}:messages`);
+      await redis.expire(`ratelimit:room:${ws.roomId}:messages`, 1);
+      if (count > 50) {
+        this.send(ws, { type: 'rate_limited' });
+        return;
+      }
+
       const raw = JSON.parse(data.toString());
       if (!isSignal(raw)) {
         this.sendError(ws, 'Invalid message');
@@ -260,6 +302,12 @@ export class WebSocketHandler {
       const signal = raw as Signal;
       const userId = ws.userId!;
       const roomId = ws.roomId!;
+
+      // Check if user is kicked on every message
+      if (await isKicked(roomId, userId)) {
+        ws.close(4003);
+        return;
+      }
 
       if (signal.type === 'ping') {
         this.send(ws, { type: 'pong' });
@@ -325,18 +373,133 @@ export class WebSocketHandler {
         return;
       }
 
+      if (signal.type === 'active_speaker') {
+        // Rate limit: max 1 active_speaker event per participant per 2 seconds
+        const rateLimitKey = `ratelimit:speaker:${roomId}:${userId}`;
+        const rateLimitResult = await redis.set(rateLimitKey, '1', 'EX', 2, 'NX');
+        if (!rateLimitResult) {
+          return; // Drop message silently if rate limited
+        }
+        await setActiveSpeaker(roomId, userId);
+        await publishSignal(roomId, { type: 'active_speaker', participantId: userId });
+        return;
+      }
+
       if (signal.type === 'audio-activity') {
         this.publish(roomId, { ...signal, from: userId, roomId });
         return;
       }
 
       if (signal.type === 'admin_mute_all') {
-        const allowed = await canPerformAdminAction(roomId, userId, 'mute-all');
+        const allowed = await requireRole(roomId, userId, 'co-host');
         if (!allowed) {
-          this.sendError(ws, 'Unauthorized');
+          ws.close(4003);
           return;
         }
-        this.publish(roomId, { type: 'admin_mute_all', from: userId, roomId });
+        await setForceMuted(roomId, true);
+        await publishSignal(roomId, { type: 'force_mute_all' });
+        this.send(ws, { type: 'ack', action: 'mute_all' });
+        return;
+      }
+
+      if (signal.type === 'admin_unmute_all') {
+        const allowed = await requireRole(roomId, userId, 'co-host');
+        if (!allowed) {
+          ws.close(4003);
+          return;
+        }
+        await setForceMuted(roomId, false);
+        await publishSignal(roomId, { type: 'force_unmute_all' });
+        this.send(ws, { type: 'ack', action: 'unmute_all' });
+        return;
+      }
+
+      if (signal.type === 'admin_lock') {
+        const allowed = await requireRole(roomId, userId, 'host');
+        if (!allowed) {
+          ws.close(4003);
+          return;
+        }
+        await setRoomLocked(roomId, signal.locked);
+        await publishSignal(roomId, { type: 'room_lock_changed', locked: signal.locked });
+        this.send(ws, { type: 'ack', action: 'lock' });
+        return;
+      }
+
+      if (signal.type === 'admin_reactions_toggle') {
+        const allowed = await requireRole(roomId, userId, 'co-host');
+        if (!allowed) {
+          ws.close(4003);
+          return;
+        }
+        await setRoomReactionsEnabled(roomId, signal.enabled);
+        await db.update(roomSettings).set({ reactionsEnabled: signal.enabled }).where(eq(roomSettings.roomId, roomId));
+        await publishSignal(roomId, { type: 'reactions_toggled', enabled: signal.enabled });
+        this.send(ws, { type: 'ack', action: 'reactions_toggle' });
+        return;
+      }
+
+      if (signal.type === 'admin_kick') {
+        const allowed = await requireRole(roomId, userId, 'co-host');
+        if (!allowed) {
+          ws.close(4003);
+          return;
+        }
+        // Validate targetId is not the host
+        const roomMeta = await getRoomMeta(roomId);
+        if (!roomMeta) {
+          return;
+        }
+        if (signal.targetId === roomMeta.hostId) {
+          this.sendError(ws, 'Cannot kick the host');
+          return;
+        }
+        await removePeerFromRoom(roomId, signal.targetId);
+        await addToKickedList(roomId, signal.targetId);
+        await publishSignal(roomId, { type: 'kicked', targetId: signal.targetId });
+        const room = this.rooms.get(roomId);
+        const target = room?.get(signal.targetId);
+        if (target && this.isOpen(target)) {
+          target.close(4003);
+        }
+        this.removeFromMap(roomId, signal.targetId);
+        this.send(ws, { type: 'ack', action: 'kick' });
+        return;
+      }
+
+      if (signal.type === 'admin_promote') {
+        const allowed = await requireRole(roomId, userId, 'host');
+        if (!allowed) {
+          ws.close(4003);
+          return;
+        }
+        await setPeerRole(roomId, signal.targetId, 'co-host');
+        await db.update(roomParticipants)
+          .set({ role: 'co-host' })
+          .where(eq(roomParticipants.roomId, roomId) && eq(roomParticipants.userId, signal.targetId));
+        await publishSignal(roomId, { type: 'role_changed', targetId: signal.targetId, role: 'co-host' });
+        this.send(ws, { type: 'ack', action: 'promote' });
+        return;
+      }
+
+      if (signal.type === 'admin_pin_message') {
+        const allowed = await requireRole(roomId, userId, 'co-host');
+        if (!allowed) {
+          ws.close(4003);
+          return;
+        }
+        const pinnedMessage = {
+          messageId: sanitizeText(String(signal.id ?? '')).slice(0, 128),
+          text: sanitizeText(String(signal.text ?? '')).slice(0, 500),
+          authorName: sanitizeText(String(signal.authorName ?? '')).slice(0, 120),
+        };
+        if (!pinnedMessage.messageId || !pinnedMessage.text) {
+          this.sendError(ws, 'Invalid pinned message');
+          return;
+        }
+        await setRoomPinnedMessage(roomId, pinnedMessage);
+        await publishSignal(roomId, { type: 'message_pinned', message: pinnedMessage });
+        this.send(ws, { type: 'ack', action: 'pin_message' });
         return;
       }
 
@@ -350,45 +513,7 @@ export class WebSocketHandler {
         return;
       }
 
-      if (signal.type === 'admin_kick') {
-        const allowed = await canPerformAdminAction(roomId, userId, 'kick', signal.targetId);
-        if (!allowed) {
-          this.sendError(ws, 'Unauthorized');
-          return;
-        }
-        this.publish(roomId, { type: 'admin_kick', targetId: signal.targetId, from: userId, roomId });
-        const room = this.rooms.get(roomId);
-        const target = room?.get(signal.targetId);
-        if (target && this.isOpen(target)) {
-          this.send(target, { type: 'kicked' });
-          target.close();
-        }
-        this.removeFromMap(roomId, signal.targetId);
-        removePeerFromRoom(roomId, signal.targetId).catch(() => {});
-        return;
-      }
 
-      if (signal.type === 'admin_promote') {
-        const allowed = await canPerformAdminAction(roomId, userId, 'promote', signal.targetId);
-        if (!allowed) {
-          this.sendError(ws, 'Unauthorized');
-          return;
-        }
-        await setPeerRole(roomId, signal.targetId, 'co-host');
-        this.publish(roomId, { type: 'admin_promote', targetId: signal.targetId, from: userId, roomId });
-        return;
-      }
-
-      if (signal.type === 'admin_reactions_toggle') {
-        const allowed = await canPerformAdminAction(roomId, userId, 'reactions');
-        if (!allowed) {
-          this.sendError(ws, 'Unauthorized');
-          return;
-        }
-        await setRoomReactionsEnabled(roomId, signal.enabled);
-        this.publish(roomId, { type: 'admin_reactions_toggle', enabled: signal.enabled, from: userId, roomId });
-        return;
-      }
 
       if (signal.type === 'room_locked') {
         const allowed = await canPerformAdminAction(roomId, userId, 'lock');

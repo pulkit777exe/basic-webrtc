@@ -169,6 +169,12 @@ export async function setActiveSpeaker(roomId: string, participantId: string): P
   await redis.setex(key, ACTIVE_SPEAKER_TTL_SEC, participantId);
 }
 
+export async function getParticipant(roomId: string, userId: string): Promise<{ role: RoomRole } | null> {
+  const role = await getPeerRole(roomId, userId);
+  if (!role) return null;
+  return { role };
+}
+
 export async function getActiveSpeaker(roomId: string): Promise<string | null> {
   return await redis.get(roomActiveSpeakerKey(roomId));
 }

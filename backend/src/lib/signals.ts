@@ -22,15 +22,19 @@ export type Signal =
   | { type: 'admin'; action: AdminAction; targetUserId?: string }
   | { type: 'admin_mute'; targetId: string }
   | { type: 'admin_mute_all' }
+  | { type: 'admin_unmute_all' }
   | { type: 'admin_kick'; targetId: string }
   | { type: 'admin_promote'; targetId: string }
   | { type: 'admin_reactions_toggle'; enabled: boolean }
+  | { type: 'admin_lock'; locked: boolean }
+  | { type: 'admin_pin_message'; id: string; text: string; authorName: string }
   | { type: 'room_locked'; locked: boolean }
   | { type: 'recording_start'; startedAt: number }
   | { type: 'recording_stop' }
   | { type: 'recording_upload_progress'; participantId: string; progress: number }
   | { type: 'media-state'; video: boolean; audio: boolean; screen: boolean }
   | { type: 'audio-activity'; level: number; speaking: boolean }
+  | { type: 'active_speaker' }
   | { type: 'waiting'; action: 'admit' | 'deny'; userId: string }
   | { type: 'caption'; text: string; timestamp: number }
   | { type: 'ping' }
@@ -53,15 +57,19 @@ export function isSignal(obj: unknown): obj is Signal {
     'admin',
     'admin_mute',
     'admin_mute_all',
+    'admin_unmute_all',
     'admin_kick',
     'admin_promote',
     'admin_reactions_toggle',
+    'admin_lock',
+    'admin_pin_message',
     'room_locked',
     'recording_start',
     'recording_stop',
     'recording_upload_progress',
     'media-state',
     'audio-activity',
+    'active_speaker',
     'waiting',
     'caption',
     'ping',
