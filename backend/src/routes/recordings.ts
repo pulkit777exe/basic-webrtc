@@ -1,125 +1,382 @@
-import express, { Router, Request, Response } from 'express';
-import { promises as fs } from 'fs';
+import { Router, Request, Response } from 'express';
+import multer from 'multer';
+import fs from 'fs';
 import path from 'path';
-import { and, eq } from 'drizzle-orm';
+import { db } from '../db';
+import { recordingSessions, recordingTracks } from '../db/schema';
+import { eq, and } from 'drizzle-orm';
 import { authenticateToken } from '../middleware/auth';
 import { verifyRoomToken } from '../utils/jwt';
-import { db } from '../db';
-import { rooms } from '../db/schema';
-import { mergeRecordings } from '../services/recording-merge';
+import { redis } from '../config/redis';
+import { mergeQueue } from '../jobs/recording-worker';
+import { setRecordingState, getRecordingState, roomRecordingKey } from '../lib/redis-rooms';
+
+const ROOM_TTL_SEC = 24 * 60 * 60;
+const RECORDINGS_DIR = process.env.RECORDINGS_DIR || 'recordings';
 
 const router = Router();
-const RECORDINGS_DIR = path.resolve(process.cwd(), 'recordings');
 
+// Configure multer for file uploads
+const upload = multer({
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB limit
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const { roomId, sessionId, participantId } = req.body;
+      const dir = path.join(RECORDINGS_DIR, roomId, sessionId, participantId);
+      fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+      const { chunkIndex } = req.body;
+      cb(null, `chunk_${chunkIndex}`);
+    },
+  }),
+});
+
+// POST /api/recordings/chunk
 router.post(
   '/chunk',
-  express.raw({ type: 'application/octet-stream', limit: '20mb' }),
+  authenticateToken,
+  upload.single('chunk'),
   async (req: Request, res: Response): Promise<void> => {
+    const { roomId, participantId, chunkIndex, totalChunks, sessionId } = req.body;
+    let lockAcquired = false;
+
     try {
-      const roomId = String(req.query.roomId ?? '');
-      const participantId = String(req.query.participantId ?? '');
-      const chunkIndex = Number(req.query.chunkIndex);
-      const totalChunks = Number(req.query.totalChunks);
-      const authHeader = req.headers.authorization;
-      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : '';
-      const payload = token ? verifyRoomToken(token) : null;
-
-      if (!payload) {
-        res.status(401).json({ error: 'Invalid room token', code: 'UNAUTHORIZED' });
-        return;
-      }
-      if (payload.roomId !== roomId || payload.userId !== participantId) {
-        res.status(403).json({ error: 'Room token mismatch', code: 'FORBIDDEN' });
-        return;
-      }
-      if (!roomId || !participantId || Number.isNaN(chunkIndex) || Number.isNaN(totalChunks) || totalChunks <= 0) {
-        res.status(400).json({ error: 'Invalid chunk metadata', code: 'BAD_REQUEST' });
-        return;
-      }
-      if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
-        res.status(400).json({ error: 'Chunk body required', code: 'BAD_REQUEST' });
+      // Validate sessionId
+      if (!sessionId || typeof sessionId !== 'string' || sessionId.length < 8 || sessionId.length > 32) {
+        res.status(400).json({ error: 'Invalid sessionId', code: 'INVALID_SESSION_ID' });
         return;
       }
 
-      const roomDir = path.join(RECORDINGS_DIR, roomId);
-      const chunksDir = path.join(roomDir, 'chunks');
-      await fs.mkdir(chunksDir, { recursive: true });
-      const chunkPath = path.join(chunksDir, `${participantId}.${chunkIndex}.part`);
-      await fs.writeFile(chunkPath, req.body as Buffer);
+      const chunkIndexNum = parseInt(chunkIndex, 10);
+      const totalChunksNum = parseInt(totalChunks, 10);
 
-      const chunkFiles = await fs.readdir(chunksDir);
-      const ownChunks = chunkFiles.filter((file) => file.startsWith(`${participantId}.`) && file.endsWith('.part'));
-      const assembled = ownChunks.length >= totalChunks;
-
-      if (assembled) {
-        const outputPath = path.join(roomDir, `${participantId}.webm`);
-        const orderedChunkPaths = Array.from({ length: totalChunks }, (_, index) =>
-          path.join(chunksDir, `${participantId}.${index}.part`)
-        );
-        const chunkBuffers = await Promise.all(orderedChunkPaths.map((chunkFile) => fs.readFile(chunkFile)));
-        await fs.writeFile(outputPath, Buffer.concat(chunkBuffers));
-        await Promise.all(orderedChunkPaths.map((chunkFile) => fs.unlink(chunkFile).catch(() => {})));
+      // Validate chunk index
+      if (isNaN(chunkIndexNum) || isNaN(totalChunksNum) || totalChunksNum <= 0 || chunkIndexNum < 0 || chunkIndexNum >= totalChunksNum) {
+        res.status(400).json({ error: 'Invalid chunk index', code: 'INVALID_CHUNK_INDEX' });
+        return;
       }
 
-      res.json({ ok: true, assembled });
+      // Validate room token matches roomId
+      const token = req.headers['authorization']?.split(' ')[1];
+      if (!token) {
+        res.status(401).json({ error: 'Missing token', code: 'MISSING_TOKEN' });
+        return;
+      }
+      const decoded = verifyRoomToken(token);
+      if (!decoded || decoded.roomId !== roomId) {
+        res.status(403).json({ error: 'Invalid room token', code: 'INVALID_TOKEN' });
+        return;
+      }
+
+      // Acquire upload lock in Redis
+      const lockKey = `upload:lock:${roomId}:${participantId}`;
+      const lock = await redis.set(lockKey, '1', 'EX', 30, 'NX');
+      if (!lock) {
+        res.status(429).json({ error: 'UPLOAD_IN_PROGRESS' });
+        return;
+      }
+      lockAcquired = true;
+
+      // Use Redis-based chunk counter to track all chunks received
+      const chunkCountKey = `upload:chunks:${roomId}:${participantId}:${sessionId}`;
+      const currentCount = await redis.incr(chunkCountKey);
+      await redis.expire(chunkCountKey, ROOM_TTL_SEC);
+
+      // Check if all chunks received
+      if (currentCount === totalChunksNum) {
+        const participantDir = path.join(RECORDINGS_DIR, roomId, sessionId, participantId);
+        const outputPath = path.join(RECORDINGS_DIR, roomId, sessionId, `${participantId}.webm`);
+
+        // --- FIX: verify all chunk files exist BEFORE assembly ---
+        const missingChunks: number[] = [];
+        for (let i = 0; i < totalChunksNum; i++) {
+          if (!fs.existsSync(path.join(participantDir, `chunk_${i}`))) {
+            missingChunks.push(i);
+          }
+        }
+
+        if (missingChunks.length > 0) {
+          // Don't delete the counter — let the client retry the missing chunks
+          await redis.del(lockKey);
+          lockAcquired = false;
+          res.status(409).json({
+            error: 'Missing chunks before assembly',
+            code: 'MISSING_CHUNKS',
+            missingChunks,
+          });
+          return;
+        }
+
+        try {
+          // Assemble all chunks into a single file
+          const chunks: Buffer[] = [];
+          for (let i = 0; i < totalChunksNum; i++) {
+            const chunkPath = path.join(participantDir, `chunk_${i}`);
+            chunks.push(await fs.promises.readFile(chunkPath));
+          }
+
+          await fs.promises.writeFile(outputPath, Buffer.concat(chunks));
+
+          // --- FIX: only delete chunks AFTER successful write ---
+          for (let i = 0; i < totalChunksNum; i++) {
+            const chunkPath = path.join(participantDir, `chunk_${i}`);
+            await fs.promises.unlink(chunkPath);
+          }
+          await fs.promises.rmdir(participantDir);
+
+          // --- FIX: only delete counter on full success ---
+          await redis.del(chunkCountKey);
+        } catch (assemblyError) {
+          console.error('Error assembling chunks:', assemblyError);
+          // --- FIX: do NOT delete counter on failure — preserve for retry ---
+          // Decrement counter so the final chunk can be retried
+          await redis.decr(chunkCountKey);
+          await redis.del(lockKey);
+          lockAcquired = false;
+          res.status(500).json({ error: 'Chunk assembly failed', code: 'CHUNK_ASSEMBLY_FAILED' });
+          return;
+        }
+
+        // Update Redis uploadedTracks array atomically
+        const recordingState = await getRecordingState(roomId);
+        if (recordingState) {
+          const updatedStateStr = await redis.eval(
+            `
+            local current = redis.call('GET', KEYS[1])
+            local newState
+            if current then
+              newState = cjson.decode(current)
+            else
+              newState = { status = 'idle', uploadedTracks = {} }
+            end
+            if not newState.uploadedTracks then
+              newState.uploadedTracks = {}
+            end
+            table.insert(newState.uploadedTracks, ARGV[1])
+            redis.call('SETEX', KEYS[1], ARGV[2], cjson.encode(newState))
+            return cjson.encode(newState)
+            `,
+            1,
+            roomRecordingKey(roomId),
+            participantId,
+            ROOM_TTL_SEC.toString()
+          );
+          const updatedState = JSON.parse(updatedStateStr as string);
+
+          // Upsert PostgreSQL recording_tracks
+          const session = await db.select()
+            .from(recordingSessions)
+            .where(and(eq(recordingSessions.roomId, roomId), eq(recordingSessions.sessionId, sessionId)))
+            .limit(1);
+
+          if (session.length > 0) {
+            await db.insert(recordingTracks).values({
+              sessionId: session[0].id,
+              participantId,
+              status: 'uploaded',
+            });
+
+            // Check merge threshold: ≥50% of participants uploaded
+            const participantCount = recordingState.participantCount || 0;
+            const mergeThreshold = Math.ceil(participantCount * 0.5);
+
+            if (updatedState.uploadedTracks.length >= mergeThreshold) {
+              const tracks = [];
+              for (const id of updatedState.uploadedTracks) {
+                const offset = await redis.get(`recording:offset:${roomId}:${id}`);
+                tracks.push({
+                  participantId: id,
+                  path: path.join(RECORDINGS_DIR, roomId, sessionId, `${id}.webm`),
+                  startOffset: parseInt(offset || '0', 10),
+                });
+              }
+
+              await mergeQueue.add('recording-merge', { roomId, sessionId, tracks });
+            }
+          }
+        }
+      }
+
+      // Release lock only at end of successful path
+      await redis.del(lockKey);
+      lockAcquired = false;
+
+      res.json({ success: true, chunkIndex: chunkIndexNum });
     } catch (error) {
-      console.error('[Recordings chunk upload]', error);
+      console.error('[Recording Chunk Error]', error);
+      // --- FIX: always release lock in catch to avoid deadlock ---
+      if (lockAcquired) {
+        const lockKey = `upload:lock:${roomId}:${participantId}`;
+        await redis.del(lockKey).catch(() => {});
+      }
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   }
 );
 
-router.post(
-  '/:roomId/merge',
+// GET /api/recordings/:sessionId/download
+router.get(
+  '/:sessionId/download',
   authenticateToken,
-  async (req: Request<{ roomId: string }>, res: Response): Promise<void> => {
+  async (req: Request<{ sessionId: string }>, res: Response): Promise<void> => {
     try {
-      const { roomId } = req.params;
-      const userId = req.user!.id;
-      const [room] = await db
-        .select({ id: rooms.id })
-        .from(rooms)
-        .where(and(eq(rooms.id, roomId), eq(rooms.hostId, userId)))
+      const { sessionId } = req.params;
+      const userId = (req as any).user!.id;
+
+      // Fetch recording session from PostgreSQL
+      const sessions = await db.select()
+        .from(recordingSessions)
+        .where(eq(recordingSessions.sessionId, sessionId))
         .limit(1);
 
-      if (!room) {
-        res.status(403).json({ error: 'Only the host can merge recordings', code: 'FORBIDDEN' });
+      if (!sessions.length) {
+        res.status(404).json({ error: 'Recording session not found', code: 'SESSION_NOT_FOUND' });
         return;
       }
 
-      const result = await mergeRecordings(roomId);
-      res.json({ ok: true, outputPath: result.outputPath, skipped: result.skipped });
+      const session = sessions[0];
+
+      // Verify the requester is the host
+      if (session.startedBy !== userId) {
+        res.status(403).json({ error: 'Unauthorized', code: 'UNAUTHORIZED' });
+        return;
+      }
+
+      if (!session.roomId) {
+        res.status(404).json({ error: 'Invalid recording session', code: 'INVALID_SESSION' });
+        return;
+      }
+
+      // --- FIX: check Postgres status first, then Redis as secondary source ---
+      // Redis has a 24hr TTL and may have expired; Postgres is the source of truth
+      const isDoneInPostgres = session.status === 'done';
+
+      if (!isDoneInPostgres) {
+        // Fall back to Redis for in-progress status
+        const recordingState = await getRecordingState(session.roomId);
+        res.status(404).json({
+          error: 'NOT_READY',
+          status: recordingState?.status || session.status || 'idle',
+        });
+        return;
+      }
+
+      // --- FIX: use outputPath from Postgres, not hardcoded path ---
+      // The worker stores the real outputPath returned by mergeRecordings()
+      const outputPath = session.outputPath;
+
+      if (!outputPath) {
+        res.status(500).json({ error: 'Output path missing from session record', code: 'NO_OUTPUT_PATH' });
+        return;
+      }
+
+      if (!fs.existsSync(outputPath)) {
+        res.status(500).json({ error: 'Recording file not found on disk', code: 'FILE_NOT_FOUND' });
+        return;
+      }
+
+      const stat = fs.statSync(outputPath);
+      const fileSize = stat.size;
+      const fileName = `meeting-${sessionId}.mp4`;
+
+      // --- FIX: Range request support for seekable video playback ---
+      const rangeHeader = req.headers['range'];
+
+      if (rangeHeader) {
+        // Parse Range: bytes=START-END
+        const parts = rangeHeader.replace(/bytes=/, '').split('-');
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+        if (start >= fileSize || end >= fileSize || start > end) {
+          res.status(416).set('Content-Range', `bytes */${fileSize}`).end();
+          return;
+        }
+
+        const chunkSize = end - start + 1;
+
+        res.status(206).set({
+          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': chunkSize,
+          'Content-Type': 'video/mp4',
+          'Content-Disposition': `attachment; filename="${fileName}"`,
+        });
+
+        const fileStream = fs.createReadStream(outputPath, { start, end });
+        fileStream.pipe(res);
+
+        fileStream.on('error', (streamErr) => {
+          console.error('[Download Stream Error]', streamErr);
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'Stream error', code: 'STREAM_ERROR' });
+          }
+        });
+      } else {
+        // Full file download
+        res.status(200).set({
+          'Accept-Ranges': 'bytes',
+          'Content-Length': fileSize,
+          'Content-Type': 'video/mp4',
+          'Content-Disposition': `attachment; filename="${fileName}"`,
+        });
+
+        const fileStream = fs.createReadStream(outputPath);
+        fileStream.pipe(res);
+
+        fileStream.on('error', (streamErr) => {
+          console.error('[Download Stream Error]', streamErr);
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'Stream error', code: 'STREAM_ERROR' });
+          }
+        });
+      }
     } catch (error) {
-      console.error('[Recordings merge]', error);
-      res.status(500).json({ error: 'Failed to merge recordings', code: 'MERGE_FAILED' });
+      console.error('[Download Recording Error]', error);
+      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   }
 );
 
+// GET /api/recordings/:roomId/status
 router.get(
-  '/:roomId/download',
+  '/:id/status',
   authenticateToken,
-  async (req: Request<{ roomId: string }>, res: Response): Promise<void> => {
+  async (req: Request<{ id: string }>, res: Response): Promise<void> => {
     try {
-      const { roomId } = req.params;
-      const userId = req.user!.id;
-      const [room] = await db
-        .select({ id: rooms.id })
-        .from(rooms)
-        .where(and(eq(rooms.id, roomId), eq(rooms.hostId, userId)))
+      const { id: roomId } = req.params;
+
+      const participant = await db.select()
+        .from(recordingSessions)
+        .where(eq(recordingSessions.roomId, roomId))
         .limit(1);
 
-      if (!room) {
-        res.status(403).json({ error: 'Only the host can download recordings', code: 'FORBIDDEN' });
+      if (!participant.length) {
+        res.status(404).json({ error: 'Room not found', code: 'ROOM_NOT_FOUND' });
         return;
       }
 
-      const filePath = path.join(RECORDINGS_DIR, roomId, 'final.mp4');
-      await fs.access(filePath);
-      res.download(filePath, `${roomId}-final.mp4`);
+      // --- FIX: merge Redis + Postgres for status — Redis may have expired ---
+      const recordingState = await getRecordingState(roomId);
+      const dbSession = participant[0];
+
+      res.json({
+        // Redis is preferred (live state); fall back to Postgres
+        status: recordingState?.status || dbSession.status || 'idle',
+        startedAt: recordingState?.startedAt || dbSession.createdAt,
+        participantCount: recordingState?.participantCount,
+        uploadedTracks: recordingState?.uploadedTracks || [],
+        failedTracks: recordingState?.failedTracks || [],
+        // Expose download link if ready, regardless of Redis state
+        downloadUrl: dbSession.status === 'done'
+          ? `/api/recordings/${dbSession.sessionId}/download`
+          : null,
+      });
     } catch (error) {
-      console.error('[Recordings download]', error);
-      res.status(404).json({ error: 'Recording not found', code: 'NOT_FOUND' });
+      console.error('[Get Recording Status Error]', error);
+      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   }
 );
