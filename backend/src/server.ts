@@ -16,6 +16,7 @@ import { setupSecurity } from './middleware/security';
 import { optionalAuthenticate } from './middleware/auth';
 import { apiLimiter, authLimiter } from './middleware/rateLimit';
 import { logger } from './lib/logger';
+import { startCleanupJob } from './lib/cleanup-job';
 
 dotenv.config();
 
@@ -87,4 +88,5 @@ new WebSocketHandler(wss);
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`WebSocket server ready at ws://localhost:${PORT}/ws`);
+  startCleanupJob(); // Start stale room cleanup job
 });

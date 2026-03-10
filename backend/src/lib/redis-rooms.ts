@@ -1,6 +1,51 @@
 import { redis } from '../config/redis.js';
 
 const ROOM_TTL_SEC = 24 * 60 * 60;
+const ACTIVE_SPEAKER_TTL_SEC = 30;
+
+export interface RecordingState {
+  status: 'idle' | 'recording' | 'uploading' | 'merging' | 'done' | 'failed';
+  startedAt?: string;
+  startedBy?: string;
+  participantCount?: number;
+  uploadedTracks?: string[];
+  failedTracks?: string[];
+  outputPath?: string;
+  sessionId?: string;
+}
+
+// Key generators for new Redis keys
+export function roomParticipantsKey(roomId: string): string {
+  return `room:${roomId}:participants`;
+}
+
+export function roomLockedKey(roomId: string): string {
+  return `room:${roomId}:locked`;
+}
+
+export function roomReactionsEnabledKey(roomId: string): string {
+  return `room:${roomId}:settings:reactions`;
+}
+
+export function roomPinnedMessageKey(roomId: string): string {
+  return `room:${roomId}:pinnedMessage`;
+}
+
+export function roomActiveSpeakerKey(roomId: string): string {
+  return `room:${roomId}:activeSpeaker`;
+}
+
+export function roomRecordingKey(roomId: string): string {
+  return `room:${roomId}:recording`;
+}
+
+export function roomKickedKey(roomId: string): string {
+  return `room:${roomId}:kicked`;
+}
+
+export function roomForceMutedKey(roomId: string): string {
+  return `room:${roomId}:forceMuted`;
+}
 
 export function roomKey(roomId: string): string {
   return `room:${roomId}`;
@@ -93,6 +138,69 @@ export async function removePeerFromRoom(roomId: string, userId: string): Promis
   pipe.hdel(roomRolesKey(roomId), userId);
   pipe.hdel(roomMediaKey(roomId), userId);
   await pipe.exec();
+}
+
+// Kicked participants blocklist
+export async function addToKickedList(roomId: string, participantId: string): Promise<void> {
+  const key = roomKickedKey(roomId);
+  await redis.sadd(key, participantId);
+  await redis.expire(key, ROOM_TTL_SEC);
+}
+
+export async function isKicked(roomId: string, participantId: string): Promise<boolean> {
+  const result = await redis.sismember(roomKickedKey(roomId), participantId);
+  return result === 1;
+}
+
+// Force mute all
+export async function setForceMuted(roomId: string, muted: boolean): Promise<void> {
+  const key = roomForceMutedKey(roomId);
+  await redis.setex(key, ROOM_TTL_SEC, muted ? '1' : '0');
+}
+
+export async function isForceMuted(roomId: string): Promise<boolean> {
+  const value = await redis.get(roomForceMutedKey(roomId));
+  return value === '1';
+}
+
+// Active speaker
+export async function setActiveSpeaker(roomId: string, participantId: string): Promise<void> {
+  const key = roomActiveSpeakerKey(roomId);
+  await redis.setex(key, ACTIVE_SPEAKER_TTL_SEC, participantId);
+}
+
+export async function getActiveSpeaker(roomId: string): Promise<string | null> {
+  return await redis.get(roomActiveSpeakerKey(roomId));
+}
+
+// Recording state
+export async function setRecordingState(roomId: string, state: Partial<RecordingState>): Promise<void> {
+  const key = roomRecordingKey(roomId);
+  const currentState = await getRecordingState(roomId);
+  const newState = { ...currentState, ...state };
+  await redis.setex(key, ROOM_TTL_SEC, JSON.stringify(newState));
+}
+
+export async function getRecordingState(roomId: string): Promise<RecordingState | null> {
+  const value = await redis.get(roomRecordingKey(roomId));
+  return value ? JSON.parse(value) : null;
+}
+
+// Heartbeat refresh — call this every 30s per participant
+export async function refreshParticipantTTL(roomId: string): Promise<void> {
+  await redis.expire(roomParticipantsKey(roomId), ROOM_TTL_SEC);
+}
+
+// Cleanup — delete all Redis keys for a room on room end
+export async function deleteAllRoomKeys(roomId: string): Promise<void> {
+  let cursor = '0';
+  do {
+    const [newCursor, keys] = await redis.scan(cursor, 'MATCH', `room:${roomId}:*`, 'COUNT', 100);
+    cursor = newCursor;
+    if (keys.length > 0) {
+      await redis.del(...keys);
+    }
+  } while (cursor !== '0');
 }
 
 export async function getPeerRole(roomId: string, userId: string): Promise<RoomRole | null> {
