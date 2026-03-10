@@ -1,6 +1,6 @@
 import { WebSocket, WebSocketServer } from 'ws';
 import { db } from '../db';
-import { users, messages, rooms, roomParticipants, roomSettings } from '../db/schema';
+import { users, messages, rooms, roomParticipants, roomSettings, recordingSessions, recordingTracks } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { validateRoomId } from '../utils/validation';
 import {
@@ -25,6 +25,8 @@ import {
   setForceMuted,
   setActiveSpeaker,
   getParticipant,
+  setRecordingState,
+  getRecordingState,
 } from '../lib/redis-rooms';
 import { redis } from '../config/redis';
 import { redisSub } from '../config/redis';
@@ -33,6 +35,7 @@ import { isSignal } from '../lib/signals';
 import { sanitizeText } from '../utils/sanitize';
 import { logger } from '../lib/logger';
 import { publishSignal, readSignals } from '../lib/redis-streams';
+import { nanoid } from 'nanoid';
 
 const HEARTBEAT_INTERVAL_MS = 30000;
 
@@ -540,8 +543,84 @@ export class WebSocketHandler {
         return;
       }
 
+      if (signal.type === 'recording_track_offset') {
+        // Sent by each client when recording starts, reports their startOffset
+        // No role check — any participant
+        const offset = signal.offset;
+        if (typeof offset !== 'number' || offset < 0) {
+          this.sendError(ws, 'Invalid offset');
+          return;
+        }
+        try {
+          await redis.set(`recording:offset:${roomId}:${userId}`, offset, 'EX', 86400);
+        } catch (error) {
+          console.error('Failed to store recording track offset:', error);
+          this.sendError(ws, 'Failed to store track offset');
+        }
+        return;
+      }
+
       if (signal.type === 'admin') {
         const action = signal.action as AdminAction;
+        if (action === 'start-recording') {
+          const allowed = await requireRole(roomId, userId, 'host');
+          if (!allowed) {
+            this.sendError(ws, 'Unauthorized');
+            return;
+          }
+          // Check current recording state — reject if status is not 'idle' or 'done'
+          const currentState = await getRecordingState(roomId);
+          if (currentState && currentState.status === 'recording') {
+            this.sendError(ws, 'Already recording');
+            return;
+          }
+          // Generate sessionId: nanoid(16)
+          const sessionId = nanoid(16);
+          // Set recording state in Redis:
+          const participantCount = await getRoomPeerCount(roomId);
+          await setRecordingState(roomId, {
+            status: 'recording',
+            startedAt: new Date().toISOString(),
+            startedBy: userId,
+            participantCount,
+            uploadedTracks: [],
+            failedTracks: [],
+            sessionId,
+          });
+          // Insert row into recording_sessions PostgreSQL table
+          await db.insert(recordingSessions).values({
+            roomId,
+            sessionId,
+            startedBy: userId,
+            startedAt: new Date(),
+            participantCount,
+          });
+          // publishSignal(roomId, { type: 'recording_started', sessionId, startedAt })
+          await publishSignal(roomId, {
+            type: 'recording_start',
+            sessionId,
+            startedAt: Date.now(),
+          });
+          return;
+        }
+        if (action === 'stop-recording') {
+          const allowed = await requireRole(roomId, userId, 'host');
+          if (!allowed) {
+            this.sendError(ws, 'Unauthorized');
+            return;
+          }
+          // Check state is 'recording' — reject otherwise
+          const currentState = await getRecordingState(roomId);
+          if (!currentState || currentState.status !== 'recording') {
+            this.sendError(ws, 'Not recording');
+            return;
+          }
+          // Update Redis state: { status: 'uploading' }
+          await setRecordingState(roomId, { ...currentState, status: 'uploading' });
+          // publishSignal(roomId, { type: 'recording_stopped', sessionId })
+          await publishSignal(roomId, { type: 'recording_stop', sessionId: currentState.sessionId });
+          return;
+        }
         if (action === 'mute-all') {
           const allowed = await canPerformAdminAction(roomId, userId, 'mute-all');
           if (!allowed) {

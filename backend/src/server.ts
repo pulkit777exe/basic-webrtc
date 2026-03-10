@@ -17,6 +17,7 @@ import { optionalAuthenticate } from './middleware/auth';
 import { apiLimiter, authLimiter } from './middleware/rateLimit';
 import { logger } from './lib/logger';
 import { startCleanupJob } from './lib/cleanup-job';
+import { startRecordingWorker } from './jobs/recording-worker';
 
 dotenv.config();
 
@@ -89,4 +90,6 @@ server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`WebSocket server ready at ws://localhost:${PORT}/ws`);
   startCleanupJob(); // Start stale room cleanup job
+  startRecordingWorker(); // Start recording merge worker
 });
+

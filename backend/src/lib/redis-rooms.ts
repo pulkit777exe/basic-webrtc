@@ -179,12 +179,28 @@ export async function getActiveSpeaker(roomId: string): Promise<string | null> {
   return await redis.get(roomActiveSpeakerKey(roomId));
 }
 
-// Recording state
+// Recording state - atomic update using Lua script to prevent race conditions
 export async function setRecordingState(roomId: string, state: Partial<RecordingState>): Promise<void> {
   const key = roomRecordingKey(roomId);
-  const currentState = await getRecordingState(roomId);
-  const newState = { ...currentState, ...state };
-  await redis.setex(key, ROOM_TTL_SEC, JSON.stringify(newState));
+  await redis.eval(
+    `
+    local current = redis.call('GET', KEYS[1])
+    local newState
+    if current then
+      newState = cjson.decode(current)
+    else
+      newState = { status: 'idle' }
+    end
+    for k, v in pairs(cjson.decode(ARGV[1])) do
+      newState[k] = v
+    end
+    redis.call('SETEX', KEYS[1], ARGV[2], cjson.encode(newState))
+    `,
+    1,
+    key,
+    JSON.stringify(state),
+    ROOM_TTL_SEC.toString()
+  );
 }
 
 export async function getRecordingState(roomId: string): Promise<RecordingState | null> {

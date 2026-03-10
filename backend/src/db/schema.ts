@@ -83,7 +83,7 @@ export const recordingSessions = pgTable('recording_sessions', {
   endedAt: timestamp('ended_at'),
   status: varchar('status', { length: 20 }).notNull().default('recording'),
   participantCount: integer('participant_count').notNull(),
-  outputS3Key: varchar('output_s3_key', { length: 500 }),
+  outputPath: varchar('output_path', { length: 500 }),
   createdAt: timestamp('created_at').defaultNow(),
 });
 

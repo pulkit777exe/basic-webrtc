@@ -8,7 +8,9 @@ export type AdminAction =
   | 'promote'
   | 'reactions-toggle'
   | 'admit'
-  | 'deny';
+  | 'deny'
+  | 'start-recording'
+  | 'stop-recording';
 
 export type Signal =
   | { type: 'offer'; to: string; sdp: RTCSessionDescriptionInit }
@@ -32,6 +34,9 @@ export type Signal =
   | { type: 'recording_start'; startedAt: number }
   | { type: 'recording_stop' }
   | { type: 'recording_upload_progress'; participantId: string; progress: number }
+  | { type: 'recording_track_offset'; participantId: string; offset: number }
+  | { type: 'recording_ready'; downloadUrl: string }
+  | { type: 'recording_failed'; error: string }
   | { type: 'media-state'; video: boolean; audio: boolean; screen: boolean }
   | { type: 'audio-activity'; level: number; speaking: boolean }
   | { type: 'active_speaker' }
@@ -67,6 +72,9 @@ export function isSignal(obj: unknown): obj is Signal {
     'recording_start',
     'recording_stop',
     'recording_upload_progress',
+    'recording_track_offset',
+    'recording_ready',
+    'recording_failed',
     'media-state',
     'audio-activity',
     'active_speaker',
