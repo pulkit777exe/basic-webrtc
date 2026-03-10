@@ -1,7 +1,7 @@
 import { WebSocket, WebSocketServer } from 'ws';
 import { db } from '../db';
 import { users, messages, rooms, roomParticipants, roomSettings } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { validateRoomId } from '../utils/validation';
 import {
   addPeerToRoom,
@@ -421,6 +421,7 @@ export class WebSocketHandler {
           return;
         }
         await setRoomLocked(roomId, signal.locked);
+        await db.update(rooms).set({ isLocked: signal.locked }).where(eq(rooms.id, roomId));
         await publishSignal(roomId, { type: 'room_lock_changed', locked: signal.locked });
         this.send(ws, { type: 'ack', action: 'lock' });
         return;
@@ -476,7 +477,7 @@ export class WebSocketHandler {
         await setPeerRole(roomId, signal.targetId, 'co-host');
         await db.update(roomParticipants)
           .set({ role: 'co-host' })
-          .where(eq(roomParticipants.roomId, roomId) && eq(roomParticipants.userId, signal.targetId));
+          .where(and(eq(roomParticipants.roomId, roomId), eq(roomParticipants.userId, signal.targetId)));
         await publishSignal(roomId, { type: 'role_changed', targetId: signal.targetId, role: 'co-host' });
         this.send(ws, { type: 'ack', action: 'promote' });
         return;
@@ -515,17 +516,7 @@ export class WebSocketHandler {
 
 
 
-      if (signal.type === 'room_locked') {
-        const allowed = await canPerformAdminAction(roomId, userId, 'lock');
-        if (!allowed) {
-          this.sendError(ws, 'Unauthorized');
-          return;
-        }
-        await setRoomLocked(roomId, signal.locked);
-        await db.update(rooms).set({ isLocked: signal.locked }).where(eq(rooms.id, roomId));
-        this.publish(roomId, { type: 'room_locked', locked: signal.locked, from: userId, roomId });
-        return;
-      }
+
 
       if (signal.type === 'recording_start' || signal.type === 'recording_stop') {
         const role = await getPeerRole(roomId, userId);
