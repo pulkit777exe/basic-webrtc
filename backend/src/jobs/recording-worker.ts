@@ -1,15 +1,22 @@
 import { Queue, Worker } from 'bullmq';
 import { mergeRecordings } from '../services/recording-merge';
-import { redis } from '../config/redis';
 import { setRecordingState } from '../lib/redis-rooms';
 import { publishSignal } from '../lib/redis-streams';
 import { db } from '../db';
 import { recordingSessions } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 
-// Reuse existing Redis connection from config
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+
+// Create new BullMQ connection options
+const connectionOptions = {
+  host: new URL(REDIS_URL).hostname,
+  port: parseInt(new URL(REDIS_URL).port || '6379'),
+  password: new URL(REDIS_URL).password,
+};
+
 export const mergeQueue = new Queue('recording-merge', { 
-  connection: redis
+  connection: connectionOptions
 });
 
 export function startRecordingWorker() {
@@ -21,9 +28,16 @@ export function startRecordingWorker() {
       await setRecordingState(roomId, { status: 'merging' });
       
       // 2. Update PostgreSQL recording_sessions → status merging
-      await db.update(recordingSessions)
-        .set({ status: 'merging' })
-        .where(and(eq(recordingSessions.roomId, roomId), eq(recordingSessions.sessionId, sessionId)));
+      try {
+        await db.update(recordingSessions)
+          .set({ status: 'merging' })
+          .where(and(eq(recordingSessions.roomId, roomId), eq(recordingSessions.sessionId, sessionId)));
+      } catch (dbError) {
+        console.error('Failed to update recording session status in PostgreSQL:', dbError);
+        await setRecordingState(roomId, { status: 'failed' });
+        await publishSignal(roomId, { type: 'recording_failed', error: (dbError as Error).message });
+        throw dbError;
+      }
       
       // 3. Run FFmpeg merge
       const outputPath = await mergeRecordings(roomId, sessionId, tracks);
@@ -50,11 +64,11 @@ export function startRecordingWorker() {
     } catch (error) {
       console.error('Recording worker error:', error);
       await setRecordingState(roomId, { status: 'failed' });
-      await publishSignal(roomId, { type: 'recording_failed', error: error.message });
+      await publishSignal(roomId, { type: 'recording_failed', error: (error as Error).message });
       throw error; // Re-throw to mark BullMQ job as failed
     }
   }, { 
-    connection: redis,
+    connection: connectionOptions,
     concurrency: 2,  // max 2 FFmpeg jobs at once
   });
 

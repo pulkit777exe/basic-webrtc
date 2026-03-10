@@ -108,14 +108,16 @@ export async function mergeRecordings(
   tracks: TrackInfo[]
 ): Promise<string> {
   // Validate track paths to prevent FFmpeg command injection
+  const RECORDINGS_DIR = process.env.RECORDINGS_DIR || 'recordings';
+  const expectedDir = path.join(RECORDINGS_DIR, roomId, sessionId);
+  const expectedDirResolved = path.resolve(expectedDir);
+  
   for (const track of tracks) {
-    const trackPathRegex = /^[a-zA-Z0-9_./-]+$/;
-    if (!trackPathRegex.test(track.path)) {
+    const trackPathResolved = path.resolve(track.path);
+    if (!trackPathResolved.startsWith(expectedDirResolved)) {
       throw new Error(`Invalid track path: ${track.path}`);
     }
   }
-
-  const RECORDINGS_DIR = process.env.RECORDINGS_DIR || 'recordings';
   const outputDir = path.join(RECORDINGS_DIR, roomId, sessionId);
   fs.mkdirSync(outputDir, { recursive: true });
   const outputPath = path.join(outputDir, 'final.mp4');
