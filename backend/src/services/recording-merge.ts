@@ -145,9 +145,11 @@ export async function mergeRecordings(
   return new Promise((resolve, reject) => {
     let command = ffmpeg();
 
-    // Add inputs
+    // Add inputs - use file protocols and ensure paths are properly escaped
     processedTracks.forEach(track => {
-      command = command.input(track.path);
+      // Use Node.js's built-in URL encoding to safely pass paths to FFmpeg
+      const safePath = new URL(`file://${path.resolve(track.path)}`).href;
+      command = command.input(safePath);
     });
 
     const filters = buildGridFilter(processedTracks.length);
@@ -160,12 +162,16 @@ export async function mergeRecordings(
     }
 
     // Output settings
+    const ffmpegPreset = process.env.FFMPEG_PRESET || 'fast';
+    const ffmpegCrf = process.env.FFMPEG_CRF || '22';
+    const ffmpegAudioBitrate = process.env.FFMPEG_AUDIO_BITRATE || '192k';
+
     command = command
       .output(outputPath)
       .videoCodec('libx264')
-      .outputOptions(['-preset fast', '-crf 22'])
+      .outputOptions([`-preset ${ffmpegPreset}`, `-crf ${ffmpegCrf}`])
       .audioCodec('aac')
-      .outputOptions(['-b:a 192k', '-movflags +faststart'])
+      .outputOptions([`-b:a ${ffmpegAudioBitrate}`, '-movflags +faststart'])
       .on('end', () => {
         // Clean up temporary padded files
         processedTracks.forEach(track => {

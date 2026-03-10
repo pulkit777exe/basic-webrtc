@@ -40,7 +40,15 @@ export function startRecordingWorker() {
       }
       
       // 3. Run FFmpeg merge
-      const outputPath = await mergeRecordings(roomId, sessionId, tracks);
+      let outputPath;
+      try {
+        outputPath = await mergeRecordings(roomId, sessionId, tracks);
+      } catch (mergeError) {
+        console.error('FFmpeg merge failed:', mergeError);
+        await setRecordingState(roomId, { status: 'failed' });
+        await publishSignal(roomId, { type: 'recording_failed', error: 'Merge failed' });
+        throw mergeError;
+      }
       
       // 4. Update Redis state → done, set outputPath
       await setRecordingState(roomId, { 

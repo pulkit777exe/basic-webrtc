@@ -6,6 +6,10 @@ export function validateRoomId(roomId: string): boolean {
   return /^[a-zA-Z0-9]{10}$/.test(roomId);
 }
 
+export function validateId(param: string): boolean {
+  return !!(param && typeof param === 'string' && param.length >= 8 && param.length <= 32);
+}
+
 export function generateRoomId(): string {
   return nanoid10();
 }

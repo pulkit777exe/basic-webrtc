@@ -7,6 +7,7 @@ import { recordingSessions, recordingTracks } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { authenticateToken } from '../middleware/auth';
 import { verifyRoomToken } from '../utils/jwt';
+import { validateId, validateRoomId } from '../utils/validation';
 import { redis } from '../config/redis';
 import { mergeQueue } from '../jobs/recording-worker';
 import { setRecordingState, getRecordingState, roomRecordingKey } from '../lib/redis-rooms';
@@ -43,10 +44,18 @@ router.post(
     let lockAcquired = false;
 
     try {
-      // Validate sessionId
-      if (!sessionId || typeof sessionId !== 'string' || sessionId.length < 8 || sessionId.length > 32) {
-        res.status(400).json({ error: 'Invalid sessionId', code: 'INVALID_SESSION_ID' });
-        return;
+      // Validate parameters with appropriate validators and error codes
+      const validationRules = [
+        { value: roomId, validator: validateRoomId, error: 'Invalid roomId', code: 'INVALID_ROOM_ID' },
+        { value: participantId, validator: validateId, error: 'Invalid participantId', code: 'INVALID_PARTICIPANT_ID' },
+        { value: sessionId, validator: validateId, error: 'Invalid sessionId', code: 'INVALID_SESSION_ID' }
+      ];
+
+      for (const { value, validator, error, code } of validationRules) {
+        if (!validator(value)) {
+          res.status(400).json({ error, code });
+          return;
+        }
       }
 
       const chunkIndexNum = parseInt(chunkIndex, 10);
@@ -81,8 +90,17 @@ router.post(
 
       // Use Redis-based chunk counter to track all chunks received
       const chunkCountKey = `upload:chunks:${roomId}:${participantId}:${sessionId}`;
-      const currentCount = await redis.incr(chunkCountKey);
-      await redis.expire(chunkCountKey, ROOM_TTL_SEC);
+      let currentCount;
+      try {
+        currentCount = await redis.incr(chunkCountKey);
+        await redis.expire(chunkCountKey, ROOM_TTL_SEC);
+      } catch (redisError) {
+        console.error('Redis counter error:', redisError);
+        await redis.del(lockKey).catch(err => console.error('Failed to release lock:', err));
+        lockAcquired = false;
+        res.status(500).json({ error: 'Failed to track chunk count', code: 'REDIS_COUNTER_ERROR' });
+        return;
+      }
 
       // Check if all chunks received
       if (currentCount === totalChunksNum) {
