@@ -15,7 +15,12 @@ type EmailTemplate =
   | 'email_verification'
   | 'password_reset'
   | 'password_reset_success'
-  | 'backup_code_security_alert';
+  | 'backup_code_security_alert'
+  | 'account_lockout_alert'
+  | 'account_lockout_cleared'
+  | 'two_factor_enabled'
+  | 'two_factor_disabled'
+  | 'suspicious_login';
 
 interface OtpTemplateData {
   code: string;
@@ -43,11 +48,52 @@ interface BackupCodeSecurityAlertTemplateData {
   userAgent: string;
 }
 
+interface AccountLockoutAlertTemplateData {
+  userName: string;
+  lockedUntil: string;
+  ipAddress?: string;
+  resetUrl: string;
+}
+
+interface AccountLockoutClearedTemplateData {
+  userName: string;
+  timestamp: string;
+  ipAddress?: string;
+}
+
+interface TwoFactorEnabledTemplateData {
+  userName: string;
+  timestamp: string;
+}
+
+interface TwoFactorDisabledTemplateData {
+  userName: string;
+  timestamp: string;
+  ipAddress?: string;
+}
+
+interface SuspiciousLoginTemplateData {
+  userName: string;
+  city: string;
+  country: string;
+  browser: string;
+  os: string;
+  ipAddress: string;
+  loginTime: string;
+  reasons: string[];
+  revokeUrl: string;
+}
+
 type EmailTemplateData =
   | OtpTemplateData
   | PasswordResetTemplateData
   | PasswordResetSuccessTemplateData
-  | BackupCodeSecurityAlertTemplateData;
+  | BackupCodeSecurityAlertTemplateData
+  | AccountLockoutAlertTemplateData
+  | AccountLockoutClearedTemplateData
+  | TwoFactorEnabledTemplateData
+  | TwoFactorDisabledTemplateData
+  | SuspiciousLoginTemplateData;
 
 interface QueueEmailInput {
   to: string;
@@ -189,6 +235,116 @@ function renderBackupCodeSecurityAlertTemplate(
   };
 }
 
+function renderAccountLockoutAlertTemplate(
+  data: AccountLockoutAlertTemplateData,
+): { subject: string; html: string } {
+  return {
+    subject: 'Your account was temporarily locked',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1f2937;">
+        <h2>Account temporarily locked</h2>
+        <p>Hi ${escapeHtml(data.userName)},</p>
+        <p>We locked your account after repeated failed sign-in attempts.</p>
+        <p style="margin-top: 8px; color: #4b5563;">
+          Locked until: ${escapeHtml(data.lockedUntil)}<br />
+          IP address: ${escapeHtml(data.ipAddress || 'Unavailable')}
+        </p>
+        <div style="margin-top: 18px;">
+          <a href="${escapeHtml(data.resetUrl)}" style="display:inline-block;background:#0f6fff;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:700;">
+            Reset password now
+          </a>
+        </div>
+      </div>
+    `,
+  };
+}
+
+function renderAccountLockoutClearedTemplate(
+  data: AccountLockoutClearedTemplateData,
+): { subject: string; html: string } {
+  return {
+    subject: 'Sign-in after account lock detected',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1f2937;">
+        <h2>Account access restored</h2>
+        <p>Hi ${escapeHtml(data.userName)},</p>
+        <p>Your account was previously locked and has now been accessed successfully.</p>
+        <p style="margin-top: 8px; color: #4b5563;">
+          Time: ${escapeHtml(data.timestamp)}<br />
+          IP address: ${escapeHtml(data.ipAddress || 'Unavailable')}
+        </p>
+      </div>
+    `,
+  };
+}
+
+function renderTwoFactorEnabledTemplate(
+  data: TwoFactorEnabledTemplateData,
+): { subject: string; html: string } {
+  return {
+    subject: 'Two-factor authentication enabled',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1f2937;">
+        <h2>Two-factor authentication enabled</h2>
+        <p>Hi ${escapeHtml(data.userName)},</p>
+        <p>2FA was enabled on your account at ${escapeHtml(data.timestamp)}.</p>
+      </div>
+    `,
+  };
+}
+
+function renderTwoFactorDisabledTemplate(
+  data: TwoFactorDisabledTemplateData,
+): { subject: string; html: string } {
+  return {
+    subject: 'Two-factor authentication disabled',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1f2937;">
+        <h2>Two-factor authentication disabled</h2>
+        <p>Hi ${escapeHtml(data.userName)},</p>
+        <p>2FA was disabled at ${escapeHtml(data.timestamp)}.</p>
+        <p style="margin-top: 8px; color: #4b5563;">
+          IP address: ${escapeHtml(data.ipAddress || 'Unavailable')}
+        </p>
+      </div>
+    `,
+  };
+}
+
+function renderSuspiciousLoginTemplate(
+  data: SuspiciousLoginTemplateData,
+): { subject: string; html: string } {
+  const reasons = data.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join('');
+  return {
+    subject: '⚠️ New sign-in to your account',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 620px; margin: 0 auto; color: #1f2937;">
+        <h2 style="margin-bottom: 10px;">We noticed a new sign-in to your account</h2>
+        <p>Hi ${escapeHtml(data.userName)},</p>
+        <table style="width:100%;border-collapse:collapse;margin-top:14px;">
+          <tr><td style="padding:6px 0;color:#4b5563;">Time</td><td style="padding:6px 0;">${escapeHtml(data.loginTime)}</td></tr>
+          <tr><td style="padding:6px 0;color:#4b5563;">Location</td><td style="padding:6px 0;">${escapeHtml(data.city)}, ${escapeHtml(data.country)}</td></tr>
+          <tr><td style="padding:6px 0;color:#4b5563;">Device</td><td style="padding:6px 0;">${escapeHtml(data.browser)} on ${escapeHtml(data.os)}</td></tr>
+          <tr><td style="padding:6px 0;color:#4b5563;">IP Address</td><td style="padding:6px 0;">${escapeHtml(data.ipAddress)}</td></tr>
+        </table>
+        ${
+          reasons
+            ? `<p style="margin-top:14px;font-weight:600;">Why this looked unusual:</p><ul style="margin-top:8px;padding-left:20px;">${reasons}</ul>`
+            : ''
+        }
+        <div style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap;">
+          <a href="${escapeHtml(data.revokeUrl)}" style="display:inline-block;background:#0f6fff;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700;">
+            Yes, this was me
+          </a>
+          <a href="${escapeHtml(data.revokeUrl)}" style="display:inline-block;background:#b91c1c;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700;">
+            No, secure my account
+          </a>
+        </div>
+      </div>
+    `,
+  };
+}
+
 function renderEmail(
   template: EmailTemplate,
   data: EmailTemplateData,
@@ -205,7 +361,22 @@ function renderEmail(
   if (template === 'password_reset_success') {
     return renderPasswordResetSuccessTemplate(data as PasswordResetSuccessTemplateData);
   }
-  return renderBackupCodeSecurityAlertTemplate(data as BackupCodeSecurityAlertTemplateData);
+  if (template === 'backup_code_security_alert') {
+    return renderBackupCodeSecurityAlertTemplate(data as BackupCodeSecurityAlertTemplateData);
+  }
+  if (template === 'account_lockout_alert') {
+    return renderAccountLockoutAlertTemplate(data as AccountLockoutAlertTemplateData);
+  }
+  if (template === 'account_lockout_cleared') {
+    return renderAccountLockoutClearedTemplate(data as AccountLockoutClearedTemplateData);
+  }
+  if (template === 'two_factor_enabled') {
+    return renderTwoFactorEnabledTemplate(data as TwoFactorEnabledTemplateData);
+  }
+  if (template === 'two_factor_disabled') {
+    return renderTwoFactorDisabledTemplate(data as TwoFactorDisabledTemplateData);
+  }
+  return renderSuspiciousLoginTemplate(data as SuspiciousLoginTemplateData);
 }
 
 export async function queueEmail(input: QueueEmailInput): Promise<void> {

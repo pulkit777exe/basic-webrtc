@@ -4,6 +4,7 @@ import { deleteRefreshSession } from '../config/redis.js';
 import {
   extractAccessToken,
   hashSessionToken,
+  isSessionRestricted,
   revokeSessionByTokenHash,
   touchSessionActivity,
   validateSessionToken,
@@ -22,6 +23,7 @@ declare global {
       };
       authToken?: string;
       authTokenHash?: string;
+      restrictedSession?: boolean;
     }
   }
 }
@@ -32,6 +34,12 @@ export interface AuthRequest extends Request {
     email: string;
   };
 }
+
+const RESTRICTED_SESSION_ALLOWED_PATHS = new Set([
+  '/me',
+  '/verify-suspicious-login',
+  '/logout',
+]);
 
 export function authenticate(req: Request, res: Response, next: NextFunction): void {
   const token = extractAccessToken(req);
@@ -56,10 +64,22 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
     }
 
     await touchSessionActivity(tokenHash);
+    const restrictedSession = await isSessionRestricted(tokenHash);
+    if (
+      restrictedSession &&
+      !RESTRICTED_SESSION_ALLOWED_PATHS.has(req.path)
+    ) {
+      res.status(403).json({
+        error: 'SUSPICIOUS_LOGIN_VERIFICATION_REQUIRED',
+      });
+      return;
+    }
+
     req.user = { id: payload.userId, email: payload.email };
     req.authUser = { userId: payload.userId, email: payload.email };
     req.authToken = token;
     req.authTokenHash = tokenHash;
+    req.restrictedSession = restrictedSession;
     next();
   })().catch(() => {
     res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });

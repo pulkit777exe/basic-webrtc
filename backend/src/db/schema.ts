@@ -9,6 +9,7 @@ import {
   text,
   bigint,
   index,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 import { InferSelectModel, InferInsertModel, desc } from 'drizzle-orm';
 
@@ -23,6 +24,12 @@ export const users = pgTable('users', {
   googleId: varchar('google_id', { length: 255 }).unique(),
   passwordHash: varchar('password_hash', { length: 255 }),
   emailVerified: boolean('email_verified').notNull().default(false),
+  failedLoginAttempts: integer('failed_login_attempts').notNull().default(0),
+  lockedUntil: timestamp('locked_until'),
+  lastFailedLoginAt: timestamp('last_failed_login_at'),
+  twoFactorEnabled: boolean('two_factor_enabled').notNull().default(false),
+  twoFactorSecret: varchar('two_factor_secret', { length: 255 }),
+  twoFactorEnabledAt: timestamp('two_factor_enabled_at'),
   recoveryEmail: varchar('recovery_email', { length: 255 }),
   recoveryEmailVerified: boolean('recovery_email_verified').notNull().default(false),
   backupCodesGeneratedAt: timestamp('backup_codes_generated_at'),
@@ -148,6 +155,7 @@ export const userSessions = pgTable(
     revokedAt: timestamp('revoked_at'),
     expiresAt: timestamp('expires_at').notNull(),
     isCurrent: boolean('is_current').notNull().default(false),
+    suspiciousVerifiedAt: timestamp('suspicious_verified_at'),
   },
   (table) => ({
     userRevokedExpiresIdx: index('user_sessions_user_revoked_expires_idx').on(
@@ -156,6 +164,33 @@ export const userSessions = pgTable(
       table.expiresAt,
     ),
     tokenHashIdx: index('user_sessions_token_hash_idx').on(table.tokenHash),
+  }),
+);
+
+export const loginEvents = pgTable(
+  'login_events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    sessionId: uuid('session_id').references(() => userSessions.id),
+    ipAddress: varchar('ip_address', { length: 45 }).notNull(),
+    country: varchar('country', { length: 100 }),
+    city: varchar('city', { length: 100 }),
+    deviceFingerprint: varchar('device_fingerprint', { length: 64 }),
+    browser: varchar('browser', { length: 100 }),
+    os: varchar('os', { length: 100 }),
+    deviceType: varchar('device_type', { length: 20 }),
+    isSuspicious: boolean('is_suspicious').notNull().default(false),
+    suspiciousReasons: jsonb('suspicious_reasons'),
+    alertSent: boolean('alert_sent').notNull().default(false),
+    confirmedAt: timestamp('confirmed_at'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    userCreatedAtIdx: index('login_events_user_created_at_idx').on(table.userId, desc(table.createdAt)),
+    userSuspiciousIdx: index('login_events_user_suspicious_idx').on(table.userId, table.isSuspicious),
   }),
 );
 
@@ -194,5 +229,7 @@ export type BackupCode = InferSelectModel<typeof backupCodes>;
 export type InsertBackupCode = InferInsertModel<typeof backupCodes>;
 export type UserSession = InferSelectModel<typeof userSessions>;
 export type InsertUserSession = InferInsertModel<typeof userSessions>;
+export type LoginEvent = InferSelectModel<typeof loginEvents>;
+export type InsertLoginEvent = InferInsertModel<typeof loginEvents>;
 export type PasswordResetToken = InferSelectModel<typeof passwordResetTokens>;
 export type InsertPasswordResetToken = InferInsertModel<typeof passwordResetTokens>;

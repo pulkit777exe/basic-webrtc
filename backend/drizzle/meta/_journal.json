@@ -50,6 +50,13 @@
       "when": 1773302400000,
       "tag": "0006_account_recovery_and_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1773313200000,
+      "tag": "0007_auth_security_and_2fa",
+      "breakpoints": true
     }
   ]
 }

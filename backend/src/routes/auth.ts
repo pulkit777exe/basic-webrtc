@@ -2,20 +2,22 @@ import bcrypt from 'bcrypt';
 import { createHash, randomBytes } from 'crypto';
 import { Router, Request, Response } from 'express';
 import { and, desc, eq, gt, isNull, ne, or, sql } from 'drizzle-orm';
-import { login, refreshTokens } from '../services/auth.js';
+import { refreshTokens } from '../services/auth.js';
 import { createAndSendOtp, verifyOtp } from '../services/otp.js';
 import { SignupPayload, LoginPayload } from '../types/index.js';
 import { redis, setRefreshSession, deleteRefreshSession } from '../config/redis.js';
 import { logoutRevoke, authenticateToken } from '../middleware/auth.js';
 import { db } from '../db/index.js';
-import { backupCodes, otpCodes, passwordResetTokens, users } from '../db/schema.js';
+import { backupCodes, loginEvents, otpCodes, passwordResetTokens, users } from '../db/schema.js';
 import { queueEmail } from '../services/email.js';
 import { validatePassword } from '../utils/password.js';
 import { validateName } from '../utils/bloomFilter.js';
 import {
   generateAccessToken,
   generateRefreshToken,
+  generateTwoFactorPendingToken,
   verifyRefreshToken,
+  verifyTwoFactorPendingToken,
 } from '../utils/jwt.js';
 import {
   createSessionForAccessToken,
@@ -24,10 +26,26 @@ import {
   hashSessionToken,
   invalidateAllSessionsForUser,
   listActiveSessionsForUser,
+  markSessionSuspiciousVerified,
+  parseUserAgent,
   revokeAllSessionsForUser,
   revokeSessionById,
   revokeSessionByTokenHash,
 } from '../services/session.js';
+import { passwordResetLimiter, loginLimiter, otpLimiter, strictLimiter } from '../lib/rate-limiters.js';
+import { decrypt, encrypt } from '../lib/encryption.js';
+import { analyzeLogin } from '../services/login-analyzer.js';
+import {
+  buildOtpUri,
+  buildQrCodeDataUrl,
+  formatManualEntryKey,
+  generateTwoFactorSecret,
+  getTwoFactorSetupTtlSeconds,
+  twoFactorPendingLoginKey,
+  twoFactorPendingSetupKey,
+  twoFactorUsedCodeKey,
+  verifyTotpToken,
+} from '../services/two-factor.js';
 
 const router = Router();
 const FORGOT_PASSWORD_RATE_LIMIT_WINDOW_SECONDS = 3600;
@@ -49,6 +67,13 @@ const RECOVERY_EMAIL_VERIFY_WINDOW_SECONDS = 15 * 60;
 const RECOVERY_GENERIC_SUCCESS_MESSAGE = 'If a recovery email is set, we sent a link';
 const RECOVERY_EMAIL_RESEND_MAX = 3;
 const RECOVERY_EMAIL_RESEND_WINDOW_SECONDS = 60 * 60;
+const TWO_FACTOR_PENDING_LOGIN_WINDOW_SECONDS = 5 * 60;
+const TWO_FACTOR_VALIDATE_RATE_LIMIT_WINDOW_SECONDS = 5 * 60;
+const TWO_FACTOR_VALIDATE_RATE_LIMIT_MAX = 5;
+const LOGIN_FAILURE_CAPTCHA_THRESHOLD = 3;
+const LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60;
+const DUMMY_BCRYPT_HASH = '$2b$12$C6UzMDM.H6dfI/f/IKcEe.6u9N5R16/fsoNqd7qV3CyMfCVxY2ByW';
+const APP_NAME = process.env.TOTP_APP_NAME || 'Meetour';
 
 const cookieOptions = {
   httpOnly: true,
@@ -167,10 +192,268 @@ async function attachAuthSession(
   userId: string,
   accessToken: string,
   refreshToken: string,
+  options?: { suspiciousVerifiedAt?: Date | null },
 ): Promise<void> {
   await setRefreshSession(userId, hashToken(refreshToken));
   res.cookie('refreshToken', refreshToken, cookieOptions);
-  await createSessionForAccessToken(userId, accessToken, req);
+  await createSessionForAccessToken(userId, accessToken, req, options);
+}
+
+function lockoutDurationMsForAttempts(attempts: number): number {
+  if (attempts >= 20) return 24 * 60 * 60 * 1000;
+  if (attempts >= 15) return 2 * 60 * 60 * 1000;
+  if (attempts >= 10) return 30 * 60 * 1000;
+  if (attempts >= 5) return 5 * 60 * 1000;
+  return 0;
+}
+
+function lockoutSecondsForAttempts(attempts: number): number {
+  return Math.ceil(lockoutDurationMsForAttempts(attempts) / 1000);
+}
+
+function accountLockRedisKey(userId: string): string {
+  return `account:locked:${userId}`;
+}
+
+function loginFailureIpKey(ipAddress: string): string {
+  return `login:ipfail:${ipAddress}`;
+}
+
+function twoFactorValidateRateLimitKey(userId: string): string {
+  return `ratelimit:2fa-validate:${userId}`;
+}
+
+function maskIpAddress(ip: string | null): string {
+  if (!ip) return 'Unknown';
+  if (ip.includes('.')) {
+    const parts = ip.split('.');
+    if (parts.length !== 4) return ip;
+    return `${parts[0]}.${parts[1]}.x.x`;
+  }
+  return ip;
+}
+
+function reasonLabel(reason: string): string {
+  switch (reason) {
+    case 'LOGIN_FROM_NEW_COUNTRY':
+      return "You're signing in from a new country";
+    case 'NEW_DEVICE':
+      return "This is a new device we haven't seen before";
+    case 'IMPOSSIBLE_TRAVEL':
+      return 'This location seems far from your recent activity';
+    case 'LOGIN_AFTER_LONG_ABSENCE':
+      return 'This login follows a long period of inactivity';
+    case 'UNUSUAL_LOGIN_TIME':
+      return 'The sign-in time is unusual for your account';
+    case 'TOR_EXIT_NODE':
+      return 'Sign-in originated from a Tor exit node';
+    default:
+      return reason;
+  }
+}
+
+async function incrementLoginFailureIpCounter(ipAddress: string): Promise<number> {
+  const key = loginFailureIpKey(ipAddress);
+  const count = await redis.incr(key);
+  if (count === 1) {
+    await redis.expire(key, LOGIN_FAILURE_WINDOW_SECONDS);
+  }
+  return count;
+}
+
+async function clearLoginFailureIpCounter(ipAddress: string): Promise<void> {
+  await redis.del(loginFailureIpKey(ipAddress));
+}
+
+async function shouldRequireCaptcha(ipAddress: string): Promise<boolean> {
+  const raw = await redis.get(loginFailureIpKey(ipAddress));
+  const failures = raw ? Number(raw) : 0;
+  return Number.isFinite(failures) && failures > LOGIN_FAILURE_CAPTCHA_THRESHOLD;
+}
+
+async function verifyCaptchaToken(captchaToken: string): Promise<boolean> {
+  const secret = process.env.HCAPTCHA_SECRET;
+  if (!secret) {
+    return false;
+  }
+  try {
+    const response = await fetch('https://hcaptcha.com/siteverify', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        secret,
+        response: captchaToken,
+      }),
+    });
+    if (!response.ok) {
+      return false;
+    }
+    const data = (await response.json()) as { success?: boolean };
+    return data.success === true;
+  } catch {
+    return false;
+  }
+}
+
+async function generateBackupCodesForUser(
+  userId: string,
+): Promise<{ formattedCodes: string[]; generatedAt: Date }> {
+  const generatedAt = new Date();
+  const generatedCodes = Array.from({ length: BACKUP_CODE_COUNT }, () => {
+    const raw = randomBytes(5).toString('hex').toUpperCase();
+    const formatted = formatBackupCode(raw);
+    const hash = createHash('sha256').update(raw).digest('hex');
+    return { formatted, hash };
+  });
+
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(backupCodes)
+      .where(and(eq(backupCodes.userId, userId), isNull(backupCodes.usedAt)));
+
+    await tx.insert(backupCodes).values(
+      generatedCodes.map((code) => ({
+        userId,
+        codeHash: code.hash,
+      })),
+    );
+
+    await tx
+      .update(users)
+      .set({ backupCodesGeneratedAt: generatedAt })
+      .where(eq(users.id, userId));
+  });
+
+  return {
+    formattedCodes: generatedCodes.map((code) => code.formatted),
+    generatedAt,
+  };
+}
+
+async function markAccountLockInRedis(
+  userId: string,
+  lockedUntil: Date,
+): Promise<void> {
+  const remainingSeconds = Math.max(
+    1,
+    Math.ceil((lockedUntil.getTime() - Date.now()) / 1000),
+  );
+  await redis.set(
+    accountLockRedisKey(userId),
+    lockedUntil.toISOString(),
+    'EX',
+    remainingSeconds,
+  );
+}
+
+async function clearAccountLockState(userId: string): Promise<void> {
+  await redis.del(accountLockRedisKey(userId));
+}
+
+async function getActiveLockFromRedis(userId: string): Promise<Date | null> {
+  const lockedUntil = await redis.get(accountLockRedisKey(userId));
+  if (!lockedUntil) {
+    return null;
+  }
+  const parsed = new Date(lockedUntil);
+  if (Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now()) {
+    await clearAccountLockState(userId);
+    return null;
+  }
+  return parsed;
+}
+
+async function completeSuccessfulLogin(input: {
+  req: Request;
+  res: Response;
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    avatarUrl: string | null;
+    emailVerified: boolean;
+  };
+}): Promise<{
+  accessToken: string;
+  requiresSuspiciousLoginVerification: boolean;
+  reasons: string[];
+}> {
+  const { req, user } = input;
+  const accessToken = generateAccessToken({ userId: user.id, email: user.email });
+  const refreshToken = generateRefreshToken({ userId: user.id, email: user.email });
+  const ipAddress = getClientIp(req) ?? 'unknown';
+  const parsedAgent = parseUserAgent(req.headers['user-agent']);
+
+  const analysis = await analyzeLogin({
+    userId: user.id,
+    ipAddress,
+    userAgent: req.headers['user-agent'] || '',
+    country: parsedAgent.country ?? '',
+    city: parsedAgent.city ?? '',
+    browser: parsedAgent.browser ?? '',
+    os: parsedAgent.os ?? '',
+    deviceType: parsedAgent.deviceType,
+  });
+
+  const requiresSuspiciousVerification = analysis.riskScore >= 80;
+  const sessionResult = await createSessionForAccessToken(
+    user.id,
+    accessToken,
+    req,
+    { suspiciousVerifiedAt: requiresSuspiciousVerification ? null : new Date() },
+  );
+  if (!requiresSuspiciousVerification) {
+    await setRefreshSession(user.id, hashToken(refreshToken));
+    input.res.cookie('refreshToken', refreshToken, cookieOptions);
+  }
+
+  const shouldSendAlert = analysis.riskScore >= 60;
+  let alertSent = false;
+  if (shouldSendAlert) {
+    try {
+      await queueEmail({
+        to: user.email,
+        template: 'suspicious_login',
+        data: {
+          userName: user.name,
+          city: sessionResult.deviceInfo.city || 'Unknown',
+          country: sessionResult.deviceInfo.country || 'Unknown',
+          browser: sessionResult.deviceInfo.browser || 'Unknown',
+          os: sessionResult.deviceInfo.os || 'Unknown',
+          ipAddress,
+          loginTime: new Date().toISOString(),
+          reasons: analysis.reasons.map(reasonLabel),
+          revokeUrl: `${getFrontendBaseUrl()}/settings/security`,
+        },
+      });
+      alertSent = true;
+    } catch (emailError) {
+      console.error('[Suspicious Login Alert Email Error]', emailError);
+    }
+  }
+
+  await db.insert(loginEvents).values({
+    userId: user.id,
+    sessionId: sessionResult.sessionId,
+    ipAddress,
+    country: sessionResult.deviceInfo.country,
+    city: sessionResult.deviceInfo.city,
+    deviceFingerprint: analysis.deviceFingerprint,
+    browser: sessionResult.deviceInfo.browser,
+    os: sessionResult.deviceInfo.os,
+    deviceType: sessionResult.deviceInfo.deviceType,
+    isSuspicious: analysis.isSuspicious,
+    suspiciousReasons: analysis.reasons,
+    alertSent,
+  });
+
+  return {
+    accessToken,
+    requiresSuspiciousLoginVerification: requiresSuspiciousVerification,
+    reasons: analysis.reasons,
+  };
 }
 
 async function getPasswordValidationErrors(
@@ -259,6 +542,8 @@ router.get('/me', authenticateToken, async (req: Request, res: Response): Promis
         name: users.name,
         avatarUrl: users.avatarUrl,
         emailVerified: users.emailVerified,
+        twoFactorEnabled: users.twoFactorEnabled,
+        twoFactorEnabledAt: users.twoFactorEnabledAt,
         recoveryEmail: users.recoveryEmail,
         recoveryEmailVerified: users.recoveryEmailVerified,
         backupCodesGeneratedAt: users.backupCodesGeneratedAt,
@@ -282,10 +567,13 @@ router.get('/me', authenticateToken, async (req: Request, res: Response): Promis
         name: user.name,
         avatarUrl: user.avatarUrl,
         emailVerified: user.emailVerified,
+        twoFactorEnabled: user.twoFactorEnabled,
+        twoFactorEnabledAt: user.twoFactorEnabledAt,
         recoveryEmail: user.recoveryEmail,
         recoveryEmailVerified: user.recoveryEmailVerified,
         backupCodesGeneratedAt: user.backupCodesGeneratedAt,
         backupCodesRemaining: Number(remainingCodesResult?.count ?? 0),
+        restrictedSession: req.restrictedSession === true,
       },
     });
   } catch (error) {
@@ -393,7 +681,7 @@ router.post('/resend-verification', async (req: Request, res: Response): Promise
   }
 });
 
-router.post('/verify-email', async (req: Request, res: Response): Promise<void> => {
+router.post('/verify-email', otpLimiter, async (req: Request, res: Response): Promise<void> => {
   try {
     const emailInput = typeof req.body?.email === 'string' ? normalizeEmail(req.body.email) : '';
     const otpInput = typeof req.body?.otp === 'string' ? req.body.otp.trim() : '';
@@ -485,7 +773,7 @@ router.post('/verify-email', async (req: Request, res: Response): Promise<void> 
 });
 
 
-router.post('/forgot-password', async (req: Request, res: Response): Promise<void> => {
+router.post('/forgot-password', passwordResetLimiter, async (req: Request, res: Response): Promise<void> => {
   try {
     const emailInput =
       typeof req.body?.email === 'string' ? normalizeEmail(req.body.email) : '';
@@ -621,7 +909,12 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
     await db.transaction(async (tx) => {
       await tx
         .update(users)
-        .set({ passwordHash: newPasswordHash })
+        .set({
+          passwordHash: newPasswordHash,
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+          lastFailedLoginAt: null,
+        })
         .where(eq(users.id, resetRecord.userId));
 
       await tx
@@ -636,6 +929,7 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
     });
 
     await invalidateAllSessionsForUser(resetRecord.userId);
+    await clearAccountLockState(resetRecord.userId);
 
     const ipAddress = getClientIp(req);
     const secureAccountUrl = `${getFrontendBaseUrl()}/auth/forgot-password`;
@@ -661,32 +955,224 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
   }
 });
 
-router.post('/login', async (req: Request, res: Response): Promise<void> => {
+router.post('/login', loginLimiter, async (req: Request, res: Response): Promise<void> => {
   try {
-    const payload: LoginPayload = req.body;
-    const result = await login(payload);
+    const emailInput = typeof req.body?.email === 'string' ? normalizeEmail(req.body.email) : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const captchaToken = typeof req.body?.captchaToken === 'string' ? req.body.captchaToken : '';
+    const ipAddress = getClientIp(req) ?? 'unknown';
 
-    if (!result) {
-      res.status(401).json({ error: 'Invalid credentials', code: 'UNAUTHORIZED' });
+    const captchaRequired = await shouldRequireCaptcha(ipAddress);
+    if (captchaRequired) {
+      const captchaValid = await verifyCaptchaToken(captchaToken);
+      if (!captchaValid) {
+        res.status(400).json({ error: 'CAPTCHA_REQUIRED' });
+        return;
+      }
+    }
+
+    const [user] = await db
+      .select({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        avatarUrl: users.avatarUrl,
+        passwordHash: users.passwordHash,
+        emailVerified: users.emailVerified,
+        failedLoginAttempts: users.failedLoginAttempts,
+        lockedUntil: users.lockedUntil,
+        twoFactorEnabled: users.twoFactorEnabled,
+      })
+      .from(users)
+      .where(sql`lower(${users.email}) = ${emailInput}`)
+      .limit(1);
+
+    if (!user || !user.passwordHash) {
+      await bcrypt.compare(password || 'invalid', DUMMY_BCRYPT_HASH);
+      const ipFailures = await incrementLoginFailureIpCounter(ipAddress);
+      res.status(401).json({
+        error: 'INVALID_CREDENTIALS',
+        ...(ipFailures > LOGIN_FAILURE_CAPTCHA_THRESHOLD ? { captchaRequired: true } : {}),
+      });
       return;
     }
 
-    if (!result.user.emailVerified) {
+    const lockFromRedis = await getActiveLockFromRedis(user.id);
+    if (lockFromRedis) {
+      const remainingSeconds = Math.max(
+        1,
+        Math.ceil((lockFromRedis.getTime() - Date.now()) / 1000),
+      );
+      res.status(423).json({
+        error: 'ACCOUNT_LOCKED',
+        lockedUntil: lockFromRedis.toISOString(),
+        remainingSeconds,
+      });
+      return;
+    }
+
+    if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
+      await markAccountLockInRedis(user.id, user.lockedUntil);
+      const remainingSeconds = Math.max(
+        1,
+        Math.ceil((user.lockedUntil.getTime() - Date.now()) / 1000),
+      );
+      res.status(423).json({
+        error: 'ACCOUNT_LOCKED',
+        lockedUntil: user.lockedUntil.toISOString(),
+        remainingSeconds,
+      });
+      return;
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isPasswordValid) {
+      const now = new Date();
+      const failedLoginAttempts = (user.failedLoginAttempts ?? 0) + 1;
+      const lockoutSeconds = lockoutSecondsForAttempts(failedLoginAttempts);
+      const ipFailures = await incrementLoginFailureIpCounter(ipAddress);
+
+      if (lockoutSeconds > 0) {
+        const lockedUntil = new Date(now.getTime() + lockoutSeconds * 1000);
+        await db
+          .update(users)
+          .set({
+            failedLoginAttempts,
+            lastFailedLoginAt: now,
+            lockedUntil,
+          })
+          .where(eq(users.id, user.id));
+        await markAccountLockInRedis(user.id, lockedUntil);
+
+        try {
+          await queueEmail({
+            to: user.email,
+            template: 'account_lockout_alert',
+            data: {
+              userName: user.name,
+              lockedUntil: lockedUntil.toISOString(),
+              ipAddress,
+              resetUrl: `${getFrontendBaseUrl()}/auth/forgot-password`,
+            },
+          });
+        } catch (emailError) {
+          console.error('[Account Lockout Email Error]', emailError);
+        }
+
+        res.status(423).json({
+          error: 'ACCOUNT_LOCKED',
+          lockedUntil: lockedUntil.toISOString(),
+          remainingSeconds: lockoutSeconds,
+          ...(ipFailures > LOGIN_FAILURE_CAPTCHA_THRESHOLD ? { captchaRequired: true } : {}),
+        });
+        return;
+      }
+
+      await db
+        .update(users)
+        .set({
+          failedLoginAttempts,
+          lastFailedLoginAt: now,
+        })
+        .where(eq(users.id, user.id));
+
+      const attemptsLeft = Math.max(0, 5 - failedLoginAttempts);
+      res.status(401).json({
+        error: 'INVALID_CREDENTIALS',
+        ...(failedLoginAttempts >= 3 ? { attemptsLeft } : {}),
+        ...(ipFailures > LOGIN_FAILURE_CAPTCHA_THRESHOLD ? { captchaRequired: true } : {}),
+      });
+      return;
+    }
+
+    const wasPreviouslyLocked = Boolean(
+      user.lockedUntil && user.lockedUntil.getTime() <= Date.now(),
+    );
+    await db
+      .update(users)
+      .set({
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+        lastFailedLoginAt: null,
+      })
+      .where(eq(users.id, user.id));
+    await clearAccountLockState(user.id);
+    await clearLoginFailureIpCounter(ipAddress);
+
+    if (!user.emailVerified) {
       res.status(403).json({
         error: 'Email not verified',
-        user: result.user,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          emailVerified: false,
+          avatarUrl: user.avatarUrl,
+        },
         code: 'EMAIL_NOT_VERIFIED',
       });
       return;
     }
 
-    if (result.refreshToken) {
-      res.cookie('refreshToken', result.refreshToken, cookieOptions);
+    if (user.twoFactorEnabled) {
+      const pendingToken = generateTwoFactorPendingToken({
+        userId: user.id,
+        email: user.email,
+      });
+      await redis.set(
+        twoFactorPendingLoginKey(hashToken(pendingToken)),
+        user.id,
+        'EX',
+        TWO_FACTOR_PENDING_LOGIN_WINDOW_SECONDS,
+      );
+      res.status(200).json({
+        requires2FA: true,
+        pendingToken,
+      });
+      return;
     }
-    if (result.accessToken) {
-      await createSessionForAccessToken(result.user.id, result.accessToken, req);
+
+    const loginResult = await completeSuccessfulLogin({
+      req,
+      res,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        avatarUrl: user.avatarUrl,
+        emailVerified: user.emailVerified,
+      },
+    });
+
+    if (wasPreviouslyLocked) {
+      try {
+        await queueEmail({
+          to: user.email,
+          template: 'account_lockout_cleared',
+          data: {
+            userName: user.name,
+            ipAddress,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      } catch (emailError) {
+        console.error('[Account Recovered Email Error]', emailError);
+      }
     }
-    res.json({ user: result.user, accessToken: result.accessToken });
+
+    if (loginResult.requiresSuspiciousLoginVerification) {
+      res.status(200).json({
+        requiresSuspiciousLoginVerification: true,
+        reasons: loginResult.reasons,
+        accessToken: loginResult.accessToken,
+      });
+      return;
+    }
+
+    res.status(200).json({
+      user: mapUserForAuthResponse(user),
+      accessToken: loginResult.accessToken,
+    });
   } catch (error) {
     console.error('[Login Error]', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -872,35 +1358,11 @@ router.post('/backup-codes/generate', authenticateToken, async (req: Request, re
       }
     }
 
-    const now = new Date();
-    const generatedCodes = Array.from({ length: BACKUP_CODE_COUNT }, () => {
-      const raw = randomBytes(5).toString('hex').toUpperCase();
-      const formatted = formatBackupCode(raw);
-      const hash = createHash('sha256').update(raw).digest('hex');
-      return { formatted, hash };
-    });
-
-    await db.transaction(async (tx) => {
-      await tx
-        .delete(backupCodes)
-        .where(and(eq(backupCodes.userId, userId), isNull(backupCodes.usedAt)));
-
-      await tx.insert(backupCodes).values(
-        generatedCodes.map((code) => ({
-          userId,
-          codeHash: code.hash,
-        })),
-      );
-
-      await tx
-        .update(users)
-        .set({ backupCodesGeneratedAt: now })
-        .where(eq(users.id, userId));
-    });
+    const result = await generateBackupCodesForUser(userId);
 
     res.status(200).json({
-      codes: generatedCodes.map((code) => code.formatted),
-      generatedAt: now.toISOString(),
+      codes: result.formattedCodes,
+      generatedAt: result.generatedAt.toISOString(),
     });
   } catch (error) {
     console.error('[Generate Backup Codes Error]', error);
@@ -908,7 +1370,7 @@ router.post('/backup-codes/generate', authenticateToken, async (req: Request, re
   }
 });
 
-router.post('/recover/backup-code', async (req: Request, res: Response): Promise<void> => {
+router.post('/recover/backup-code', strictLimiter, async (req: Request, res: Response): Promise<void> => {
   try {
     const emailInput = typeof req.body?.email === 'string' ? normalizeEmail(req.body.email) : '';
     const backupCodeInput =
@@ -1256,5 +1718,530 @@ router.post('/recover/recovery-email', async (req: Request, res: Response): Prom
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+router.post('/2fa/setup', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+    const [user] = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        passwordHash: users.passwordHash,
+        emailVerified: users.emailVerified,
+        twoFactorEnabled: users.twoFactorEnabled,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!user) {
+      res.status(404).json({ error: 'USER_NOT_FOUND' });
+      return;
+    }
+    if (!user.emailVerified) {
+      res.status(403).json({ error: 'EMAIL_NOT_VERIFIED' });
+      return;
+    }
+    if (user.twoFactorEnabled) {
+      res.status(400).json({ error: '2FA_ALREADY_ENABLED' });
+      return;
+    }
+    if (!user.passwordHash) {
+      res.status(400).json({ error: 'PASSWORD_REQUIRED' });
+      return;
+    }
+
+    const validPassword = await bcrypt.compare(password, user.passwordHash);
+    if (!validPassword) {
+      res.status(401).json({ error: 'INVALID_PASSWORD' });
+      return;
+    }
+
+    const secret = generateTwoFactorSecret();
+    await redis.set(
+      twoFactorPendingSetupKey(userId),
+      secret,
+      'EX',
+      getTwoFactorSetupTtlSeconds(),
+    );
+
+    const otpUri = buildOtpUri(user.email, APP_NAME, secret);
+    const qrCode = await buildQrCodeDataUrl(otpUri);
+    res.status(200).json({
+      qrCode,
+      manualEntryKey: formatManualEntryKey(secret),
+    });
+  } catch (error) {
+    console.error('[2FA Setup Error]', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/2fa/verify-setup', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+    const totp = typeof req.body?.totp === 'string' ? req.body.totp.trim() : '';
+    if (!/^\d{6}$/.test(totp)) {
+      res.status(400).json({ error: 'INVALID_CODE' });
+      return;
+    }
+
+    const setupKey = twoFactorPendingSetupKey(userId);
+    const secret = await redis.get(setupKey);
+    if (!secret) {
+      res.status(400).json({ error: 'SETUP_EXPIRED' });
+      return;
+    }
+
+    const isValid = verifyTotpToken(secret, totp);
+    if (!isValid) {
+      res.status(400).json({ error: 'INVALID_CODE' });
+      return;
+    }
+
+    const encryptedSecret = encrypt(secret);
+    const now = new Date();
+    await db
+      .update(users)
+      .set({
+        twoFactorEnabled: true,
+        twoFactorSecret: encryptedSecret,
+        twoFactorEnabledAt: now,
+      })
+      .where(eq(users.id, userId));
+    await redis.del(setupKey);
+
+    const backupCodesResult = await generateBackupCodesForUser(userId);
+    const [user] = await db
+      .select({
+        email: users.email,
+        name: users.name,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (user) {
+      try {
+        await queueEmail({
+          to: user.email,
+          template: 'two_factor_enabled',
+          data: {
+            userName: user.name,
+            timestamp: now.toISOString(),
+          },
+        });
+      } catch (emailError) {
+        console.error('[2FA Enabled Email Error]', emailError);
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      backupCodes: backupCodesResult.formattedCodes,
+    });
+  } catch (error) {
+    console.error('[2FA Verify Setup Error]', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/2fa/disable', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const totp = typeof req.body?.totp === 'string' ? req.body.totp.trim() : '';
+    if (!password || !/^\d{6}$/.test(totp)) {
+      res.status(400).json({ error: 'PASSWORD_AND_TOTP_REQUIRED' });
+      return;
+    }
+
+    const [user] = await db
+      .select({
+        email: users.email,
+        name: users.name,
+        passwordHash: users.passwordHash,
+        twoFactorEnabled: users.twoFactorEnabled,
+        twoFactorSecret: users.twoFactorSecret,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!user) {
+      res.status(404).json({ error: 'USER_NOT_FOUND' });
+      return;
+    }
+    if (!user.twoFactorEnabled || !user.twoFactorSecret) {
+      res.status(400).json({ error: '2FA_NOT_ENABLED' });
+      return;
+    }
+    if (!user.passwordHash) {
+      res.status(400).json({ error: 'PASSWORD_REQUIRED' });
+      return;
+    }
+
+    const passwordValid = await bcrypt.compare(password, user.passwordHash);
+    if (!passwordValid) {
+      res.status(401).json({ error: 'INVALID_PASSWORD' });
+      return;
+    }
+
+    const secret = decrypt(user.twoFactorSecret);
+    const totpValid = verifyTotpToken(secret, totp);
+    if (!totpValid) {
+      res.status(400).json({ error: 'INVALID_CODE' });
+      return;
+    }
+
+    await db
+      .update(users)
+      .set({
+        twoFactorEnabled: false,
+        twoFactorSecret: null,
+        twoFactorEnabledAt: null,
+      })
+      .where(eq(users.id, userId));
+    await revokeAllSessionsForUser(userId, req.authTokenHash ?? null);
+
+    try {
+      await queueEmail({
+        to: user.email,
+        template: 'two_factor_disabled',
+        data: {
+          userName: user.name,
+          timestamp: new Date().toISOString(),
+          ipAddress: getClientIp(req) ?? undefined,
+        },
+      });
+    } catch (emailError) {
+      console.error('[2FA Disabled Email Error]', emailError);
+    }
+
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('[2FA Disable Error]', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/2fa/validate', strictLimiter, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const pendingToken =
+      typeof req.body?.pendingToken === 'string' ? req.body.pendingToken.trim() : '';
+    const totp = typeof req.body?.totp === 'string' ? req.body.totp.trim() : '';
+    const backupCodeRaw =
+      typeof req.body?.backupCode === 'string' ? req.body.backupCode.trim() : '';
+
+    if (!pendingToken) {
+      res.status(401).json({ error: 'PENDING_TOKEN_REQUIRED' });
+      return;
+    }
+    const pendingPayload = verifyTwoFactorPendingToken(pendingToken);
+    if (!pendingPayload) {
+      res.status(401).json({ error: 'PENDING_TOKEN_EXPIRED' });
+      return;
+    }
+
+    const pendingHash = hashToken(pendingToken);
+    const pendingKey = twoFactorPendingLoginKey(pendingHash);
+    const pendingUserId = await redis.get(pendingKey);
+    if (!pendingUserId || pendingUserId !== pendingPayload.userId) {
+      res.status(401).json({ error: 'PENDING_TOKEN_EXPIRED' });
+      return;
+    }
+
+    const validateRateLimit = await applyRateLimit(
+      twoFactorValidateRateLimitKey(pendingPayload.userId),
+      TWO_FACTOR_VALIDATE_RATE_LIMIT_MAX,
+      TWO_FACTOR_VALIDATE_RATE_LIMIT_WINDOW_SECONDS,
+    );
+    if (validateRateLimit.limited) {
+      res.status(429).json({
+        error: 'TOO_MANY_ATTEMPTS',
+        retryAfter: validateRateLimit.retryAfter,
+      });
+      return;
+    }
+
+    const [user] = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        avatarUrl: users.avatarUrl,
+        emailVerified: users.emailVerified,
+        twoFactorEnabled: users.twoFactorEnabled,
+        twoFactorSecret: users.twoFactorSecret,
+      })
+      .from(users)
+      .where(eq(users.id, pendingPayload.userId))
+      .limit(1);
+    if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) {
+      res.status(400).json({ error: '2FA_NOT_ENABLED' });
+      return;
+    }
+
+    let backupCodesRemaining: number | null = null;
+    if (totp) {
+      if (!/^\d{6}$/.test(totp)) {
+        res.status(400).json({ error: 'INVALID_CODE' });
+        return;
+      }
+      const secret = decrypt(user.twoFactorSecret);
+      const validTotp = verifyTotpToken(secret, totp);
+      if (!validTotp) {
+        res.status(400).json({ error: 'INVALID_CODE' });
+        return;
+      }
+
+      const replayKey = twoFactorUsedCodeKey(user.id, totp);
+      const replaySet = await redis.set(replayKey, '1', 'EX', 60, 'NX');
+      if (replaySet !== 'OK') {
+        res.status(400).json({ error: 'CODE_ALREADY_USED' });
+        return;
+      }
+    } else if (backupCodeRaw) {
+      const normalizedCode = normalizeBackupCode(backupCodeRaw);
+      const incomingHash = createHash('sha256').update(normalizedCode).digest('hex');
+      const [matchedCode] = await db
+        .select({
+          id: backupCodes.id,
+        })
+        .from(backupCodes)
+        .where(
+          and(
+            eq(backupCodes.userId, user.id),
+            eq(backupCodes.codeHash, incomingHash),
+            isNull(backupCodes.usedAt),
+          ),
+        )
+        .limit(1);
+      if (!matchedCode) {
+        res.status(400).json({ error: 'INVALID_BACKUP_CODE' });
+        return;
+      }
+
+      await db
+        .update(backupCodes)
+        .set({ usedAt: new Date() })
+        .where(eq(backupCodes.id, matchedCode.id));
+
+      const [remaining] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(backupCodes)
+        .where(and(eq(backupCodes.userId, user.id), isNull(backupCodes.usedAt)));
+      backupCodesRemaining = Number(remaining?.count ?? 0);
+    } else {
+      res.status(400).json({ error: 'CODE_REQUIRED' });
+      return;
+    }
+
+    await redis.del(pendingKey);
+    await redis.del(twoFactorValidateRateLimitKey(user.id));
+
+    const loginResult = await completeSuccessfulLogin({
+      req,
+      res,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        avatarUrl: user.avatarUrl,
+        emailVerified: user.emailVerified,
+      },
+    });
+
+    if (loginResult.requiresSuspiciousLoginVerification) {
+      res.status(200).json({
+        requiresSuspiciousLoginVerification: true,
+        reasons: loginResult.reasons,
+        accessToken: loginResult.accessToken,
+        ...(backupCodesRemaining !== null
+          ? { backupCodesRemaining }
+          : {}),
+      });
+      return;
+    }
+
+    res.status(200).json({
+      user: mapUserForAuthResponse(user),
+      accessToken: loginResult.accessToken,
+      ...(backupCodesRemaining !== null
+        ? { backupCodesRemaining }
+        : {}),
+    });
+  } catch (error) {
+    console.error('[2FA Validate Error]', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/verify-suspicious-login', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (!req.authTokenHash || !req.user) {
+      res.status(401).json({ error: 'UNAUTHORIZED' });
+      return;
+    }
+
+    if (!req.restrictedSession) {
+      res.status(200).json({ success: true });
+      return;
+    }
+
+    const method = typeof req.body?.method === 'string' ? req.body.method : '';
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+    const userId = req.user.id;
+    const [user] = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        twoFactorEnabled: users.twoFactorEnabled,
+        twoFactorSecret: users.twoFactorSecret,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!user) {
+      res.status(404).json({ error: 'USER_NOT_FOUND' });
+      return;
+    }
+
+    if (method === 'email_otp') {
+      if (!code) {
+        await createAndSendOtp(user.email);
+        res.status(200).json({ status: 'OTP_SENT' });
+        return;
+      }
+      const verified = await verifyOtp(user.email, code);
+      if (!verified) {
+        res.status(400).json({ error: 'INVALID_CODE' });
+        return;
+      }
+    } else if (method === 'totp') {
+      if (!user.twoFactorEnabled || !user.twoFactorSecret) {
+        res.status(400).json({ error: '2FA_NOT_ENABLED' });
+        return;
+      }
+      const secret = decrypt(user.twoFactorSecret);
+      const valid = verifyTotpToken(secret, code);
+      if (!valid) {
+        res.status(400).json({ error: 'INVALID_CODE' });
+        return;
+      }
+    } else if (method === 'backup_code') {
+      const normalizedCode = normalizeBackupCode(code);
+      const incomingHash = createHash('sha256').update(normalizedCode).digest('hex');
+      const [matchedCode] = await db
+        .select({ id: backupCodes.id })
+        .from(backupCodes)
+        .where(
+          and(
+            eq(backupCodes.userId, user.id),
+            eq(backupCodes.codeHash, incomingHash),
+            isNull(backupCodes.usedAt),
+          ),
+        )
+        .limit(1);
+      if (!matchedCode) {
+        res.status(400).json({ error: 'INVALID_CODE' });
+        return;
+      }
+      await db
+        .update(backupCodes)
+        .set({ usedAt: new Date() })
+        .where(eq(backupCodes.id, matchedCode.id));
+    } else {
+      res.status(400).json({ error: 'INVALID_METHOD' });
+      return;
+    }
+
+    await markSessionSuspiciousVerified(req.authTokenHash);
+    const refreshToken = generateRefreshToken({
+      userId: user.id,
+      email: user.email,
+    });
+    await setRefreshSession(user.id, hashToken(refreshToken));
+    res.cookie('refreshToken', refreshToken, cookieOptions);
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('[Verify Suspicious Login Error]', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/login-events', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+    const offsetRaw = typeof req.query.offset === 'string' ? Number(req.query.offset) : 0;
+    const offset = Number.isFinite(offsetRaw) ? Math.max(0, offsetRaw) : 0;
+    const limit = 20;
+
+    const events = await db
+      .select({
+        id: loginEvents.id,
+        sessionId: loginEvents.sessionId,
+        ipAddress: loginEvents.ipAddress,
+        country: loginEvents.country,
+        city: loginEvents.city,
+        browser: loginEvents.browser,
+        os: loginEvents.os,
+        deviceType: loginEvents.deviceType,
+        isSuspicious: loginEvents.isSuspicious,
+        suspiciousReasons: loginEvents.suspiciousReasons,
+        confirmedAt: loginEvents.confirmedAt,
+        createdAt: loginEvents.createdAt,
+      })
+      .from(loginEvents)
+      .where(eq(loginEvents.userId, userId))
+      .orderBy(desc(loginEvents.createdAt))
+      .limit(limit + 1)
+      .offset(offset);
+
+    const hasMore = events.length > limit;
+    const payload = hasMore ? events.slice(0, limit) : events;
+    res.status(200).json({
+      events: payload.map((event) => ({
+        ...event,
+        ipAddress: maskIpAddress(event.ipAddress),
+        suspiciousReasons: Array.isArray(event.suspiciousReasons)
+          ? event.suspiciousReasons
+          : [],
+      })),
+      nextOffset: hasMore ? offset + limit : null,
+    });
+  } catch (error) {
+    console.error('[Login Events Error]', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post(
+  '/login-events/:eventId/confirm',
+  authenticateToken,
+  async (req: Request<{ eventId: string }>, res: Response): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const { eventId } = req.params;
+      const [event] = await db
+        .select({ id: loginEvents.id })
+        .from(loginEvents)
+        .where(and(eq(loginEvents.id, eventId), eq(loginEvents.userId, userId)))
+        .limit(1);
+      if (!event) {
+        res.status(404).json({ error: 'EVENT_NOT_FOUND' });
+        return;
+      }
+      await db
+        .update(loginEvents)
+        .set({ confirmedAt: new Date(), isSuspicious: false })
+        .where(eq(loginEvents.id, event.id));
+      res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('[Confirm Login Event Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
 
 export default router;

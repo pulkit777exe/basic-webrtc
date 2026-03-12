@@ -15,7 +15,7 @@ import passport from "./config/passport";
 import { setupSecurity } from "./middleware/security";
 import { optionalAuthenticate, authenticateToken } from "./middleware/auth";
 import { requireVerifiedEmail } from "./middleware/verified-email";
-import { apiLimiter, authLimiter } from "./middleware/rateLimit";
+import { globalLimiter, apiLimiter, authLimiter } from "./lib/rate-limiters";
 import { logger } from "./lib/logger";
 import { startCleanupJob } from "./lib/cleanup-job";
 import { startRecordingWorker } from "./jobs/recording-worker";
@@ -34,6 +34,7 @@ app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 app.use(passport.initialize());
+app.use(globalLimiter);
 
 app.use("/api/auth", authLimiter);
 app.use("/api/auth", authRoutes);

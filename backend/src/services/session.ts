@@ -1,6 +1,8 @@
 import { createHash } from 'crypto';
 import type { Request } from 'express';
 import { and, desc, eq, gt, inArray, isNull } from 'drizzle-orm';
+import geoip from 'geoip-lite';
+import { UAParser } from 'ua-parser-js';
 import { redis, deleteRefreshSession } from '../config/redis.js';
 import { db } from '../db/index.js';
 import { userSessions } from '../db/schema.js';
@@ -13,6 +15,9 @@ export interface ParsedDeviceInfo {
   deviceType: 'desktop' | 'mobile' | 'tablet' | 'unknown';
   browser: string | null;
   os: string | null;
+  country: string | null;
+  city: string | null;
+  location: string | null;
 }
 
 export interface SessionListItem {
@@ -29,8 +34,19 @@ export interface SessionListItem {
   isCurrent: boolean;
 }
 
+export interface SessionCreationResult {
+  sessionId: string;
+  tokenHash: string;
+  deviceInfo: ParsedDeviceInfo;
+  ipAddress: string | null;
+}
+
 function sessionRedisKey(tokenHash: string): string {
   return `session:${tokenHash}`;
+}
+
+function sessionRestrictedRedisKey(tokenHash: string): string {
+  return `session:restricted:${tokenHash}`;
 }
 
 function lastActiveDebounceKey(tokenHash: string): string {
@@ -63,7 +79,7 @@ function getForwardedIp(req: Request): string | null {
   return null;
 }
 
-function getRequestLocation(req: Request): string | null {
+function getRequestLocationFromHeaders(req: Request): string | null {
   const city = req.headers['x-vercel-ip-city'];
   const region = req.headers['x-vercel-ip-country-region'];
   const country = req.headers['x-vercel-ip-country'];
@@ -83,43 +99,15 @@ function getRequestLocation(req: Request): string | null {
   return null;
 }
 
-function parseDeviceType(userAgent: string): ParsedDeviceInfo['deviceType'] {
-  const ua = userAgent.toLowerCase();
-  if (ua.includes('ipad') || ua.includes('tablet')) {
-    return 'tablet';
-  }
-  if (
-    ua.includes('mobile') ||
-    ua.includes('android') ||
-    ua.includes('iphone') ||
-    ua.includes('ipod')
-  ) {
-    return 'mobile';
-  }
-  if (ua.length === 0) {
+function mapDeviceType(deviceType?: string): ParsedDeviceInfo['deviceType'] {
+  const normalized = (deviceType || '').toLowerCase();
+  if (normalized === 'mobile') return 'mobile';
+  if (normalized === 'tablet') return 'tablet';
+  if (normalized === 'smarttv' || normalized === 'wearable' || normalized === 'embedded') {
     return 'unknown';
   }
+  if (normalized === '') return 'desktop';
   return 'desktop';
-}
-
-function parseBrowser(userAgent: string): string | null {
-  const ua = userAgent.toLowerCase();
-  if (ua.includes('edg/')) return 'Edge';
-  if (ua.includes('opr/') || ua.includes('opera/')) return 'Opera';
-  if (ua.includes('chrome/')) return 'Chrome';
-  if (ua.includes('firefox/')) return 'Firefox';
-  if (ua.includes('safari/')) return 'Safari';
-  return null;
-}
-
-function parseOs(userAgent: string): string | null {
-  const ua = userAgent.toLowerCase();
-  if (ua.includes('windows nt')) return 'Windows';
-  if (ua.includes('mac os x') || ua.includes('macintosh')) return 'macOS';
-  if (ua.includes('android')) return 'Android';
-  if (ua.includes('iphone') || ua.includes('ipad') || ua.includes('ios')) return 'iOS';
-  if (ua.includes('linux')) return 'Linux';
-  return null;
 }
 
 export function hashSessionToken(token: string): string {
@@ -131,10 +119,10 @@ export function getClientIp(req: Request): string | null {
 }
 
 export function parseUserAgent(userAgentRaw: string | undefined): ParsedDeviceInfo {
-  const userAgent = userAgentRaw ?? '';
-  const browser = parseBrowser(userAgent);
-  const os = parseOs(userAgent);
-  const deviceType = parseDeviceType(userAgent);
+  const parsed = new UAParser(userAgentRaw ?? '').getResult();
+  const browser = parsed.browser.name ?? null;
+  const os = parsed.os.name ?? null;
+  const deviceType = mapDeviceType(parsed.device.type);
   const deviceName = browser && os ? `${browser} on ${os}` : browser || os || null;
 
   return {
@@ -142,7 +130,47 @@ export function parseUserAgent(userAgentRaw: string | undefined): ParsedDeviceIn
     deviceType,
     browser,
     os,
+    country: null,
+    city: null,
+    location: null,
   };
+}
+
+function enrichLocation(
+  req: Request,
+  ipAddress: string | null,
+): Pick<ParsedDeviceInfo, 'country' | 'city' | 'location'> {
+  const headerLocation = getRequestLocationFromHeaders(req);
+  let country: string | null = null;
+  let city: string | null = null;
+  let location: string | null = headerLocation;
+
+  if (ipAddress) {
+    const geo = geoip.lookup(ipAddress);
+    if (geo) {
+      country = geo.country ?? null;
+      city = geo.city ?? null;
+      if (!location) {
+        if (city && country) {
+          location = `${city}, ${country}`;
+        } else if (country) {
+          location = country;
+        }
+      }
+    }
+  }
+
+  if (location && !country) {
+    const [first, second] = location.split(',').map((part) => part.trim());
+    if (second) {
+      city = city ?? first;
+      country = second;
+    } else {
+      country = first;
+    }
+  }
+
+  return { country, city, location };
 }
 
 function getAccessTokenFromHeader(req: Request): string | null {
@@ -172,14 +200,20 @@ export async function createSessionForAccessToken(
   userId: string,
   token: string,
   req: Request,
-): Promise<string> {
+  options?: { suspiciousVerifiedAt?: Date | null },
+): Promise<SessionCreationResult> {
   const tokenHash = hashSessionToken(token);
   const expiresAt = new Date(Date.now() + DEFAULT_SESSION_TTL_SECONDS * 1000);
-  const deviceInfo = parseUserAgent(req.headers['user-agent']);
+  const parsedDevice = parseUserAgent(req.headers['user-agent']);
   const ipAddress = getClientIp(req);
-  const location = getRequestLocation(req);
+  const locationInfo = enrichLocation(req, ipAddress);
+  const deviceInfo: ParsedDeviceInfo = {
+    ...parsedDevice,
+    ...locationInfo,
+  };
+  const suspiciousVerifiedAt = options?.suspiciousVerifiedAt ?? new Date();
 
-  await db.insert(userSessions).values({
+  const [session] = await db.insert(userSessions).values({
     userId,
     tokenHash,
     deviceName: deviceInfo.deviceName,
@@ -187,13 +221,25 @@ export async function createSessionForAccessToken(
     browser: deviceInfo.browser,
     os: deviceInfo.os,
     ipAddress,
-    location,
+    location: deviceInfo.location,
     expiresAt,
     lastActiveAt: new Date(),
-  });
+    suspiciousVerifiedAt,
+  }).returning({ id: userSessions.id });
 
   await redis.set(sessionRedisKey(tokenHash), userId, 'EX', DEFAULT_SESSION_TTL_SECONDS);
-  return tokenHash;
+  if (suspiciousVerifiedAt) {
+    await redis.del(sessionRestrictedRedisKey(tokenHash));
+  } else {
+    await redis.set(sessionRestrictedRedisKey(tokenHash), '1', 'EX', DEFAULT_SESSION_TTL_SECONDS);
+  }
+
+  return {
+    sessionId: session.id,
+    tokenHash,
+    deviceInfo,
+    ipAddress,
+  };
 }
 
 export async function validateSessionToken(
@@ -264,6 +310,7 @@ export async function revokeSessionByTokenHash(tokenHash: string): Promise<void>
     .where(and(eq(userSessions.tokenHash, tokenHash), isNull(userSessions.revokedAt)));
   await Promise.all([
     redis.del(sessionRedisKey(tokenHash)),
+    redis.del(sessionRestrictedRedisKey(tokenHash)),
     redis.del(lastActiveDebounceKey(tokenHash)),
   ]);
 }
@@ -336,6 +383,7 @@ export async function revokeAllSessionsForUser(
   await Promise.all(
     targets.flatMap((session) => [
       redis.del(sessionRedisKey(session.tokenHash)),
+      redis.del(sessionRestrictedRedisKey(session.tokenHash)),
       redis.del(lastActiveDebounceKey(session.tokenHash)),
     ]),
   );
@@ -399,4 +447,40 @@ export async function listActiveSessionsForUser(
     ...session,
     isCurrent: currentTokenHash ? session.tokenHash === currentTokenHash : false,
   }));
+}
+
+export async function isSessionRestricted(tokenHash: string): Promise<boolean> {
+  const cached = await redis.get(sessionRestrictedRedisKey(tokenHash));
+  if (cached === '1') {
+    return true;
+  }
+
+  const [session] = await db
+    .select({
+      suspiciousVerifiedAt: userSessions.suspiciousVerifiedAt,
+      revokedAt: userSessions.revokedAt,
+      expiresAt: userSessions.expiresAt,
+    })
+    .from(userSessions)
+    .where(eq(userSessions.tokenHash, tokenHash))
+    .limit(1);
+
+  if (!session || session.revokedAt || session.expiresAt.getTime() <= Date.now()) {
+    return false;
+  }
+  if (session.suspiciousVerifiedAt) {
+    return false;
+  }
+
+  const ttl = ttlFromExpiry(session.expiresAt);
+  await redis.set(sessionRestrictedRedisKey(tokenHash), '1', 'EX', ttl);
+  return true;
+}
+
+export async function markSessionSuspiciousVerified(tokenHash: string): Promise<void> {
+  await db
+    .update(userSessions)
+    .set({ suspiciousVerifiedAt: new Date() })
+    .where(eq(userSessions.tokenHash, tokenHash));
+  await redis.del(sessionRestrictedRedisKey(tokenHash));
 }

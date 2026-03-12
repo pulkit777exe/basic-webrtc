@@ -8,6 +8,7 @@ const JWT_ROOM_SECRET = process.env.JWT_ROOM_SECRET || JWT_SECRET;
 const JWT_ACCESS_EXPIRY = process.env.JWT_ACCESS_EXPIRY || "15m";
 const JWT_REFRESH_EXPIRY = process.env.JWT_REFRESH_EXPIRY || "7d";
 const JWT_ROOM_EXPIRY = process.env.JWT_ROOM_EXPIRY || "2h";
+const JWT_2FA_PENDING_EXPIRY = process.env.JWT_2FA_PENDING_EXPIRY || "5m";
 
 export interface AccessTokenPayload extends TokenPayload {
   jti: string;
@@ -19,6 +20,14 @@ export interface RoomTokenPayload {
   userId: string;
   roomId: string;
   waiting?: boolean;
+  exp: number;
+}
+
+export interface TwoFactorPendingPayload {
+  userId: string;
+  email: string;
+  type: "2fa_pending";
+  iat?: number;
   exp: number;
 }
 
@@ -44,6 +53,17 @@ export function generateWaitingToken(userId: string, roomId: string): string {
   return jwt.sign({ userId, roomId, waiting: true }, JWT_ROOM_SECRET, {
     expiresIn: JWT_ROOM_EXPIRY,
   } as SignOptions);
+}
+
+export function generateTwoFactorPendingToken(payload: {
+  userId: string;
+  email: string;
+}): string {
+  return jwt.sign(
+    { ...payload, type: "2fa_pending" },
+    JWT_SECRET,
+    { expiresIn: JWT_2FA_PENDING_EXPIRY } as SignOptions,
+  );
 }
 
 export function verifyAccessToken(token: string): AccessTokenPayload | null {
@@ -77,6 +97,18 @@ export function decodeAccessToken(token: string): AccessTokenPayload | null {
       | null;
     if (!decoded || !decoded.exp) return null;
     return decoded as AccessTokenPayload;
+  } catch {
+    return null;
+  }
+}
+
+export function verifyTwoFactorPendingToken(token: string): TwoFactorPendingPayload | null {
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as TwoFactorPendingPayload;
+    if (decoded.type !== "2fa_pending") {
+      return null;
+    }
+    return decoded;
   } catch {
     return null;
   }
