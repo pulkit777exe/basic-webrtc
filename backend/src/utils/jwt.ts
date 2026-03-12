@@ -1,31 +1,31 @@
-import jwt, { SignOptions } from 'jsonwebtoken';
-import { randomUUID } from 'crypto';
-import type { TokenPayload } from '../types';
+import jwt, { SignOptions } from "jsonwebtoken";
+import { randomUUID } from "crypto";
+import type { TokenPayload } from "../types";
 
 const JWT_SECRET = process.env.JWT_SECRET!;
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET!;
 const JWT_ROOM_SECRET = process.env.JWT_ROOM_SECRET || JWT_SECRET;
-const JWT_ACCESS_EXPIRY = process.env.JWT_ACCESS_EXPIRY || '15m';
-const JWT_REFRESH_EXPIRY = process.env.JWT_REFRESH_EXPIRY || '7d';
-const JWT_ROOM_EXPIRY = process.env.JWT_ROOM_EXPIRY || '2h';
+const JWT_ACCESS_EXPIRY = process.env.JWT_ACCESS_EXPIRY || "15m";
+const JWT_REFRESH_EXPIRY = process.env.JWT_REFRESH_EXPIRY || "7d";
+const JWT_ROOM_EXPIRY = process.env.JWT_ROOM_EXPIRY || "2h";
 
 export interface AccessTokenPayload extends TokenPayload {
   jti: string;
+  iat?: number;
   exp: number;
 }
 
 export interface RoomTokenPayload {
   userId: string;
   roomId: string;
+  waiting?: boolean;
   exp: number;
 }
 
 export function generateAccessToken(payload: TokenPayload): string {
-  return jwt.sign(
-    { ...payload, jti: randomUUID() },
-    JWT_SECRET,
-    { expiresIn: JWT_ACCESS_EXPIRY } as SignOptions
-  );
+  return jwt.sign({ ...payload, jti: randomUUID() }, JWT_SECRET, {
+    expiresIn: JWT_ACCESS_EXPIRY,
+  } as SignOptions);
 }
 
 export function generateRefreshToken(payload: TokenPayload): string {
@@ -35,11 +35,15 @@ export function generateRefreshToken(payload: TokenPayload): string {
 }
 
 export function generateRoomToken(userId: string, roomId: string): string {
-  return jwt.sign(
-    { userId, roomId },
-    JWT_ROOM_SECRET,
-    { expiresIn: JWT_ROOM_EXPIRY } as SignOptions
-  );
+  return jwt.sign({ userId, roomId }, JWT_ROOM_SECRET, {
+    expiresIn: JWT_ROOM_EXPIRY,
+  } as SignOptions);
+}
+
+export function generateWaitingToken(userId: string, roomId: string): string {
+  return jwt.sign({ userId, roomId, waiting: true }, JWT_ROOM_SECRET, {
+    expiresIn: JWT_ROOM_EXPIRY,
+  } as SignOptions);
 }
 
 export function verifyAccessToken(token: string): AccessTokenPayload | null {
@@ -68,7 +72,9 @@ export function verifyRoomToken(token: string): RoomTokenPayload | null {
 
 export function decodeAccessToken(token: string): AccessTokenPayload | null {
   try {
-    const decoded = jwt.decode(token) as AccessTokenPayload & { exp?: number } | null;
+    const decoded = jwt.decode(token) as
+      | (AccessTokenPayload & { exp?: number })
+      | null;
     if (!decoded || !decoded.exp) return null;
     return decoded as AccessTokenPayload;
   } catch {

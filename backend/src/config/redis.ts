@@ -32,6 +32,10 @@ export function userSessionKey(userId: string): string {
   return `user:${userId}:session`;
 }
 
+export function userSessionInvalidBeforeKey(userId: string): string {
+  return `user:${userId}:session:invalid_before`;
+}
+
 export function blocklistKey(tokenOrJti: string): string {
   return `blocklist:${tokenOrJti}`;
 }
@@ -47,6 +51,30 @@ export async function getRefreshSession(userId: string): Promise<string | null> 
 
 export async function deleteRefreshSession(userId: string): Promise<void> {
   await redis.del(userSessionKey(userId));
+}
+
+export async function setUserSessionInvalidBefore(
+  userId: string,
+  issuedAtSeconds: number,
+): Promise<void> {
+  await redis.set(userSessionInvalidBeforeKey(userId), String(issuedAtSeconds));
+}
+
+export async function getUserSessionInvalidBefore(
+  userId: string,
+): Promise<number | null> {
+  const raw = await redis.get(userSessionInvalidBeforeKey(userId));
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export async function invalidateAllUserSessions(userId: string): Promise<void> {
+  const nowInSeconds = Math.floor(Date.now() / 1000);
+  await Promise.all([
+    deleteRefreshSession(userId),
+    setUserSessionInvalidBefore(userId, nowInSeconds),
+  ]);
 }
 
 export async function addToBlocklist(tokenOrJti: string, ttlSeconds: number): Promise<void> {

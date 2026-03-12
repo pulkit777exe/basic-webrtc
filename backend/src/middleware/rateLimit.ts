@@ -8,6 +8,12 @@ export const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   store: createRedisStore(),
+  skip: (req) =>
+    req.path === '/forgot-password' ||
+    req.path === '/reset-password' ||
+    req.path === '/reset-password/validate' ||
+    req.path === '/verify-email' ||
+    req.path === '/resend-verification',
   keyGenerator: (req) => ipKeyGenerator(req as unknown as string),
 });
 

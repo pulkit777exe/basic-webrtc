@@ -10,7 +10,7 @@ import {
   bigint,
   index,
 } from 'drizzle-orm/pg-core';
-import { InferSelectModel, InferInsertModel } from 'drizzle-orm';
+import { InferSelectModel, InferInsertModel, desc } from 'drizzle-orm';
 
 export const roomRoleEnum = pgEnum('room_role', ['host', 'co-host', 'participant']);
 export const messageTypeEnum = pgEnum('message_type', ['text', 'system']);
@@ -23,6 +23,9 @@ export const users = pgTable('users', {
   googleId: varchar('google_id', { length: 255 }).unique(),
   passwordHash: varchar('password_hash', { length: 255 }),
   emailVerified: boolean('email_verified').notNull().default(false),
+  recoveryEmail: varchar('recovery_email', { length: 255 }),
+  recoveryEmailVerified: boolean('recovery_email_verified').notNull().default(false),
+  backupCodesGeneratedAt: timestamp('backup_codes_generated_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
@@ -104,11 +107,76 @@ export const recordingTracks = pgTable('recording_tracks', {
 export const otpCodes = pgTable('otp_codes', {
   id: uuid('id').primaryKey().defaultRandom(),
   email: varchar('email', { length: 255 }).notNull(),
-  code: varchar('code', { length: 6 }).notNull(),
+  code: varchar('code', { length: 255 }).notNull(),
   expiresAt: timestamp('expires_at').notNull(),
   verified: boolean('verified').notNull().default(false),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
+
+export const backupCodes = pgTable(
+  'backup_codes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    codeHash: varchar('code_hash', { length: 64 }).notNull(),
+    usedAt: timestamp('used_at'),
+    createdAt: timestamp('created_at').defaultNow(),
+  },
+  (table) => ({
+    userUsedAtIdx: index('backup_codes_user_used_at_idx').on(table.userId, table.usedAt),
+  }),
+);
+
+export const userSessions = pgTable(
+  'user_sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    tokenHash: varchar('token_hash', { length: 64 }).notNull(),
+    deviceName: varchar('device_name', { length: 255 }),
+    deviceType: varchar('device_type', { length: 20 }),
+    browser: varchar('browser', { length: 100 }),
+    os: varchar('os', { length: 100 }),
+    ipAddress: varchar('ip_address', { length: 45 }),
+    location: varchar('location', { length: 255 }),
+    lastActiveAt: timestamp('last_active_at').defaultNow(),
+    createdAt: timestamp('created_at').defaultNow(),
+    revokedAt: timestamp('revoked_at'),
+    expiresAt: timestamp('expires_at').notNull(),
+    isCurrent: boolean('is_current').notNull().default(false),
+  },
+  (table) => ({
+    userRevokedExpiresIdx: index('user_sessions_user_revoked_expires_idx').on(
+      table.userId,
+      table.revokedAt,
+      table.expiresAt,
+    ),
+    tokenHashIdx: index('user_sessions_token_hash_idx').on(table.tokenHash),
+  }),
+);
+
+export const passwordResetTokens = pgTable(
+  'password_reset_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    tokenHash: varchar('token_hash', { length: 64 }).notNull(),
+    expiresAt: timestamp('expires_at').notNull(),
+    usedAt: timestamp('used_at'),
+    ipAddress: varchar('ip_address', { length: 45 }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    tokenHashIdx: index('password_reset_tokens_token_hash_idx').on(table.tokenHash),
+    userCreatedAtIdx: index('password_reset_tokens_user_created_at_idx').on(table.userId, desc(table.createdAt)),
+  }),
+);
 
 export type User = InferSelectModel<typeof users>;
 export type InsertUser = InferInsertModel<typeof users>;
@@ -122,3 +190,9 @@ export type RoomSetting = InferSelectModel<typeof roomSettings>;
 export type InsertRoomSetting = InferInsertModel<typeof roomSettings>;
 export type OtpCode = InferSelectModel<typeof otpCodes>;
 export type InsertOtpCode = InferInsertModel<typeof otpCodes>;
+export type BackupCode = InferSelectModel<typeof backupCodes>;
+export type InsertBackupCode = InferInsertModel<typeof backupCodes>;
+export type UserSession = InferSelectModel<typeof userSessions>;
+export type InsertUserSession = InferInsertModel<typeof userSessions>;
+export type PasswordResetToken = InferSelectModel<typeof passwordResetTokens>;
+export type InsertPasswordResetToken = InferInsertModel<typeof passwordResetTokens>;

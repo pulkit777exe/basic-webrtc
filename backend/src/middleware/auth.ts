@@ -1,6 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
-import { verifyAccessToken, decodeAccessToken } from '../utils/jwt.js';
-import { isBlocklisted, addToBlocklist, deleteRefreshSession } from '../config/redis.js';
+import { verifyAccessToken } from '../utils/jwt.js';
+import { deleteRefreshSession } from '../config/redis.js';
+import {
+  extractAccessToken,
+  hashSessionToken,
+  revokeSessionByTokenHash,
+  touchSessionActivity,
+  validateSessionToken,
+} from '../services/session.js';
 
 declare global {
   namespace Express {
@@ -13,6 +20,8 @@ declare global {
         userId: string;
         email: string;
       };
+      authToken?: string;
+      authTokenHash?: string;
     }
   }
 }
@@ -25,10 +34,7 @@ export interface AuthRequest extends Request {
 }
 
 export function authenticate(req: Request, res: Response, next: NextFunction): void {
-  const token =
-    req.headers.authorization?.startsWith('Bearer ')
-      ? req.headers.authorization.slice(7)
-      : req.cookies?.accessToken ?? req.body?.accessToken;
+  const token = extractAccessToken(req);
 
   if (!token) {
     res.status(401).json({ error: 'Access token required', code: 'UNAUTHORIZED' });
@@ -41,27 +47,31 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
     return;
   }
 
-  isBlocklisted(payload.jti)
-    .then((blocked) => {
-      if (blocked) {
-        res.status(403).json({ error: 'Token revoked', code: 'FORBIDDEN' });
-        return;
-      }
-      req.user = { id: payload.userId, email: payload.email };
-      req.authUser = { userId: payload.userId, email: payload.email };
-      next();
-    })
-    .catch(() => {
-      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
-    });
+  (async () => {
+    const tokenHash = hashSessionToken(token);
+    const isActive = await validateSessionToken(payload.userId, tokenHash);
+    if (!isActive) {
+      res.status(401).json({ error: 'SESSION_REVOKED', code: 'SESSION_REVOKED' });
+      return;
+    }
+
+    await touchSessionActivity(tokenHash);
+    req.user = { id: payload.userId, email: payload.email };
+    req.authUser = { userId: payload.userId, email: payload.email };
+    req.authToken = token;
+    req.authTokenHash = tokenHash;
+    next();
+  })().catch(() => {
+    res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
+  });
 }
 
 export async function logoutRevoke(accessToken: string): Promise<string | null> {
-  const decoded = decodeAccessToken(accessToken);
-  if (!decoded) return null;
-  const now = Math.floor(Date.now() / 1000);
-  const ttl = Math.max(0, decoded.exp - now);
-  await addToBlocklist(decoded.jti, ttl);
+  const decoded = verifyAccessToken(accessToken);
+  if (!decoded) {
+    return null;
+  }
+  await revokeSessionByTokenHash(hashSessionToken(accessToken));
   await deleteRefreshSession(decoded.userId);
   return decoded.userId;
 }
@@ -71,10 +81,7 @@ export function authenticateToken(req: Request, res: Response, next: NextFunctio
 }
 
 export function optionalAuthenticate(req: Request, _res: Response, next: NextFunction): void {
-  const token =
-    req.headers.authorization?.startsWith('Bearer ')
-      ? req.headers.authorization.slice(7)
-      : req.cookies?.accessToken ?? req.body?.accessToken;
+  const token = extractAccessToken(req);
 
   if (!token) {
     next();
@@ -87,13 +94,16 @@ export function optionalAuthenticate(req: Request, _res: Response, next: NextFun
     return;
   }
 
-  isBlocklisted(payload.jti)
-    .then((blocked) => {
-      if (!blocked) {
-        req.user = { id: payload.userId, email: payload.email };
-        req.authUser = { userId: payload.userId, email: payload.email };
-      }
-      next();
-    })
-    .catch(() => next());
+  (async () => {
+    const tokenHash = hashSessionToken(token);
+    const isActive = await validateSessionToken(payload.userId, tokenHash);
+    if (isActive) {
+      await touchSessionActivity(tokenHash);
+      req.user = { id: payload.userId, email: payload.email };
+      req.authUser = { userId: payload.userId, email: payload.email };
+      req.authToken = token;
+      req.authTokenHash = tokenHash;
+    }
+    next();
+  })().catch(() => next());
 }

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import passport from '../config/passport';
+import { createSessionForAccessToken } from '../services/session.js';
 
 const router = Router();
 
@@ -11,14 +12,21 @@ router.get(
 router.get(
   '/google/callback',
   passport.authenticate('google', { session: false, failureRedirect: '/login' }),
-  (req, res) => {
+  async (req, res) => {
     const user = req.user as
-      | { accessToken?: string; refreshToken?: string }
+      | {
+          user?: { id: string };
+          accessToken?: string;
+          refreshToken?: string;
+        }
       | undefined;
-    if (!user?.accessToken) {
+    if (!user?.accessToken || !user.user?.id) {
       res.status(401).json({ error: 'OAuth authentication failed', code: 'UNAUTHORIZED' });
       return;
     }
+
+    await createSessionForAccessToken(user.user.id, user.accessToken, req);
+
     if (user.refreshToken) {
       res.cookie('refreshToken', user.refreshToken, {
         httpOnly: true,

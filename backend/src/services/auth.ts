@@ -4,7 +4,11 @@ import { db } from '../db';
 import { users } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt';
-import { setRefreshSession, getRefreshSession } from '../config/redis';
+import {
+  setRefreshSession,
+  getRefreshSession,
+  getUserSessionInvalidBefore,
+} from '../config/redis';
 import { validatePassword } from '../utils/password';
 import { validateName } from '../utils/bloomFilter';
 import { AuthResponse, SignupPayload, LoginPayload } from '../types';
@@ -97,6 +101,11 @@ export async function login(payload: LoginPayload): Promise<AuthResponse | null>
 export async function refreshTokens(refreshToken: string): Promise<AuthResponse | null> {
   const payload = verifyRefreshToken(refreshToken);
   if (!payload) return null;
+  const invalidBefore = await getUserSessionInvalidBefore(payload.userId);
+  const tokenIssuedAt = payload.iat ?? 0;
+  if (invalidBefore !== null && tokenIssuedAt < invalidBefore) {
+    return null;
+  }
   const storedHash = await getRefreshSession(payload.userId);
   if (!storedHash || storedHash !== hashToken(refreshToken)) return null;
   const userResult = await db.select().from(users).where(eq(users.id, payload.userId)).limit(1);
