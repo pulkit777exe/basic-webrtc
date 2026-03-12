@@ -1,40 +1,64 @@
-import { useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import gsap from 'gsap';
-import { useGSAP } from '@gsap/react';
-import { useSetAtom } from 'jotai';
-import { roomAtom, roomTokenAtom } from '@/store/atoms';
-import { api } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { toast } from 'sonner';
-import { ArrowRight, DoorOpen, PlusSquare, Sparkles } from 'lucide-react';
+import { useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
+import { useSetAtom } from "jotai";
+import {
+  roomAtom,
+  roomTokenAtom,
+  isWaitingAtom,
+  waitingTokenAtom,
+  waitingRoomPositionAtom,
+} from "@/store/atoms";
+import { api } from "@/lib/api";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { toast } from "sonner";
+import { ArrowRight, DoorOpen, PlusSquare, Shield, Sparkles } from "lucide-react";
 
 export function DashboardPage() {
-  const [createTitle, setCreateTitle] = useState('');
-  const [createPasscode, setCreatePasscode] = useState('');
+  const [createTitle, setCreateTitle] = useState("");
+  const [createPasscode, setCreatePasscode] = useState("");
   const [createLocked, setCreateLocked] = useState(false);
   const [createWaitingRoom, setCreateWaitingRoom] = useState(false);
   const [createMuteOnJoin, setCreateMuteOnJoin] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
   const [createdRoomId, setCreatedRoomId] = useState<string | null>(null);
 
-  const [joinCode, setJoinCode] = useState('');
-  const [joinPasscode, setJoinPasscode] = useState('');
+  const [joinCode, setJoinCode] = useState("");
+  const [joinPasscode, setJoinPasscode] = useState("");
   const [joinLoading, setJoinLoading] = useState(false);
   const [passcodeModalOpen, setPasscodeModalOpen] = useState(false);
-  const [modalPasscode, setModalPasscode] = useState('');
-  const [pendingJoinRoomId, setPendingJoinRoomId] = useState<string | null>(null);
+  const [modalPasscode, setModalPasscode] = useState("");
+  const [pendingJoinRoomId, setPendingJoinRoomId] = useState<string | null>(
+    null,
+  );
   const [passcodeShake, setPasscodeShake] = useState(false);
 
   const setRoom = useSetAtom(roomAtom);
   const setRoomToken = useSetAtom(roomTokenAtom);
+  const setIsWaiting = useSetAtom(isWaitingAtom);
+  const setWaitingToken = useSetAtom(waitingTokenAtom);
+  const setWaitingPosition = useSetAtom(waitingRoomPositionAtom);
   const navigate = useNavigate();
   const createCardRef = useRef<HTMLDivElement>(null);
   const joinCardRef = useRef<HTMLDivElement>(null);
@@ -42,30 +66,36 @@ export function DashboardPage() {
 
   useGSAP(
     () => {
-      const cards = [createCardRef.current, joinCardRef.current].filter(Boolean);
-      gsap.fromTo(cards, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.08, ease: 'power2.out' });
+      const cards = [createCardRef.current, joinCardRef.current].filter(
+        Boolean,
+      );
+      gsap.fromTo(
+        cards,
+        { opacity: 0, y: 16 },
+        { opacity: 1, y: 0, duration: 0.4, stagger: 0.08, ease: "power2.out" },
+      );
     },
-    { scope: createCardRef }
+    { scope: createCardRef },
   );
 
   async function handleCreate() {
     const passcode = createPasscode.trim();
     if (passcode && passcode.length !== 6) {
-      toast.error('Passcode must be 6 characters');
+      toast.error("Passcode must be 6 characters");
       return;
     }
     setCreateLoading(true);
     setCreatedRoomId(null);
     try {
       const { room } = await api.createRoom({
-        title: createTitle.trim() || 'Meeting',
+        title: createTitle.trim() || "Meeting",
         passcode: passcode || undefined,
         isLocked: createLocked,
         waitingRoomEnabled: createWaitingRoom,
         muteOnJoin: createMuteOnJoin,
       });
       const joinRes = await api.joinRoom(room.id);
-      if (joinRes.status === 'joined' && joinRes.roomToken) {
+      if (joinRes.status === "joined" && joinRes.roomToken) {
         setRoomToken(joinRes.roomToken);
         setRoom({
           id: room.id,
@@ -77,13 +107,17 @@ export function DashboardPage() {
           createdAt: room.createdAt,
         });
         if (roomCodeRef.current) {
-          gsap.fromTo(roomCodeRef.current, { clipPath: 'inset(0 100% 0 0)' }, { clipPath: 'inset(0 0% 0 0)', duration: 0.4, ease: 'power2.out' });
+          gsap.fromTo(
+            roomCodeRef.current,
+            { clipPath: "inset(0 100% 0 0)" },
+            { clipPath: "inset(0 0% 0 0)", duration: 0.4, ease: "power2.out" },
+          );
         }
         setCreatedRoomId(room.id);
-        toast.success('Room created');
+        toast.success("Room created");
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to create room');
+      toast.error(err instanceof Error ? err.message : "Failed to create room");
     } finally {
       setCreateLoading(false);
     }
@@ -92,25 +126,29 @@ export function DashboardPage() {
   async function handleJoin() {
     const code = joinCode.trim().toUpperCase();
     if (!code) {
-      toast.error('Enter a room code');
+      toast.error("Enter a room code");
       return;
     }
     setJoinLoading(true);
     try {
       const { room } = await api.getRoom(code);
-      if (room.hasPasscode && joinPasscode.trim() && joinPasscode.trim().length !== 6) {
-        toast.error('Passcode must be 6 characters');
+      if (
+        room.hasPasscode &&
+        joinPasscode.trim() &&
+        joinPasscode.trim().length !== 6
+      ) {
+        toast.error("Passcode must be 6 characters");
         return;
       }
       if (room.hasPasscode && !joinPasscode.trim()) {
         setPendingJoinRoomId(code);
-        setModalPasscode('');
+        setModalPasscode("");
         setPasscodeModalOpen(true);
         return;
       }
       await joinRoomWithPasscode(code, joinPasscode || undefined, room);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to join');
+      toast.error(err instanceof Error ? err.message : "Failed to join");
     } finally {
       setJoinLoading(false);
     }
@@ -119,16 +157,37 @@ export function DashboardPage() {
   async function joinRoomWithPasscode(
     code: string,
     passcode: string | undefined,
-    roomData?: Awaited<ReturnType<typeof api.getRoom>>['room']
+    roomData?: Awaited<ReturnType<typeof api.getRoom>>["room"],
   ) {
     const res = await api.joinRoom(code, passcode);
-    if (res.status === 'waiting') {
-      toast.info('Waiting for host to admit you');
+
+    if (res.status === "waiting") {
+      // Fetch room details if we don't have them yet
+      const room = roomData ?? (await api.getRoom(code)).room;
+      setRoom({
+        id: room.id,
+        hostId: room.hostId,
+        title: room.title,
+        isLocked: room.isLocked,
+        maxParticipants: room.maxParticipants,
+        participantCount: room.participantCount,
+        hostName: room.hostName,
+        createdAt: room.createdAt,
+        endedAt: room.endedAt,
+        hasPasscode: room.hasPasscode,
+      });
+      if (res.waitingToken) setWaitingToken(res.waitingToken);
+      setWaitingPosition(res.position ?? 1);
+      setIsWaiting(true);
+      setPasscodeModalOpen(false);
+      navigate(`/room/${code}/lobby`);
       return;
     }
-    if (res.status === 'joined' && res.roomToken) {
+
+    if (res.status === "joined" && res.roomToken) {
       const room = roomData ?? (await api.getRoom(code)).room;
       setRoomToken(res.roomToken);
+      setIsWaiting(false);
       setRoom({
         id: room.id,
         hostId: room.hostId,
@@ -153,15 +212,19 @@ export function DashboardPage() {
   async function handleModalJoin() {
     if (!pendingJoinRoomId) return;
     if (modalPasscode.trim().length !== 6) {
-      toast.error('Enter a valid 6-character passcode');
+      toast.error("Enter a valid 6-character passcode");
       return;
     }
     setJoinLoading(true);
     try {
-      await joinRoomWithPasscode(pendingJoinRoomId, modalPasscode.trim() || undefined);
+      await joinRoomWithPasscode(
+        pendingJoinRoomId,
+        modalPasscode.trim() || undefined,
+      );
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Invalid passcode';
-      if (message.toLowerCase().includes('passcode')) {
+      const message =
+        error instanceof Error ? error.message : "Invalid passcode";
+      if (message.toLowerCase().includes("passcode")) {
         setPasscodeShake(true);
         setTimeout(() => setPasscodeShake(false), 360);
         return;
@@ -178,29 +241,46 @@ export function DashboardPage() {
       <div className="pointer-events-none absolute -right-28 bottom-4 h-80 w-80 rounded-full bg-blue-500/20 blur-3xl" />
 
       <div className="relative mx-auto max-w-6xl">
-        <div className="mb-8 space-y-3">
-          <Badge variant="secondary" className="border border-[var(--meet-border)] bg-[var(--meet-elevated)] text-[var(--meet-text-muted)]">
+        <div className="mb-8 flex flex-wrap items-end justify-between gap-3">
+          <div className="space-y-3">
+          <Badge
+            variant="secondary"
+            className="border border-[var(--meet-border)] bg-[var(--meet-elevated)] text-[var(--meet-text-muted)]"
+          >
             Workspace
           </Badge>
           <h1 className="text-3xl font-semibold">Dashboard</h1>
           <p className="max-w-xl text-sm text-[var(--meet-text-muted)]">
-            Start a meeting with controls pre-configured, or jump into an existing room using a code.
+            Start a meeting with controls pre-configured, or jump into an
+            existing room using a code.
           </p>
+          </div>
+          <Button variant="outline" onClick={() => navigate("/settings/security")}>
+            <Shield className="h-4 w-4" />
+            Security settings
+          </Button>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <Card ref={createCardRef} className="card-glow rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md">
+          <Card
+            ref={createCardRef}
+            className="card-glow rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md"
+          >
             <CardHeader className="space-y-2 p-6 sm:p-7">
               <div className="flex items-center gap-2 text-[var(--meet-accent)]">
                 <PlusSquare className="h-4 w-4" />
                 <span className="text-xs font-medium uppercase">Host</span>
               </div>
               <CardTitle className="text-2xl">Create a room</CardTitle>
-              <CardDescription>Configure your meeting defaults before participants join.</CardDescription>
+              <CardDescription>
+                Configure your meeting defaults before participants join.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 p-6 pt-0 sm:p-7 sm:pt-0">
               <div className="space-y-2">
-                <Label className="text-xs text-[var(--meet-text-muted)]">Title</Label>
+                <Label className="text-xs text-[var(--meet-text-muted)]">
+                  Title
+                </Label>
                 <Input
                   placeholder="Weekly sync, design review..."
                   value={createTitle}
@@ -209,12 +289,16 @@ export function DashboardPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label className="text-xs text-[var(--meet-text-muted)]">Passcode (optional)</Label>
+                <Label className="text-xs text-[var(--meet-text-muted)]">
+                  Passcode (optional)
+                </Label>
                 <Input
                   type="password"
                   placeholder="••••••"
                   value={createPasscode}
-                  onChange={(e) => setCreatePasscode(e.target.value.slice(0, 6))}
+                  onChange={(e) =>
+                    setCreatePasscode(e.target.value.slice(0, 6))
+                  }
                   className="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)]"
                   maxLength={6}
                 />
@@ -225,15 +309,24 @@ export function DashboardPage() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between rounded-xl bg-[var(--meet-elevated)] px-3 py-2">
                   <Label className="text-sm font-medium">Lock room</Label>
-                  <Switch checked={createLocked} onCheckedChange={setCreateLocked} />
+                  <Switch
+                    checked={createLocked}
+                    onCheckedChange={setCreateLocked}
+                  />
                 </div>
                 <div className="flex items-center justify-between rounded-xl bg-[var(--meet-elevated)] px-3 py-2">
                   <Label className="text-sm font-medium">Waiting room</Label>
-                  <Switch checked={createWaitingRoom} onCheckedChange={setCreateWaitingRoom} />
+                  <Switch
+                    checked={createWaitingRoom}
+                    onCheckedChange={setCreateWaitingRoom}
+                  />
                 </div>
                 <div className="flex items-center justify-between rounded-xl bg-[var(--meet-elevated)] px-3 py-2">
                   <Label className="text-sm font-medium">Mute on join</Label>
-                  <Switch checked={createMuteOnJoin} onCheckedChange={setCreateMuteOnJoin} />
+                  <Switch
+                    checked={createMuteOnJoin}
+                    onCheckedChange={setCreateMuteOnJoin}
+                  />
                 </div>
               </div>
 
@@ -242,7 +335,7 @@ export function DashboardPage() {
                   <p
                     ref={roomCodeRef}
                     className="overflow-hidden font-mono text-sm font-semibold tracking-wide text-[var(--meet-text)]"
-                    style={{ clipPath: 'inset(0 0 0 0)' }}
+                    style={{ clipPath: "inset(0 0 0 0)" }}
                   >
                     Room code: {createdRoomId}
                   </p>
@@ -261,24 +354,31 @@ export function DashboardPage() {
                   onClick={handleCreate}
                   disabled={createLoading}
                 >
-                  {createLoading ? 'Creating…' : 'Create room'}
+                  {createLoading ? "Creating…" : "Create room"}
                 </Button>
               )}
             </CardContent>
           </Card>
 
-          <Card ref={joinCardRef} className="card-glow rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md">
+          <Card
+            ref={joinCardRef}
+            className="card-glow rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md"
+          >
             <CardHeader className="space-y-2 p-6 sm:p-7">
               <div className="flex items-center gap-2 text-cyan-700">
                 <DoorOpen className="h-4 w-4" />
                 <span className="text-xs font-medium uppercase">Join</span>
               </div>
               <CardTitle className="text-2xl">Join with code</CardTitle>
-              <CardDescription>Enter room details shared by your host.</CardDescription>
+              <CardDescription>
+                Enter room details shared by your host.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 p-6 pt-0 sm:p-7 sm:pt-0">
               <div className="space-y-2">
-                <Label className="text-xs text-[var(--meet-text-muted)]">Room code</Label>
+                <Label className="text-xs text-[var(--meet-text-muted)]">
+                  Room code
+                </Label>
                 <Input
                   placeholder="e.g. ABC12xyz45"
                   value={joinCode}
@@ -288,7 +388,9 @@ export function DashboardPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label className="text-xs text-[var(--meet-text-muted)]">Passcode (if required)</Label>
+                <Label className="text-xs text-[var(--meet-text-muted)]">
+                  Passcode (if required)
+                </Label>
                 <Input
                   type="password"
                   placeholder="••••••"
@@ -304,7 +406,7 @@ export function DashboardPage() {
                 onClick={handleJoin}
                 disabled={joinLoading}
               >
-                {joinLoading ? 'Joining…' : 'Join now'}
+                {joinLoading ? "Joining…" : "Join now"}
                 {!joinLoading && <Sparkles className="h-4 w-4" />}
               </Button>
             </CardContent>
@@ -316,16 +418,25 @@ export function DashboardPage() {
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Enter room passcode</DialogTitle>
-            <DialogDescription>This room is protected. Enter the 6-character passcode shared by the host.</DialogDescription>
+            <DialogDescription>
+              This room is protected. Enter the 6-character passcode shared by
+              the host.
+            </DialogDescription>
           </DialogHeader>
-          <div className={`space-y-2 ${passcodeShake ? 'animate-[shake_0.35s_ease-in-out]' : ''}`}>
-            <Label className="text-xs text-[var(--meet-text-muted)]">Passcode</Label>
+          <div
+            className={`space-y-2 ${passcodeShake ? "animate-[shake_0.35s_ease-in-out]" : ""}`}
+          >
+            <Label className="text-xs text-[var(--meet-text-muted)]">
+              Passcode
+            </Label>
             <Input
               autoFocus
               value={modalPasscode}
-              onChange={(event) => setModalPasscode(event.target.value.slice(0, 6))}
+              onChange={(event) =>
+                setModalPasscode(event.target.value.slice(0, 6))
+              }
               onKeyDown={(event) => {
-                if (event.key === 'Enter') {
+                if (event.key === "Enter") {
                   event.preventDefault();
                   void handleModalJoin();
                 }
@@ -342,13 +453,17 @@ export function DashboardPage() {
               onClick={() => {
                 setPasscodeModalOpen(false);
                 setPendingJoinRoomId(null);
-                setModalPasscode('');
+                setModalPasscode("");
               }}
             >
               Cancel
             </Button>
-            <Button type="button" onClick={() => void handleModalJoin()} disabled={joinLoading}>
-              {joinLoading ? 'Verifying…' : 'Join room'}
+            <Button
+              type="button"
+              onClick={() => void handleModalJoin()}
+              disabled={joinLoading}
+            >
+              {joinLoading ? "Verifying…" : "Join room"}
             </Button>
           </DialogFooter>
         </DialogContent>

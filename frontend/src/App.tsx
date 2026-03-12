@@ -16,7 +16,12 @@ import { AppErrorBoundary } from '@/components/AppErrorBoundary';
 const LandingPage = lazy(() => import('@/pages/LandingPage').then((m) => ({ default: m.LandingPage })));
 const LoginPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })));
 const RegisterPage = lazy(() => import('@/pages/RegisterPage').then((m) => ({ default: m.RegisterPage })));
+const VerifyEmailPage = lazy(() => import('@/pages/VerifyEmailPage').then((m) => ({ default: m.VerifyEmailPage })));
+const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage').then((m) => ({ default: m.ForgotPasswordPage })));
+const ResetPasswordPage = lazy(() => import('@/pages/ResetPasswordPage').then((m) => ({ default: m.ResetPasswordPage })));
+const AccountRecoveryPage = lazy(() => import('@/pages/AccountRecoveryPage').then((m) => ({ default: m.AccountRecoveryPage })));
 const DashboardPage = lazy(() => import('@/pages/DashboardPage').then((m) => ({ default: m.DashboardPage })));
+const SecuritySettingsPage = lazy(() => import('@/pages/SecuritySettingsPage').then((m) => ({ default: m.SecuritySettingsPage })));
 const LobbyPage = lazy(() => import('@/pages/LobbyPage').then((m) => ({ default: m.LobbyPage })));
 const RoomPage = lazy(() => import('@/pages/RoomPage').then((m) => ({ default: m.RoomPage })));
 
@@ -54,12 +59,25 @@ const router = createBrowserRouter([
     children: [
       { path: '/', element: suspense(<LandingPage />) },
       { path: '/login', element: suspense(<LoginPage />) },
+      { path: '/auth/login', element: suspense(<LoginPage />) },
       { path: '/register', element: suspense(<RegisterPage />) },
+      { path: '/auth/verify-email', element: suspense(<VerifyEmailPage />) },
+      { path: '/auth/forgot-password', element: suspense(<ForgotPasswordPage />) },
+      { path: '/auth/reset-password', element: suspense(<ResetPasswordPage />) },
+      { path: '/auth/recover', element: suspense(<AccountRecoveryPage />) },
       {
         path: '/dashboard',
         element: suspense(
           <AuthGuard>
             <DashboardPage />
+          </AuthGuard>
+        ),
+      },
+      {
+        path: '/settings/security',
+        element: suspense(
+          <AuthGuard>
+            <SecuritySettingsPage />
           </AuthGuard>
         ),
       },
