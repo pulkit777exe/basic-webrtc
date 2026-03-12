@@ -13,10 +13,13 @@ export interface User {
   name: string;
   avatarUrl?: string | null;
   emailVerified: boolean;
+  twoFactorEnabled?: boolean;
+  twoFactorEnabledAt?: string | null;
   recoveryEmail?: string | null;
   recoveryEmailVerified?: boolean;
   backupCodesGeneratedAt?: string | null;
   backupCodesRemaining?: number;
+  restrictedSession?: boolean;
 }
 
 export interface Room {

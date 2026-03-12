@@ -7,7 +7,7 @@ import { api, getAccessToken, setAccessToken } from '@/lib/api';
 const VERIFY_EMAIL_STORAGE_KEY = 'pendingVerificationEmail';
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const [status, setStatus] = useState<'loading' | 'authenticated' | 'unauthenticated' | 'unverified'>('loading');
+  const [status, setStatus] = useState<'loading' | 'authenticated' | 'unauthenticated' | 'unverified' | 'restricted'>('loading');
   const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
   const setUser = useSetAtom(userAtom);
   const location = useLocation();
@@ -27,6 +27,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
               setUnverifiedEmail(refreshedUser.email);
               sessionStorage.setItem(VERIFY_EMAIL_STORAGE_KEY, refreshedUser.email);
               setStatus('unverified');
+            } else if (refreshedUser.restrictedSession && location.pathname !== '/auth/suspicious-login') {
+              setStatus('restricted');
             } else {
               setStatus('authenticated');
             }
@@ -40,6 +42,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
               setUnverifiedEmail(data.user.email);
               sessionStorage.setItem(VERIFY_EMAIL_STORAGE_KEY, data.user.email);
               setStatus('unverified');
+            } else if (data.user.restrictedSession && location.pathname !== '/auth/suspicious-login') {
+              setStatus('restricted');
             } else {
               setStatus('authenticated');
             }
@@ -56,7 +60,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [setUser]);
+  }, [location.pathname, setUser]);
 
   if (status === 'loading') {
     return (
@@ -78,6 +82,19 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
           email: unverifiedEmail,
           banner: 'Please verify your email to access this page',
           from: location,
+        }}
+        replace
+      />
+    );
+  }
+
+  if (status === 'restricted') {
+    return (
+      <Navigate
+        to="/auth/suspicious-login"
+        state={{
+          from: location,
+          banner: 'Please verify this unusual sign-in before continuing.',
         }}
         replace
       />

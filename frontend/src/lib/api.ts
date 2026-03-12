@@ -15,10 +15,13 @@ export interface ApiUser {
   name: string;
   avatarUrl?: string | null;
   emailVerified: boolean;
+  twoFactorEnabled?: boolean;
+  twoFactorEnabledAt?: string | null;
   recoveryEmail?: string | null;
   recoveryEmailVerified?: boolean;
   backupCodesGeneratedAt?: string | null;
   backupCodesRemaining?: number;
+  restrictedSession?: boolean;
 }
 
 export class ApiError extends Error {
@@ -109,13 +112,36 @@ export const api = {
   },
 
   async login(email: string, password: string) {
-    const data = await request<{ user: ApiUser; accessToken: string }>(
+    const data = await request<{
+      user?: ApiUser;
+      accessToken?: string;
+      requires2FA?: boolean;
+      pendingToken?: string;
+      requiresSuspiciousLoginVerification?: boolean;
+      reasons?: string[];
+    }>(
       "/api/auth/login",
       {
         method: "POST",
         body: JSON.stringify({ email, password }),
       },
     );
+    if (data.accessToken) setAccessToken(data.accessToken);
+    return data;
+  },
+
+  async loginWithCaptcha(email: string, password: string, captchaToken: string) {
+    const data = await request<{
+      user?: ApiUser;
+      accessToken?: string;
+      requires2FA?: boolean;
+      pendingToken?: string;
+      requiresSuspiciousLoginVerification?: boolean;
+      reasons?: string[];
+    }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password, captchaToken }),
+    });
     if (data.accessToken) setAccessToken(data.accessToken);
     return data;
   },
@@ -411,6 +437,85 @@ export const api = {
     return request<{ message: string }>("/api/auth/recover/recovery-email", {
       method: "POST",
       body: JSON.stringify({ primaryEmail }),
+    });
+  },
+
+  async setupTwoFactor(password: string) {
+    return request<{ qrCode: string; manualEntryKey: string }>("/api/auth/2fa/setup", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    });
+  },
+
+  async verifyTwoFactorSetup(totp: string) {
+    return request<{ success: boolean; backupCodes: string[] }>("/api/auth/2fa/verify-setup", {
+      method: "POST",
+      body: JSON.stringify({ totp }),
+    });
+  },
+
+  async disableTwoFactor(password: string, totp: string) {
+    return request<{ success: boolean }>("/api/auth/2fa/disable", {
+      method: "POST",
+      body: JSON.stringify({ password, totp }),
+    });
+  },
+
+  async validateTwoFactorLogin(input: {
+    pendingToken: string;
+    totp?: string;
+    backupCode?: string;
+  }) {
+    const data = await request<{
+      user?: ApiUser;
+      accessToken?: string;
+      requiresSuspiciousLoginVerification?: boolean;
+      reasons?: string[];
+      backupCodesRemaining?: number;
+    }>("/api/auth/2fa/validate", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    if (data.accessToken) {
+      setAccessToken(data.accessToken);
+    }
+    return data;
+  },
+
+  async verifySuspiciousLogin(input: {
+    method: "email_otp" | "totp" | "backup_code";
+    code?: string;
+  }) {
+    return request<{ success?: boolean; status?: string }>("/api/auth/verify-suspicious-login", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  async getLoginEvents(offset = 0) {
+    const query = new URLSearchParams({ offset: String(offset) }).toString();
+    return request<{
+      events: Array<{
+        id: string;
+        sessionId?: string | null;
+        ipAddress: string;
+        country?: string | null;
+        city?: string | null;
+        browser?: string | null;
+        os?: string | null;
+        deviceType?: string | null;
+        isSuspicious: boolean;
+        suspiciousReasons: string[];
+        confirmedAt?: string | null;
+        createdAt: string;
+      }>;
+      nextOffset: number | null;
+    }>(`/api/auth/login-events?${query}`);
+  },
+
+  async confirmLoginEvent(eventId: string) {
+    return request<{ success: boolean }>(`/api/auth/login-events/${eventId}/confirm`, {
+      method: "POST",
     });
   },
 };
