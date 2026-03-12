@@ -1,16 +1,36 @@
-import { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import gsap from 'gsap';
-import { useGSAP } from '@gsap/react';
-import { useAtomValue } from 'jotai';
-import { roomAtom, roomTokenAtom, userAtom, isWaitingAtom } from '@/store/atoms';
-import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
-import { Mic, Video } from 'lucide-react';
+import { useEffect, useRef, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
+import { useAtomValue, useAtom } from "jotai";
+import {
+  roomAtom,
+  roomTokenAtom,
+  userAtom,
+  isWaitingAtom,
+  waitingTokenAtom,
+  waitingRoomPositionAtom,
+} from "@/store/atoms";
+import { WaitingRoomLobby } from "@/components/WaitingRoomLobby";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import { Mic, Video } from "lucide-react";
 
 const BARS = 20;
 
@@ -20,28 +40,34 @@ export function LobbyPage() {
   const room = useAtomValue(roomAtom);
   const roomToken = useAtomValue(roomTokenAtom);
   const user = useAtomValue(userAtom);
-  const isWaiting = useAtomValue(isWaitingAtom);
+  const [isWaiting, setIsWaiting] = useAtom(isWaitingAtom);
+  const waitingToken = useAtomValue(waitingTokenAtom);
+  const waitingPosition = useAtomValue(waitingRoomPositionAtom);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const barsRef = useRef<HTMLDivElement>(null);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
-  const [selectedCamera, setSelectedCamera] = useState<string>('');
-  const [selectedMic, setSelectedMic] = useState<string>('');
+  const [selectedCamera, setSelectedCamera] = useState<string>("");
+  const [selectedMic, setSelectedMic] = useState<string>("");
   const [joining, setJoining] = useState(false);
 
   useEffect(() => {
-    if (!roomId || !roomToken) {
-      navigate('/dashboard', { replace: true });
+    // If in waiting mode we only need roomId — no roomToken required yet
+    if (!roomId || (!roomToken && !isWaiting)) {
+      navigate("/dashboard", { replace: true });
       return;
     }
     let stream: MediaStream | null = null;
     (async () => {
       const devices = await navigator.mediaDevices.enumerateDevices();
-      setCameras(devices.filter((d) => d.kind === 'videoinput'));
-      setMics(devices.filter((d) => d.kind === 'audioinput'));
-      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      setCameras(devices.filter((d) => d.kind === "videoinput"));
+      setMics(devices.filter((d) => d.kind === "audioinput"));
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -54,8 +80,14 @@ export function LobbyPage() {
         source.connect(analyser);
         analyserRef.current = analyser;
       }
-      if (devices.filter((d) => d.kind === 'videoinput').length) setSelectedCamera(devices.find((d) => d.kind === 'videoinput')?.deviceId ?? '');
-      if (devices.filter((d) => d.kind === 'audioinput').length) setSelectedMic(devices.find((d) => d.kind === 'audioinput')?.deviceId ?? '');
+      if (devices.filter((d) => d.kind === "videoinput").length)
+        setSelectedCamera(
+          devices.find((d) => d.kind === "videoinput")?.deviceId ?? "",
+        );
+      if (devices.filter((d) => d.kind === "audioinput").length)
+        setSelectedMic(
+          devices.find((d) => d.kind === "audioinput")?.deviceId ?? "",
+        );
     })();
     return () => {
       stream?.getTracks().forEach((t) => t.stop());
@@ -85,9 +117,13 @@ export function LobbyPage() {
 
   useGSAP(
     () => {
-      gsap.fromTo('.lobby-preview', { opacity: 0, scale: 0.98 }, { opacity: 1, scale: 1, duration: 0.4, ease: 'power2.out' });
+      gsap.fromTo(
+        ".lobby-preview",
+        { opacity: 0, scale: 0.98 },
+        { opacity: 1, scale: 1, duration: 0.4, ease: "power2.out" },
+      );
     },
-    { scope: barsRef }
+    { scope: barsRef },
   );
 
   async function handleJoinNow() {
@@ -98,6 +134,23 @@ export function LobbyPage() {
     } finally {
       setJoining(false);
     }
+  }
+
+  if (!room || !roomId) return null;
+
+  // ── Waiting room overlay ────────────────────────────────────────────────
+  if (isWaiting && waitingToken) {
+    return (
+      <WaitingRoomLobby
+        waitingToken={waitingToken}
+        roomId={roomId}
+        initialPosition={waitingPosition}
+        onLeave={() => {
+          setIsWaiting(false);
+          navigate("/dashboard", { replace: true });
+        }}
+      />
+    );
   }
 
   if (!room) return null;
@@ -112,13 +165,21 @@ export function LobbyPage() {
           <CardHeader className="p-5 sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <Badge variant="secondary" className="border border-[var(--meet-border)] bg-[var(--meet-elevated)] text-[var(--meet-text-muted)]">
+                <Badge
+                  variant="secondary"
+                  className="border border-[var(--meet-border)] bg-[var(--meet-elevated)] text-[var(--meet-text-muted)]"
+                >
                   Pre-join
                 </Badge>
                 <CardTitle className="mt-3 text-2xl">{room.title}</CardTitle>
-                <CardDescription className="mt-1">Check your devices before entering the room.</CardDescription>
+                <CardDescription className="mt-1">
+                  Check your devices before entering the room.
+                </CardDescription>
               </div>
-              <Badge variant="outline" className="rounded-full border-[var(--meet-border)] bg-[var(--meet-surface)] text-[var(--meet-text)]">
+              <Badge
+                variant="outline"
+                className="rounded-full border-[var(--meet-border)] bg-[var(--meet-surface)] text-[var(--meet-text)]"
+              >
                 {room.id}
               </Badge>
             </div>
@@ -134,7 +195,7 @@ export function LobbyPage() {
               />
               <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-full bg-black/55 px-3 py-1 text-xs font-medium text-white">
                 <Video className="h-3.5 w-3.5" />
-                {user?.name ?? 'You'}
+                {user?.name ?? "You"}
               </div>
             </div>
           </CardContent>
@@ -143,11 +204,15 @@ export function LobbyPage() {
         <Card className="card-glow rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md">
           <CardHeader className="p-5 sm:p-6">
             <CardTitle className="text-xl">Lobby settings</CardTitle>
-            <CardDescription>Choose your camera and microphone.</CardDescription>
+            <CardDescription>
+              Choose your camera and microphone.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 px-5 pb-5 sm:px-6 sm:pb-6">
             <div className="space-y-2">
-              <Label className="text-xs text-[var(--meet-text-muted)]">Camera</Label>
+              <Label className="text-xs text-[var(--meet-text-muted)]">
+                Camera
+              </Label>
               <Select value={selectedCamera} onValueChange={setSelectedCamera}>
                 <SelectTrigger className="h-11 w-full rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)]">
                   <SelectValue placeholder="Select camera" />
@@ -163,7 +228,9 @@ export function LobbyPage() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-xs text-[var(--meet-text-muted)]">Microphone</Label>
+              <Label className="text-xs text-[var(--meet-text-muted)]">
+                Microphone
+              </Label>
               <Select value={selectedMic} onValueChange={setSelectedMic}>
                 <SelectTrigger className="h-11 w-full rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)]">
                   <SelectValue placeholder="Select microphone" />
@@ -185,7 +252,10 @@ export function LobbyPage() {
                 <Mic className="h-3.5 w-3.5" />
                 Audio level
               </Label>
-              <div ref={barsRef} className="flex h-7 items-end gap-px rounded-xl border border-[var(--meet-border)] bg-[var(--meet-elevated)] p-2">
+              <div
+                ref={barsRef}
+                className="flex h-7 items-end gap-px rounded-xl border border-[var(--meet-border)] bg-[var(--meet-elevated)] p-2"
+              >
                 {Array.from({ length: BARS }).map((_, i) => (
                   <div
                     key={i}
@@ -199,7 +269,9 @@ export function LobbyPage() {
             {isWaiting ? (
               <div className="flex flex-col items-center gap-3 rounded-xl bg-[var(--meet-elevated)] px-4 py-5 text-center">
                 <div className="h-2.5 w-2.5 animate-pulse rounded-full bg-[var(--meet-accent)]" />
-                <p className="text-sm text-[var(--meet-text-muted)]">Waiting for host approval...</p>
+                <p className="text-sm text-[var(--meet-text-muted)]">
+                  Waiting for host approval...
+                </p>
               </div>
             ) : (
               <Button
@@ -207,7 +279,7 @@ export function LobbyPage() {
                 onClick={handleJoinNow}
                 disabled={joining}
               >
-                {joining ? 'Joining…' : 'Join now'}
+                {joining ? "Joining…" : "Join now"}
               </Button>
             )}
           </CardContent>

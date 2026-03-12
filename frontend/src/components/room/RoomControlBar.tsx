@@ -107,13 +107,13 @@ export function RoomControlBar({
 
   return (
     <TooltipProvider>
-      <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-[var(--room-border)] bg-[var(--room-header)] px-2 py-2 shadow-2xl backdrop-blur-xl sm:gap-2 sm:px-3">
+      <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-(--room-border) bg-(--room-header) px-2 py-2 shadow-2xl backdrop-blur-xl sm:gap-2 sm:px-3">
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant={audio ? 'ghost' : 'secondary'}
               size="icon"
-              className={`h-10 w-10 rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)] ${audio ? '' : 'bg-[var(--room-elevated)]'}`}
+              className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${audio ? '' : 'bg-(--room-elevated)'}`}
               onClick={() => MediaManager.toggleAudio()}
             >
               {audio ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-rose-400" />}
@@ -126,7 +126,7 @@ export function RoomControlBar({
             <Button
               variant={video ? 'ghost' : 'secondary'}
               size="icon"
-              className={`h-10 w-10 rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)] ${video ? '' : 'bg-[var(--room-elevated)]'}`}
+              className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${video ? '' : 'bg-(--room-elevated)'}`}
               onClick={() => MediaManager.toggleVideo()}
             >
               {video ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4 text-rose-400" />}
@@ -139,7 +139,7 @@ export function RoomControlBar({
             <Button
               variant={screen ? 'secondary' : 'ghost'}
               size="icon"
-              className={`h-10 w-10 rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)] ${screen ? 'bg-cyan-500/30 text-cyan-200' : ''}`}
+              className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${screen ? 'bg-cyan-500/30 text-cyan-200' : ''}`}
               onClick={handleScreenShare}
             >
               <Monitor className="h-4 w-4" />
@@ -154,7 +154,7 @@ export function RoomControlBar({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-10 w-10 rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)]"
+                  className="h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)  "
                 >
                   <Settings2 className="h-4 w-4" />
                 </Button>
@@ -225,7 +225,7 @@ export function RoomControlBar({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-10 w-10 rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)]"
+                  className="h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)"
                 >
                   <LayoutGrid className="h-4 w-4" />
                 </Button>
@@ -282,7 +282,7 @@ export function RoomControlBar({
             <Button
               variant={captionsEnabled ? 'secondary' : 'ghost'}
               size="icon"
-              className={`h-10 w-10 rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)] ${captionsEnabled ? 'bg-[var(--room-elevated)]' : ''}`}
+              className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${captionsEnabled ? 'bg-(--room-elevated)' : ''}`}
               onClick={onToggleCaptions}
             >
               <Captions className="h-4 w-4" />
@@ -295,7 +295,7 @@ export function RoomControlBar({
             <Button
               variant={chatOpen ? 'secondary' : 'ghost'}
               size="icon"
-              className={`h-10 w-10 rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)] ${chatOpen ? 'bg-[var(--room-elevated)]' : ''}`}
+              className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${chatOpen ? 'bg-(--room-elevated)' : ''}`}
               onClick={onToggleChat}
             >
               <MessageSquare className="h-4 w-4" />
@@ -308,7 +308,7 @@ export function RoomControlBar({
             <Button
               variant={participantsOpen ? 'secondary' : 'ghost'}
               size="icon"
-              className={`h-10 w-10 rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)] ${participantsOpen ? 'bg-[var(--room-elevated)]' : ''}`}
+              className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${participantsOpen ? 'bg-(--room-elevated)' : ''}`}
               onClick={onToggleParticipants}
             >
               <Users className="h-4 w-4" />
@@ -322,7 +322,7 @@ export function RoomControlBar({
               <Button
                 variant={isRecording ? 'destructive' : 'ghost'}
                 size="icon"
-                className={`h-10 w-10 rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)] ${isRecording ? 'animate-pulse bg-red-500 text-white hover:bg-red-600 hover:text-white' : ''}`}
+                className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${isRecording ? 'animate-pulse bg-red-500 text-white hover:bg-red-600 hover:text-white' : ''}`}
                 onClick={onToggleRecording}
               >
                 <Circle className="h-4 w-4" />

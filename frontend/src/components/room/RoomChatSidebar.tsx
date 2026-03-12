@@ -100,40 +100,40 @@ export function RoomChatSidebar({ onClose }: { onClose: () => void }) {
   return (
     <div
       ref={panelRef}
-      className="fixed inset-x-0 bottom-0 z-30 flex h-[70vh] flex-col border-t border-[var(--room-border)] bg-[var(--room-surface)] backdrop-blur-xl sm:inset-y-0 sm:left-auto sm:h-full sm:w-[360px] sm:border-l sm:border-t-0"
+      className="fixed inset-x-0 bottom-0 z-30 flex h-[70vh] flex-col border-t border-(--room-border) bg-(--room-surface) backdrop-blur-xl sm:inset-y-0 sm:left-auto sm:h-full sm:w-[360px] sm:border-l sm:border-t-0"
     >
       <div className="flex items-center justify-between p-4 sm:p-5">
         <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold text-[var(--room-text)]">Chat</h3>
-          <Badge variant="secondary" className="h-5 rounded-full border-0 bg-[var(--room-elevated)] px-2 text-[10px] text-[var(--room-text)] hover:bg-[var(--room-elevated)]">
+          <h3 className="text-sm font-semibold text-(--room-text)">Chat</h3>
+          <Badge variant="secondary" className="h-5 rounded-full border-0 bg-(--room-elevated) px-2 text-[10px] text-(--room-text) hover:bg-(--room-elevated)">
             {messages.length}
           </Badge>
         </div>
-        <Button variant="ghost" size="icon-sm" className="rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)]" onClick={onClose}>
+        <Button variant="ghost" size="icon-sm" className="rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)" onClick={onClose}>
           <X className="h-4 w-4" />
         </Button>
       </div>
-      <Separator className="bg-[var(--room-border)]" />
+      <Separator className="bg-(--room-border)" />
       {pinnedMessage && (
         <div className="mx-4 mt-4 rounded-xl border border-cyan-400/35 bg-cyan-500/10 px-3 py-2 sm:mx-5">
           <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-cyan-300">
             <Pin className="h-3.5 w-3.5" />
             Pinned
           </div>
-          <p className="text-xs text-[var(--room-text)]">{pinnedMessage.text}</p>
-          <p className="mt-1 text-[10px] text-[var(--room-muted)]">by {pinnedMessage.authorName}</p>
+          <p className="text-xs text-(--room-text)">{pinnedMessage.text}</p>
+          <p className="mt-1 text-[10px] text-(--room-muted)">by {pinnedMessage.authorName}</p>
         </div>
       )}
       <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
         {messages.map((m) => (
           <div
             key={m.id}
-            className={m.type === 'system' ? 'rounded-xl bg-[var(--room-elevated)] px-3 py-2 text-center text-xs text-[var(--room-muted)]' : 'group'}
+            className={m.type === 'system' ? 'rounded-xl bg-(--room-elevated) px-3 py-2 text-center text-xs text-(--room-muted)' : 'group'}
           >
             {m.type === 'system' ? (
               m.content
             ) : (
-              <div className="rounded-xl bg-[var(--room-elevated)] px-3 py-2">
+              <div className="rounded-xl bg-(--room-elevated) px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[11px] font-medium text-cyan-300">{m.userName ?? 'User'}</span>
                   <div className="flex items-center gap-1">
@@ -175,13 +175,13 @@ export function RoomChatSidebar({ onClose }: { onClose: () => void }) {
                     )}
                   </div>
                 </div>
-                <p className="mt-1 text-sm text-[var(--room-text)]">{renderFormattedMessage(m.content)}</p>
+                <p className="mt-1 text-sm text-(--room-text)">{renderFormattedMessage(m.content)}</p>
                 {reactionsEnabled && chatReactions[m.id] && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {Object.entries(chatReactions[m.id]).map(([emoji, count]) => (
                       <span
                         key={`${m.id}-${emoji}`}
-                        className="inline-flex items-center gap-1 rounded-full border border-[var(--room-border)] bg-black/20 px-2 py-0.5 text-[11px] text-[var(--room-text)]"
+                        className="inline-flex items-center gap-1 rounded-full border border-(--room-border) bg-black/20 px-2 py-0.5 text-[11px] text-(--room-text)"
                       >
                         <span>{emoji}</span>
                         <span>{count}</span>
@@ -207,7 +207,7 @@ export function RoomChatSidebar({ onClose }: { onClose: () => void }) {
           </Button>
         </div>
       )}
-      <Separator className="bg-[var(--room-border)]" />
+      <Separator className="bg-(--room-border)" />
       <div className="p-4 sm:p-5">
         <Textarea
           placeholder="Type a message..."
@@ -215,7 +215,7 @@ export function RoomChatSidebar({ onClose }: { onClose: () => void }) {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), send())}
           rows={2}
-          className="mb-2 min-h-20 resize-none rounded-xl border-[var(--room-border)] bg-[var(--room-elevated)] text-[var(--room-text)] placeholder:text-[var(--room-muted)]"
+          className="mb-2 min-h-20 resize-none rounded-xl border-(--room-border) bg-(--room-elevated) text-(--room-text) placeholder:text-(--room-muted)"
         />
         <Button
           variant="secondary"

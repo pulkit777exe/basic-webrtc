@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import gsap from 'gsap';
-import { useGSAP } from '@gsap/react';
-import { useAtomValue, useAtom, useSetAtom } from 'jotai';
+import { useEffect, useRef, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
+import { useAtomValue, useAtom, useSetAtom } from "jotai";
 import {
   activeSpeakerAtom,
   audioOutputDeviceIdAtom,
@@ -27,27 +27,36 @@ import {
   selfViewModeAtom,
   speakingPeersAtom,
   uiAtom,
-} from '@/store/atoms';
-import { WSManager } from '@/lib/ws-manager';
-import { RTCManager } from '@/lib/rtc-manager';
-import { MediaManager } from '@/lib/media-manager';
-import { RoomVideoGrid } from '@/components/room/RoomVideoGrid';
-import { RoomControlBar } from '@/components/room/RoomControlBar';
-import { RoomChatSidebar } from '@/components/room/RoomChatSidebar';
-import { RoomParticipantsPanel } from '@/components/room/RoomParticipantsPanel';
-import { RoomCaptionsOverlay } from '@/components/room/RoomCaptionsOverlay';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { ChevronLeft, Lock, MessageSquare, Unlock, Users } from 'lucide-react';
-import { toast } from 'sonner';
+  waitingRoomParticipantsAtom,
+} from "@/store/atoms";
+import { WSManager } from "@/lib/ws-manager";
+import { RTCManager } from "@/lib/rtc-manager";
+import { MediaManager } from "@/lib/media-manager";
+import { RoomVideoGrid } from "@/components/room/RoomVideoGrid";
+import { RoomControlBar } from "@/components/room/RoomControlBar";
+import { RoomChatSidebar } from "@/components/room/RoomChatSidebar";
+import { RoomParticipantsPanel } from "@/components/room/RoomParticipantsPanel";
+import { RoomCaptionsOverlay } from "@/components/room/RoomCaptionsOverlay";
+import { WaitingRoomPanel } from "@/components/room/WaitingRoomPanel";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  ChevronLeft,
+  Clock,
+  Lock,
+  MessageSquare,
+  Unlock,
+  Users,
+} from "lucide-react";
+import { toast } from "sonner";
 
 function formatElapsed(seconds: number): string {
   const mins = Math.floor(seconds / 60)
     .toString()
-    .padStart(2, '0');
+    .padStart(2, "0");
   const secs = Math.floor(seconds % 60)
     .toString()
-    .padStart(2, '0');
+    .padStart(2, "0");
   return `${mins}:${secs}`;
 }
 
@@ -86,9 +95,12 @@ export function RoomPage() {
   const [recording, setRecording] = useAtom(recordingAtom);
   const [layoutMode, setLayoutMode] = useAtom(layoutModeAtom);
   const [selfViewMode, setSelfViewMode] = useAtom(selfViewModeAtom);
-  const [pinnedParticipants, setPinnedParticipants] = useAtom(pinnedParticipantsAtom);
+  const [pinnedParticipants, setPinnedParticipants] = useAtom(
+    pinnedParticipantsAtom,
+  );
   const [ui, setUi] = useAtom(uiAtom);
   const [roomLocked, setRoomLocked] = useAtom(roomLockedAtom);
+  const waitingParticipants = useAtomValue(waitingRoomParticipantsAtom);
   const setParticipants = useSetAtom(participantsAtom);
   const setChat = useSetAtom(chatAtom);
   const setChatReactions = useSetAtom(chatReactionsAtom);
@@ -101,7 +113,7 @@ export function RoomPage() {
       roomId: string,
       participantId: string,
       roomToken: string,
-      onProgress?: (progressPercent: number) => void
+      onProgress?: (progressPercent: number) => void,
     ) => Promise<void>;
   } | null>(null);
   const localRecordingRef = useRef(false);
@@ -125,7 +137,7 @@ export function RoomPage() {
 
   useEffect(() => {
     if (!roomId || !roomToken || !user) {
-      navigate('/dashboard', { replace: true });
+      navigate("/dashboard", { replace: true });
       return;
     }
     if (hasInit.current) return;
@@ -138,8 +150,12 @@ export function RoomPage() {
     setParticipants([
       {
         userId: user.id,
-        user: { id: user.id, name: user.name, avatarUrl: user.avatarUrl ?? undefined },
-        role: room?.hostId === user.id ? 'host' : 'participant',
+        user: {
+          id: user.id,
+          name: user.name,
+          avatarUrl: user.avatarUrl ?? undefined,
+        },
+        role: room?.hostId === user.id ? "host" : "participant",
         video: true,
         audio: true,
         screen: false,
@@ -150,16 +166,23 @@ export function RoomPage() {
     setPinnedChatMessage(null);
     setCaptions([]);
 
-    (window as unknown as { __wsSignal?: (s: unknown) => void }).__wsSignal = (signal: unknown) => {
-      const s = signal as { type: string; from?: string; sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit };
-      if (s.type === 'offer' && s.from && s.sdp) {
+    (window as unknown as { __wsSignal?: (s: unknown) => void }).__wsSignal = (
+      signal: unknown,
+    ) => {
+      const s = signal as {
+        type: string;
+        from?: string;
+        sdp?: RTCSessionDescriptionInit;
+        candidate?: RTCIceCandidateInit;
+      };
+      if (s.type === "offer" && s.from && s.sdp) {
         RTCManager.createPeer(s.from, null).then(() => {
           RTCManager.setRemoteDescription(s.from!, s.sdp!);
           RTCManager.answer(s.from!);
         });
-      } else if (s.type === 'answer' && s.from && s.sdp) {
+      } else if (s.type === "answer" && s.from && s.sdp) {
         RTCManager.setRemoteDescription(s.from, s.sdp);
-      } else if (s.type === 'ice' && s.from && s.candidate) {
+      } else if (s.type === "ice" && s.from && s.candidate) {
         RTCManager.addIceCandidate(s.from, s.candidate);
       }
     };
@@ -177,9 +200,24 @@ export function RoomPage() {
       setChatReactions({});
       setPinnedChatMessage(null);
       setCaptions([]);
-      (window as unknown as { __wsSignal?: (s: unknown) => void }).__wsSignal = undefined;
+      (window as unknown as { __wsSignal?: (s: unknown) => void }).__wsSignal =
+        undefined;
     };
-  }, [room?.hostId, roomId, roomToken, user, navigate, setCaptions, setChat, setChatReactions, setParticipants, setPinnedChatMessage, setPinnedParticipants, setRecording, setRecordingUploads]);
+  }, [
+    room?.hostId,
+    roomId,
+    roomToken,
+    user,
+    navigate,
+    setCaptions,
+    setChat,
+    setChatReactions,
+    setParticipants,
+    setPinnedChatMessage,
+    setPinnedParticipants,
+    setRecording,
+    setRecordingUploads,
+  ]);
 
   useEffect(() => {
     setRoomLocked(Boolean(room?.isLocked));
@@ -187,7 +225,7 @@ export function RoomPage() {
 
   useEffect(() => {
     WSManager.send({
-      type: 'media-state',
+      type: "media-state",
       video: localMedia.video,
       audio: localMedia.audio,
       screen: localMedia.screen,
@@ -217,7 +255,7 @@ export function RoomPage() {
       const now = performance.now();
       if (now - previous >= 250) {
         previous = now;
-        WSManager.send({ type: 'audio-activity', level, speaking });
+        WSManager.send({ type: "audio-activity", level, speaking });
       }
       animationFrame = requestAnimationFrame(tick);
     };
@@ -234,24 +272,30 @@ export function RoomPage() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== 'Space' || event.repeat) return;
+      if (event.code !== "Space" || event.repeat) return;
       const target = event.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      )
+        return;
       if (localMedia.audio || mutedByHost) return;
       pushToTalkRef.current = true;
       MediaManager.unmuteAudio();
     };
     const onKeyUp = (event: KeyboardEvent) => {
-      if (event.code !== 'Space') return;
+      if (event.code !== "Space") return;
       if (!pushToTalkRef.current) return;
       pushToTalkRef.current = false;
       MediaManager.muteAudio(false);
     };
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
     };
   }, [localMedia.audio, mutedByHost]);
 
@@ -266,10 +310,11 @@ export function RoomPage() {
       SpeechRecognition?: SpeechRecognitionCtor;
       webkitSpeechRecognition?: SpeechRecognitionCtor;
     };
-    const SpeechRecognitionCtor = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+    const SpeechRecognitionCtor =
+      speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
 
     if (!SpeechRecognitionCtor) {
-      toast.error('Live captions are not supported in this browser');
+      toast.error("Live captions are not supported in this browser");
       setCaptionsEnabled(false);
       return;
     }
@@ -277,10 +322,14 @@ export function RoomPage() {
     const recognition: SpeechRecognitionLike = new SpeechRecognitionCtor();
     recognition.continuous = true;
     recognition.interimResults = false;
-    recognition.lang = 'en-US';
+    recognition.lang = "en-US";
     recognition.onresult = (event: SpeechRecognitionResultEventLike) => {
-      let transcript = '';
-      for (let index = event.resultIndex; index < event.results.length; index++) {
+      let transcript = "";
+      for (
+        let index = event.resultIndex;
+        index < event.results.length;
+        index++
+      ) {
         const result = event.results[index];
         if (result.isFinal) {
           transcript += `${result[0].transcript} `;
@@ -288,7 +337,7 @@ export function RoomPage() {
       }
       const text = transcript.trim();
       if (!text) return;
-      WSManager.send({ type: 'caption', text, timestamp: Date.now() });
+      WSManager.send({ type: "caption", text, timestamp: Date.now() });
     };
     recognition.onerror = () => {};
     recognition.onend = () => {
@@ -317,26 +366,35 @@ export function RoomPage() {
       setRecordingSeconds(0);
       return;
     }
-    setRecordingSeconds(Math.max(0, Math.floor((Date.now() - recording.startedAt) / 1000)));
+    setRecordingSeconds(
+      Math.max(0, Math.floor((Date.now() - recording.startedAt) / 1000)),
+    );
     const timer = window.setInterval(() => {
-      setRecordingSeconds(Math.max(0, Math.floor((Date.now() - recording.startedAt!) / 1000)));
+      setRecordingSeconds(
+        Math.max(0, Math.floor((Date.now() - recording.startedAt!) / 1000)),
+      );
     }, 1000);
     return () => window.clearInterval(timer);
   }, [recording.active, recording.startedAt]);
 
   useEffect(() => {
-    if (!recording.active || localRecordingRef.current || !localMedia.stream) return;
+    if (!recording.active || localRecordingRef.current || !localMedia.stream)
+      return;
     let cancelled = false;
     (async () => {
       if (!recordingManagerRef.current) {
-        const module = await import('@/lib/RecordingManager');
+        const module = await import("@/lib/RecordingManager");
         if (cancelled) return;
         recordingManagerRef.current = new module.RecordingManager();
       }
       recordingManagerRef.current?.startRecording(localMedia.stream!);
       localRecordingRef.current = true;
     })().catch((error: unknown) => {
-      toast.error(error instanceof Error ? error.message : 'Unable to start local recording');
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Unable to start local recording",
+      );
     });
 
     return () => {
@@ -345,19 +403,35 @@ export function RoomPage() {
   }, [localMedia.stream, recording.active]);
 
   useEffect(() => {
-    if (recording.active || !localRecordingRef.current || recordingUploadInFlightRef.current) return;
-    if (!roomId || !roomToken || !user?.id || !recordingManagerRef.current) return;
+    if (
+      recording.active ||
+      !localRecordingRef.current ||
+      recordingUploadInFlightRef.current
+    )
+      return;
+    if (!roomId || !roomToken || !user?.id || !recordingManagerRef.current)
+      return;
     recordingUploadInFlightRef.current = true;
     setRecording((current) => ({ ...current, uploading: true }));
     recordingManagerRef.current
       .stopAndUpload(roomId, user.id, roomToken, (progressPercent) => {
-        WSManager.send({ type: 'recording_upload_progress', participantId: user.id, progress: progressPercent });
+        WSManager.send({
+          type: "recording_upload_progress",
+          participantId: user.id,
+          progress: progressPercent,
+        });
       })
       .then(() => {
-        WSManager.send({ type: 'recording_upload_progress', participantId: user.id, progress: 100 });
+        WSManager.send({
+          type: "recording_upload_progress",
+          participantId: user.id,
+          progress: 100,
+        });
       })
       .catch((error: unknown) => {
-        toast.error(error instanceof Error ? error.message : 'Recording upload failed');
+        toast.error(
+          error instanceof Error ? error.message : "Recording upload failed",
+        );
       })
       .finally(() => {
         localRecordingRef.current = false;
@@ -371,11 +445,20 @@ export function RoomPage() {
       if (!slateRef.current || !room) return;
       const tl = gsap.timeline();
       tl.set(slateRef.current, { scaleX: 1 })
-        .to(slateRef.current, { scaleX: 0, duration: 0.5, ease: 'power2.in', transformOrigin: 'left center' })
-        .set(slateRef.current, { visibility: 'hidden' });
-      gsap.fromTo(controlBarRef.current, { y: 80, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, delay: 0.8, ease: 'power2.out' });
+        .to(slateRef.current, {
+          scaleX: 0,
+          duration: 0.5,
+          ease: "power2.in",
+          transformOrigin: "left center",
+        })
+        .set(slateRef.current, { visibility: "hidden" });
+      gsap.fromTo(
+        controlBarRef.current,
+        { y: 80, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.4, delay: 0.8, ease: "power2.out" },
+      );
     },
-    { scope: gridRef, dependencies: [room] }
+    { scope: gridRef, dependencies: [room] },
   );
 
   const peerList = Array.from(peers.values());
@@ -397,11 +480,11 @@ export function RoomPage() {
   function toggleRecording() {
     if (!isHost) return;
     if (recording.active) {
-      WSManager.send({ type: 'recording_stop' });
+      WSManager.send({ type: "recording_stop" });
       return;
     }
     setRecordingUploads(new Map());
-    WSManager.send({ type: 'recording_start', startedAt: Date.now() });
+    WSManager.send({ type: "recording_start", startedAt: Date.now() });
   }
 
   function toggleCaptions() {
@@ -409,41 +492,50 @@ export function RoomPage() {
   }
 
   return (
-    <div className="relative flex h-screen flex-col overflow-hidden bg-[var(--room-bg)]">
+    <div className="relative flex h-screen flex-col overflow-hidden bg-(--room-bg)">
       {/* Entry slate */}
       <div
         ref={slateRef}
-        className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-[var(--room-bg)]"
-        style={{ transformOrigin: 'left center' }}
+        className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-(--room-bg)"
+        style={{ transformOrigin: "left center" }}
       >
-        <span className="text-4xl font-semibold tracking-tight text-[var(--room-text)]" style={{ letterSpacing: '-0.02em' }}>
+        <span
+          className="text-4xl font-semibold tracking-tight text-(--room-text)"
+          style={{ letterSpacing: "-0.02em" }}
+        >
           {room?.title ?? roomId}
         </span>
       </div>
 
-      <header className="relative z-10 border-b border-[var(--room-border)] bg-[var(--room-header)] px-3 py-3 backdrop-blur-md sm:px-6">
-        <div className="mx-auto flex w-full max-w-[1800px] items-center justify-between gap-3">
+      <header className="relative z-10 border-b border-(--room-border) bg-(--room-header) px-3 py-3 backdrop-blur-md sm:px-6">
+        <div className="mx-auto flex w-full max-w-450 items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <Button
               variant="ghost"
               size="icon-sm"
-              className="rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)]"
-              onClick={() => navigate('/dashboard', { replace: true })}
+              className="rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)"
+              onClick={() => navigate("/dashboard", { replace: true })}
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-[var(--room-text)] sm:text-base">{room?.title ?? 'Meeting Room'}</p>
-              <p className="truncate text-xs text-[var(--room-muted)]">{roomId}</p>
+              <p className="truncate text-sm font-semibold text-(--room-text) sm:text-base">
+                {room?.title ?? "Meeting Room"}
+              </p>
+              <p className="truncate text-xs text-(--room-muted)">{roomId}</p>
             </div>
-            <Badge className="rounded-full border-0 bg-[var(--room-elevated)] text-[var(--room-text)] hover:bg-[var(--room-elevated)]">
-              {roomLocked ? <Lock className="mr-1 h-3.5 w-3.5 text-amber-500" /> : <Unlock className="mr-1 h-3.5 w-3.5 text-emerald-500" />}
-              {roomLocked ? 'Locked' : 'Open'}
+            <Badge className="rounded-full border-0 bg-(--room-elevated) text-(--room-text) hover:bg-(--room-elevated)">
+              {roomLocked ? (
+                <Lock className="mr-1 h-3.5 w-3.5 text-amber-500" />
+              ) : (
+                <Unlock className="mr-1 h-3.5 w-3.5 text-emerald-500" />
+              )}
+              {roomLocked ? "Locked" : "Open"}
             </Badge>
           </div>
           <div className="flex items-center gap-2">
-            <Badge className="rounded-full border-0 bg-[var(--room-elevated)] text-[var(--room-text)] hover:bg-[var(--room-elevated)]">
-              {participantCount} participant{participantCount > 1 ? 's' : ''}
+            <Badge className="rounded-full border-0 bg-(--room-elevated) text-(--room-text) hover:bg-(--room-elevated)">
+              {participantCount} participant{participantCount > 1 ? "s" : ""}
             </Badge>
             {recording.active && (
               <Badge className="rounded-full border-0 bg-red-500/90 text-white hover:bg-red-500/90">
@@ -451,19 +543,58 @@ export function RoomPage() {
                 REC {formatElapsed(recordingSeconds)}
               </Badge>
             )}
+            {isHost && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className={`relative rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${ui.waitingRoomOpen ? "bg-(--room-elevated)" : ""}`}
+                onClick={() =>
+                  setUi({
+                    ...ui,
+                    waitingRoomOpen: !ui.waitingRoomOpen,
+                    chatOpen: false,
+                    participantsOpen: false,
+                  })
+                }
+                title="Waiting room"
+              >
+                <Clock className="h-4 w-4" />
+                {waitingParticipants.length > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-[9px] font-bold text-white">
+                    {waitingParticipants.length > 9
+                      ? "9+"
+                      : waitingParticipants.length}
+                  </span>
+                )}
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon-sm"
-              className={`rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)] ${ui.chatOpen ? 'bg-[var(--room-elevated)]' : ''}`}
-              onClick={() => setUi({ ...ui, chatOpen: !ui.chatOpen, participantsOpen: false })}
+              className={`rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${ui.chatOpen ? "bg-(--room-elevated)" : ""}`}
+              onClick={() =>
+                setUi({
+                  ...ui,
+                  chatOpen: !ui.chatOpen,
+                  participantsOpen: false,
+                  waitingRoomOpen: false,
+                })
+              }
             >
               <MessageSquare className="h-4 w-4" />
             </Button>
             <Button
               variant="ghost"
               size="icon-sm"
-              className={`rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)] ${ui.participantsOpen ? 'bg-[var(--room-elevated)]' : ''}`}
-              onClick={() => setUi({ ...ui, participantsOpen: !ui.participantsOpen, chatOpen: false })}
+              className={`rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${ui.participantsOpen ? "bg-(--room-elevated)" : ""}`}
+              onClick={() =>
+                setUi({
+                  ...ui,
+                  participantsOpen: !ui.participantsOpen,
+                  chatOpen: false,
+                  waitingRoomOpen: false,
+                })
+              }
             >
               <Users className="h-4 w-4" />
             </Button>
@@ -471,7 +602,10 @@ export function RoomPage() {
         </div>
       </header>
 
-      <div ref={gridRef} className="relative flex-1 overflow-hidden px-3 pb-24 pt-3 sm:px-6 sm:pb-28 sm:pt-4">
+      <div
+        ref={gridRef}
+        className="relative flex-1 overflow-hidden px-3 pb-24 pt-3 sm:px-6 sm:pb-28 sm:pt-4"
+      >
         <RoomVideoGrid
           localUser={user}
           localStream={localMedia.stream}
@@ -489,7 +623,10 @@ export function RoomPage() {
         />
       </div>
 
-      <div ref={controlBarRef} className="pointer-events-none fixed bottom-4 left-1/2 z-40 -translate-x-1/2 sm:bottom-6">
+      <div
+        ref={controlBarRef}
+        className="pointer-events-none fixed bottom-4 left-1/2 z-40 -translate-x-1/2 sm:bottom-6"
+      >
         <RoomControlBar
           chatOpen={ui.chatOpen}
           participantsOpen={ui.participantsOpen}
@@ -498,20 +635,39 @@ export function RoomPage() {
           isHost={isHost}
           isRecording={recording.active}
           captionsEnabled={captionsEnabled}
-          onToggleChat={() => setUi({ ...ui, chatOpen: !ui.chatOpen, participantsOpen: false })}
-          onToggleParticipants={() => setUi({ ...ui, participantsOpen: !ui.participantsOpen, chatOpen: false })}
+          onToggleChat={() =>
+            setUi({ ...ui, chatOpen: !ui.chatOpen, participantsOpen: false })
+          }
+          onToggleParticipants={() =>
+            setUi({
+              ...ui,
+              participantsOpen: !ui.participantsOpen,
+              chatOpen: false,
+            })
+          }
           onLayoutModeChange={setLayoutMode}
           onSelfViewModeChange={setSelfViewMode}
           onToggleCaptions={toggleCaptions}
           onToggleRecording={toggleRecording}
           onLeave={() => {
-            navigate('/dashboard', { replace: true });
+            navigate("/dashboard", { replace: true });
           }}
         />
       </div>
 
-      {ui.chatOpen && <RoomChatSidebar onClose={() => setUi({ ...ui, chatOpen: false })} />}
-      {ui.participantsOpen && <RoomParticipantsPanel onClose={() => setUi({ ...ui, participantsOpen: false })} />}
+      {ui.chatOpen && (
+        <RoomChatSidebar onClose={() => setUi({ ...ui, chatOpen: false })} />
+      )}
+      {ui.participantsOpen && (
+        <RoomParticipantsPanel
+          onClose={() => setUi({ ...ui, participantsOpen: false })}
+        />
+      )}
+      {ui.waitingRoomOpen && isHost && (
+        <WaitingRoomPanel
+          onClose={() => setUi({ ...ui, waitingRoomOpen: false })}
+        />
+      )}
       <RoomCaptionsOverlay />
     </div>
   );

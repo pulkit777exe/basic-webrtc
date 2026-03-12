@@ -322,7 +322,7 @@ export function RoomVideoGrid({
       {layoutMode === 'sidebar' && renderSidebarLayout()}
 
       {layoutMode === 'tiled' && pageCount > 1 && (
-        <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full border border-[var(--room-border)] bg-[var(--room-header)] px-2 py-1.5 backdrop-blur">
+        <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full border border-(--room-border) bg-(--room-header) px-2 py-1.5 backdrop-blur">
           <Button
             type="button"
             variant="ghost"
@@ -333,7 +333,7 @@ export function RoomVideoGrid({
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <span className="text-xs text-[var(--room-text)]">
+          <span className="text-xs text-(--room-text)">
             Page {safePage + 1} / {pageCount}
           </span>
           <Button

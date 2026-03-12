@@ -88,11 +88,11 @@ export function AdminPanel() {
   if (!canManage) return null;
 
   return (
-    <div className="space-y-3 rounded-xl border border-[var(--room-border)] bg-[var(--room-elevated)] p-3">
+    <div className="space-y-3 rounded-xl border border-(--room-border) bg-(--room-elevated) p-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Shield className="h-4 w-4 text-cyan-300" />
-          <p className="text-xs font-semibold uppercase tracking-wide text-[var(--room-muted)]">Admin controls</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-(--room-muted)">Admin controls</p>
         </div>
         <Badge className="rounded-full border-0 bg-cyan-500/80 text-[10px] text-white hover:bg-cyan-500/80">
           {isHost ? 'Host' : 'Co-host'}
@@ -139,18 +139,18 @@ export function AdminPanel() {
           </Button>
         </div>
       ) : (
-        <div className="rounded-lg border border-dashed border-[var(--room-border)] p-2 text-xs text-[var(--room-muted)]">
+        <div className="rounded-lg border border-dashed border-(--room-border) p-2 text-xs text-(--room-muted)">
           Host-only moderation controls are disabled for co-hosts.
         </div>
       )}
 
       {recording.uploading && (
         <div className="space-y-1 rounded-lg bg-black/20 p-2">
-          <p className="text-[11px] text-[var(--room-muted)]">Upload progress</p>
+          <p className="text-[11px] text-(--room-muted)">Upload progress</p>
           {Array.from(recordingUploads.entries()).map(([participantId, progress]) => (
             <div key={participantId} className="flex items-center justify-between text-[11px]">
-              <span className="font-mono text-[var(--room-text)]">{participantId.slice(0, 8)}</span>
-              <span className="text-[var(--room-muted)]">{Math.round(progress)}%</span>
+              <span className="font-mono text-(--room-text)">{participantId.slice(0, 8)}</span>
+              <span className="text-(--room-muted)">{Math.round(progress)}%</span>
             </div>
           ))}
         </div>
@@ -191,13 +191,13 @@ export function AdminPanel() {
       )}
 
       <div className="space-y-2 pt-1">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--room-muted)]">Participants</p>
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-(--room-muted)">Participants</p>
         {isHost ? (
           <div className="max-h-44 space-y-2 overflow-y-auto">
             {others.map((participant) => (
-              <div key={participant.userId} className="space-y-2 rounded-lg border border-[var(--room-border)] p-2">
+              <div key={participant.userId} className="space-y-2 rounded-lg border border-(--room-border) p-2">
                 <div className="flex items-center justify-between">
-                  <p className="truncate text-xs font-medium text-[var(--room-text)]">{participant.user.name}</p>
+                  <p className="truncate text-xs font-medium text-(--room-text)">{participant.user.name}</p>
                   <Badge variant="secondary" className="h-5 rounded-full border-0 px-2 text-[10px] capitalize">
                     {participant.role}
                   </Badge>
@@ -229,13 +229,13 @@ export function AdminPanel() {
               </div>
             ))}
             {!others.length && (
-              <div className="rounded-lg border border-dashed border-[var(--room-border)] p-3 text-center text-xs text-[var(--room-muted)]">
+              <div className="rounded-lg border border-dashed border-(--room-border) p-3 text-center text-xs text-(--room-muted)">
                 No other participants connected.
               </div>
             )}
           </div>
         ) : (
-          <div className="rounded-lg border border-dashed border-[var(--room-border)] p-2 text-xs text-[var(--room-muted)]">
+          <div className="rounded-lg border border-dashed border-(--room-border) p-2 text-xs text-(--room-muted)">
             Per-participant moderation is host-only.
           </div>
         )}

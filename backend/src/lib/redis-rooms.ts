@@ -1,10 +1,10 @@
-import { redis } from '../config/redis.js';
+import { redis } from "../config/redis.js";
 
 const ROOM_TTL_SEC = 24 * 60 * 60;
 const ACTIVE_SPEAKER_TTL_SEC = 30;
 
 export interface RecordingState {
-  status: 'idle' | 'recording' | 'uploading' | 'merging' | 'done' | 'failed';
+  status: "idle" | "recording" | "uploading" | "merging" | "done" | "failed";
   startedAt?: string;
   startedBy?: string;
   participantCount?: number;
@@ -67,7 +67,18 @@ export function waitingKey(roomId: string): string {
   return `waiting:${roomId}`;
 }
 
-export type RoomRole = 'host' | 'co-host' | 'participant';
+export function waitingRoomKey(roomId: string): string {
+  return `room:${roomId}:waitingRoom`;
+}
+
+export interface WaitingParticipant {
+  id: string;
+  name: string;
+  avatarUrl?: string;
+  joinedAt: string; // ISO timestamp
+}
+
+export type RoomRole = "host" | "co-host" | "participant";
 
 export interface RoomMeta {
   hostId: string;
@@ -97,10 +108,14 @@ export async function setRoomMeta(
     .hset(key, {
       hostId: meta.hostId,
       title: meta.title,
-      isLocked: meta.isLocked ? '1' : '0',
+      isLocked: meta.isLocked ? "1" : "0",
       maxParticipants: String(meta.maxParticipants),
-      ...(meta.reactionsEnabled !== undefined && { reactionsEnabled: meta.reactionsEnabled ? '1' : '0' }),
-      ...(meta.pinnedMessage !== undefined && { pinnedMessage: meta.pinnedMessage }),
+      ...(meta.reactionsEnabled !== undefined && {
+        reactionsEnabled: meta.reactionsEnabled ? "1" : "0",
+      }),
+      ...(meta.pinnedMessage !== undefined && {
+        pinnedMessage: meta.pinnedMessage,
+      }),
       ...(meta.settings !== undefined && { settings: meta.settings }),
     })
     .expire(key, ROOM_TTL_SEC)
@@ -132,7 +147,10 @@ export async function addPeerToRoom(
   await pipe.exec();
 }
 
-export async function removePeerFromRoom(roomId: string, userId: string): Promise<void> {
+export async function removePeerFromRoom(
+  roomId: string,
+  userId: string,
+): Promise<void> {
   const pipe = redis.pipeline();
   pipe.srem(roomPeersKey(roomId), userId);
   pipe.hdel(roomRolesKey(roomId), userId);
@@ -141,35 +159,50 @@ export async function removePeerFromRoom(roomId: string, userId: string): Promis
 }
 
 // Kicked participants blocklist
-export async function addToKickedList(roomId: string, participantId: string): Promise<void> {
+export async function addToKickedList(
+  roomId: string,
+  participantId: string,
+): Promise<void> {
   const key = roomKickedKey(roomId);
   await redis.sadd(key, participantId);
   await redis.expire(key, ROOM_TTL_SEC);
 }
 
-export async function isKicked(roomId: string, participantId: string): Promise<boolean> {
+export async function isKicked(
+  roomId: string,
+  participantId: string,
+): Promise<boolean> {
   const result = await redis.sismember(roomKickedKey(roomId), participantId);
   return result === 1;
 }
 
 // Force mute all
-export async function setForceMuted(roomId: string, muted: boolean): Promise<void> {
+export async function setForceMuted(
+  roomId: string,
+  muted: boolean,
+): Promise<void> {
   const key = roomForceMutedKey(roomId);
-  await redis.setex(key, ROOM_TTL_SEC, muted ? '1' : '0');
+  await redis.setex(key, ROOM_TTL_SEC, muted ? "1" : "0");
 }
 
 export async function isForceMuted(roomId: string): Promise<boolean> {
   const value = await redis.get(roomForceMutedKey(roomId));
-  return value === '1';
+  return value === "1";
 }
 
 // Active speaker
-export async function setActiveSpeaker(roomId: string, participantId: string): Promise<void> {
+export async function setActiveSpeaker(
+  roomId: string,
+  participantId: string,
+): Promise<void> {
   const key = roomActiveSpeakerKey(roomId);
   await redis.setex(key, ACTIVE_SPEAKER_TTL_SEC, participantId);
 }
 
-export async function getParticipant(roomId: string, userId: string): Promise<{ role: RoomRole } | null> {
+export async function getParticipant(
+  roomId: string,
+  userId: string,
+): Promise<{ role: RoomRole } | null> {
   const role = await getPeerRole(roomId, userId);
   if (!role) return null;
   return { role };
@@ -180,7 +213,10 @@ export async function getActiveSpeaker(roomId: string): Promise<string | null> {
 }
 
 // Recording state - atomic update using Lua script to prevent race conditions
-export async function setRecordingState(roomId: string, state: Partial<RecordingState>): Promise<void> {
+export async function setRecordingState(
+  roomId: string,
+  state: Partial<RecordingState>,
+): Promise<void> {
   const key = roomRecordingKey(roomId);
   await redis.eval(
     `
@@ -199,11 +235,13 @@ export async function setRecordingState(roomId: string, state: Partial<Recording
     1,
     key,
     JSON.stringify(state),
-    ROOM_TTL_SEC.toString()
+    ROOM_TTL_SEC.toString(),
   );
 }
 
-export async function getRecordingState(roomId: string): Promise<RecordingState | null> {
+export async function getRecordingState(
+  roomId: string,
+): Promise<RecordingState | null> {
   const value = await redis.get(roomRecordingKey(roomId));
   return value ? JSON.parse(value) : null;
 }
@@ -215,23 +253,36 @@ export async function refreshParticipantTTL(roomId: string): Promise<void> {
 
 // Cleanup — delete all Redis keys for a room on room end
 export async function deleteAllRoomKeys(roomId: string): Promise<void> {
-  let cursor = '0';
+  let cursor = "0";
   do {
-    const [newCursor, keys] = await redis.scan(cursor, 'MATCH', `room:${roomId}:*`, 'COUNT', 100);
+    const [newCursor, keys] = await redis.scan(
+      cursor,
+      "MATCH",
+      `room:${roomId}:*`,
+      "COUNT",
+      100,
+    );
     cursor = newCursor;
     if (keys.length > 0) {
       await redis.del(...keys);
     }
-  } while (cursor !== '0');
+  } while (cursor !== "0");
 }
 
-export async function getPeerRole(roomId: string, userId: string): Promise<RoomRole | null> {
+export async function getPeerRole(
+  roomId: string,
+  userId: string,
+): Promise<RoomRole | null> {
   const role = await redis.hget(roomRolesKey(roomId), userId);
   if (!role) return null;
   return role as RoomRole;
 }
 
-export async function setPeerRole(roomId: string, userId: string, role: RoomRole): Promise<void> {
+export async function setPeerRole(
+  roomId: string,
+  userId: string,
+  role: RoomRole,
+): Promise<void> {
   await redis.hset(roomRolesKey(roomId), userId, role);
   await redis.expire(roomRolesKey(roomId), ROOM_TTL_SEC);
 }
@@ -246,57 +297,124 @@ export async function setPeerMedia(
   await redis.expire(key, ROOM_TTL_SEC);
 }
 
-export async function addToWaitingRoom(roomId: string, userId: string): Promise<void> {
-  await redis.sadd(waitingKey(roomId), userId);
+export async function addToWaitingRoom(
+  roomId: string,
+  participant: WaitingParticipant,
+): Promise<void> {
+  const key = waitingRoomKey(roomId);
+  const score = new Date(participant.joinedAt).getTime();
+  await redis.zadd(key, score, JSON.stringify(participant));
+  await redis.expire(key, ROOM_TTL_SEC);
 }
 
-export async function removeFromWaitingRoom(roomId: string, userId: string): Promise<void> {
-  await redis.srem(waitingKey(roomId), userId);
+export async function getWaitingRoom(
+  roomId: string,
+): Promise<WaitingParticipant[]> {
+  const key = waitingRoomKey(roomId);
+  const members = await redis.zrange(key, 0, -1);
+  return members
+    .map((m) => {
+      try {
+        return JSON.parse(m) as WaitingParticipant;
+      } catch {
+        return null;
+      }
+    })
+    .filter((p): p is WaitingParticipant => p !== null);
 }
 
-export async function isInWaitingRoom(roomId: string, userId: string): Promise<boolean> {
-  return redis.sismember(waitingKey(roomId), userId).then((n) => n === 1);
+export async function removeFromWaitingRoom(
+  roomId: string,
+  participantId: string,
+): Promise<void> {
+  const key = waitingRoomKey(roomId);
+  const members = await redis.zrange(key, 0, -1);
+  const toRemove = members.filter((m) => {
+    try {
+      return (JSON.parse(m) as WaitingParticipant).id === participantId;
+    } catch {
+      return false;
+    }
+  });
+  if (toRemove.length > 0) {
+    await redis.zrem(key, ...toRemove);
+  }
 }
 
-export async function setRoomLocked(roomId: string, isLocked: boolean): Promise<void> {
-  await redis.hset(roomKey(roomId), 'isLocked', isLocked ? '1' : '0');
+export async function isInWaitingRoom(
+  roomId: string,
+  participantId: string,
+): Promise<boolean> {
+  const key = waitingRoomKey(roomId);
+  const members = await redis.zrange(key, 0, -1);
+  return members.some((m) => {
+    try {
+      return (JSON.parse(m) as WaitingParticipant).id === participantId;
+    } catch {
+      return false;
+    }
+  });
+}
+
+export async function getWaitingRoomCount(roomId: string): Promise<number> {
+  return redis.zcard(waitingRoomKey(roomId));
+}
+
+export async function setRoomLocked(
+  roomId: string,
+  isLocked: boolean,
+): Promise<void> {
+  await redis.hset(roomKey(roomId), "isLocked", isLocked ? "1" : "0");
   await redis.expire(roomKey(roomId), ROOM_TTL_SEC);
 }
 
 export async function isRoomLocked(roomId: string): Promise<boolean> {
-  const value = await redis.hget(roomKey(roomId), 'isLocked');
-  return value === '1';
+  const value = await redis.hget(roomKey(roomId), "isLocked");
+  return value === "1";
 }
 
-export async function setRoomReactionsEnabled(roomId: string, enabled: boolean): Promise<void> {
-  await redis.hset(roomKey(roomId), 'reactionsEnabled', enabled ? '1' : '0');
+export async function setRoomReactionsEnabled(
+  roomId: string,
+  enabled: boolean,
+): Promise<void> {
+  await redis.hset(roomKey(roomId), "reactionsEnabled", enabled ? "1" : "0");
   await redis.expire(roomKey(roomId), ROOM_TTL_SEC);
 }
 
-export async function getRoomReactionsEnabled(roomId: string): Promise<boolean> {
-  const value = await redis.hget(roomKey(roomId), 'reactionsEnabled');
-  return value !== '0';
+export async function getRoomReactionsEnabled(
+  roomId: string,
+): Promise<boolean> {
+  const value = await redis.hget(roomKey(roomId), "reactionsEnabled");
+  return value !== "0";
 }
 
 export async function setRoomPinnedMessage(
   roomId: string,
-  pinnedMessage: { messageId: string; text: string; authorName: string } | null
+  pinnedMessage: { messageId: string; text: string; authorName: string } | null,
 ): Promise<void> {
   if (!pinnedMessage) {
-    await redis.hdel(roomKey(roomId), 'pinnedMessage');
+    await redis.hdel(roomKey(roomId), "pinnedMessage");
   } else {
-    await redis.hset(roomKey(roomId), 'pinnedMessage', JSON.stringify(pinnedMessage));
+    await redis.hset(
+      roomKey(roomId),
+      "pinnedMessage",
+      JSON.stringify(pinnedMessage),
+    );
     await redis.expire(roomKey(roomId), ROOM_TTL_SEC);
   }
 }
 
 export async function getRoomPinnedMessage(
-  roomId: string
+  roomId: string,
 ): Promise<{ messageId: string; text: string; authorName: string } | null> {
-  const raw = await redis.hget(roomKey(roomId), 'pinnedMessage');
+  const raw = await redis.hget(roomKey(roomId), "pinnedMessage");
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { messageId: string; text: string; authorName: string };
+    const parsed = JSON.parse(raw) as {
+      messageId: string;
+      text: string;
+      authorName: string;
+    };
     return parsed;
   } catch {
     return null;
@@ -306,16 +424,23 @@ export async function getRoomPinnedMessage(
 export async function canPerformAdminAction(
   roomId: string,
   actorId: string,
-  action: 'mute-all' | 'mute' | 'kick' | 'promote' | 'lock' | 'reactions',
-  targetId?: string
+  action: "mute-all" | "mute" | "kick" | "promote" | "lock" | "reactions",
+  targetId?: string,
 ): Promise<boolean> {
   const actorRole = await getPeerRole(roomId, actorId);
-  if (actorRole !== 'host' && actorRole !== 'co-host') {
+  if (actorRole !== "host" && actorRole !== "co-host") {
     return false;
   }
   // This room's moderation actions are host-authoritative.
-  if (action === 'lock' || action === 'reactions' || action === 'promote' || action === 'mute-all' || action === 'mute' || action === 'kick') {
-    if (actorRole !== 'host') {
+  if (
+    action === "lock" ||
+    action === "reactions" ||
+    action === "promote" ||
+    action === "mute-all" ||
+    action === "mute" ||
+    action === "kick"
+  ) {
+    if (actorRole !== "host") {
       return false;
     }
   }
@@ -325,8 +450,8 @@ export async function canPerformAdminAction(
 
   const targetRole = await getPeerRole(roomId, targetId);
   if (!targetRole) return true;
-  if (targetRole === 'host') return false;
-  if (actorRole === 'co-host' && targetRole === 'co-host') return false;
+  if (targetRole === "host") return false;
+  if (actorRole === "co-host" && targetRole === "co-host") return false;
   return true;
 }
 
@@ -337,6 +462,7 @@ export async function clearRoomState(roomId: string): Promise<void> {
   pipe.del(roomRolesKey(roomId));
   pipe.del(roomMediaKey(roomId));
   pipe.del(waitingKey(roomId));
+  pipe.del(waitingRoomKey(roomId));
   await pipe.exec();
 }
 

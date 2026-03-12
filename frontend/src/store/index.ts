@@ -1,5 +1,10 @@
-import { createStore } from 'jotai';
-import type { Message, PeerState, Participant } from './atoms';
+import { createStore } from "jotai";
+import type {
+  Message,
+  PeerState,
+  Participant,
+  WaitingParticipant,
+} from "./atoms";
 import {
   userAtom,
   roomAtom,
@@ -25,7 +30,12 @@ import {
   captionsAtom,
   audioOutputDeviceIdAtom,
   chatReactionsAtom,
-} from './atoms';
+  waitingRoomParticipantsAtom,
+  waitingRoomPositionAtom,
+  waitingTokenAtom,
+  isWaitingAtom,
+  waitingRoomEnabledAtom,
+} from "./atoms";
 
 export const store = createStore();
 
@@ -54,6 +64,11 @@ export {
   captionsAtom,
   audioOutputDeviceIdAtom,
   chatReactionsAtom,
+  waitingRoomParticipantsAtom,
+  waitingRoomPositionAtom,
+  waitingTokenAtom,
+  isWaitingAtom,
+  waitingRoomEnabledAtom,
 };
 
-export type { Message, PeerState, Participant };
+export type { Message, PeerState, Participant, WaitingParticipant };
