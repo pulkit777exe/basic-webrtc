@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
@@ -580,9 +581,8 @@ export function SecuritySettingsPage() {
                         </div>
                         <div className="space-y-1">
                           <Label htmlFor="recovery-password">Password</Label>
-                          <Input
+                          <PasswordInput
                             id="recovery-password"
-                            type="password"
                             value={recoveryPasswordInput}
                             onChange={(e) => setRecoveryPasswordInput(e.target.value)}
                           />
@@ -768,9 +768,8 @@ export function SecuritySettingsPage() {
             <div className="space-y-3">
               <div className="space-y-1">
                 <Label htmlFor="confirm-password">Password</Label>
-                <Input
+                <PasswordInput
                   id="confirm-password"
-                  type="password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                 />
@@ -837,9 +836,8 @@ export function SecuritySettingsPage() {
             <div className="space-y-3">
               <div className="space-y-1">
                 <Label htmlFor="setup-password">Password</Label>
-                <Input
+                <PasswordInput
                   id="setup-password"
-                  type="password"
                   value={setupPassword}
                   onChange={(e) => setSetupPassword(e.target.value)}
                 />
@@ -956,9 +954,8 @@ export function SecuritySettingsPage() {
           <div className="space-y-3">
             <div className="space-y-1">
               <Label htmlFor="disable-password">Password</Label>
-              <Input
+              <PasswordInput
                 id="disable-password"
-                type="password"
                 value={disablePassword}
                 onChange={(e) => setDisablePassword(e.target.value)}
               />

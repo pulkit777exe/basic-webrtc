@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Loader2, Mail, RefreshCw } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
@@ -212,4 +213,3 @@ export function ForgotPasswordPage() {
     </div>
   );
 }
-

@@ -1,5 +1,6 @@
 import express from "express";
 import { createServer } from "http";
+import path from "path";
 import { WebSocketServer } from "ws";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -8,6 +9,7 @@ import { WebSocketHandler } from "./websocket/handler";
 import { verifyRoomToken } from "./utils/jwt";
 import authRoutes from "./routes/auth";
 import oauthRoutes from "./routes/oauth";
+import accountRoutes from "./routes/account";
 import roomRoutes from "./routes/rooms";
 import iceRoutes from "./routes/ice";
 import recordingsRoutes from "./routes/recordings";
@@ -19,6 +21,8 @@ import { globalLimiter, apiLimiter, authLimiter } from "./lib/rate-limiters";
 import { logger } from "./lib/logger";
 import { startCleanupJob } from "./lib/cleanup-job";
 import { startRecordingWorker } from "./jobs/recording-worker";
+import { startExportWorker } from "./jobs/export-worker";
+import { startDeletionWorker } from "./jobs/deletion-worker";
 
 dotenv.config();
 
@@ -35,10 +39,12 @@ app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 app.use(passport.initialize());
 app.use(globalLimiter);
+app.use("/uploads", express.static(path.resolve("uploads")));
 
 app.use("/api/auth", authLimiter);
 app.use("/api/auth", authRoutes);
 app.use("/api/oauth", oauthRoutes);
+app.use("/api/account", accountRoutes);
 app.use("/api/rooms", authenticateToken, requireVerifiedEmail, apiLimiter, roomRoutes);
 app.use("/api/ice-servers", optionalAuthenticate, apiLimiter, iceRoutes);
 app.use("/api/recordings", authenticateToken, requireVerifiedEmail, apiLimiter, recordingsRoutes);
@@ -128,4 +134,6 @@ server.listen(PORT, () => {
   console.log(`WebSocket server ready at ws://localhost:${PORT}/ws`);
   startCleanupJob(); // Start stale room cleanup job
   startRecordingWorker(); // Start recording merge worker
+  startExportWorker(); // Start account export worker
+  startDeletionWorker(); // Start account deletion worker
 });
