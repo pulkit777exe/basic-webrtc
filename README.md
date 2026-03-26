@@ -1,6 +1,6 @@
 # WebRTC Video Conferencing Application
 
-A modern, full-stack WebRTC video conferencing application built with React, TypeScript, Node.js, and LiveKit. Features include real-time video/audio communication, user authentication, profile management, and meeting recording capabilities.
+A WebRTC video chat app with a React frontend and an Express backend. Signaling runs over WebSocket; room state lives in Redis; persistent data is stored in Postgres via Drizzle.
 
 ![License](https://img.shields.io/badge/license-ISC-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)
@@ -8,13 +8,12 @@ A modern, full-stack WebRTC video conferencing application built with React, Typ
 
 ## Features
 
-- **Real-time Video Conferencing** - High-quality video and audio powered by LiveKit
-- **Secure Authentication** - JWT-based auth with HTTP-only cookies
-- **User Profiles** - Manage display names and passwords
-- **Meeting Recording** - Record entire meetings with screen capture
-- **Modern UI** - Clean, responsive interface with dark mode
-- **Toast Notifications** - User-friendly feedback with Sonner
-- 🗄️ **PostgreSQL Database** - Robust data persistence with Prisma ORM
+- Real-time audio/video using plain WebRTC (mesh)
+- Auth with access/refresh tokens (stored in HTTP-only cookies)
+- Waiting-room controls (admit/reject), room lock/passcodes, basic moderation
+- Meeting recording (client-side capture + backend merge pipeline)
+- Redis-backed real-time state and signaling fanout
+- Postgres persistence via Drizzle ORM
 
 ## Architecture
 
@@ -26,92 +25,86 @@ basic-webrtc-app/
 │   │   ├── store/         # Jotai state management
 │   │   └── icons/         # Custom icon components
 │   └── package.json
-├── backend/           # Node.js + Express + TypeScript
+├── backend/           # Bun + Express + TypeScript
 │   ├── src/
-│   │   ├── controllers/   # Business logic
-│   │   ├── routes/        # API routes
-│   │   ├── schemas/       # Zod validation schemas
+│   │   ├── routes/        # REST API routes
+│   │   ├── websocket/     # Signaling / realtime handler
+│   │   ├── db/            # Drizzle + schema
 │   │   └── server.ts      # Entry point
-│   ├── prisma/
-│   │   └── schema.prisma  # Database schema
+│   ├── drizzle/           # SQL migrations
 │   └── package.json
 ├── docker-compose.yml
 └── README.md
 ```
 
-## Quick Start
+## Quick start
 
 ### Prerequisites
 
-- **Node.js** >= 18.0.0
-- **PostgreSQL** (or use Docker)
-- **LiveKit Server** (cloud or self-hosted)
-- **pnpm** (recommended) or npm
+- Bun (backend scripts run via Bun)
+- Node.js 18+ (frontend dev/build)
+- PostgreSQL
+- Redis
 
-### 1. Clone the Repository
+### 1. Clone the repo
 
 ```bash
 git clone https://github.com/pulkit777exe/basic-webrtc-app.git
 cd basic-webrtc-app
 ```
 
-### 2. Set Up Environment Variables
+### 2. Set up environment variables
 
 **Backend** (`backend/.env`):
 
 ```env
-# Database
+# Required
 DATABASE_URL="postgresql://user:password@localhost:5432/webrtc_db"
+JWT_SECRET="change-me"
+JWT_REFRESH_SECRET="change-me-too"
 
-# LiveKit
-LIVEKIT_URL="wss://your-livekit-server.com"
-LIVEKIT_API_KEY="your-api-key"
-LIVEKIT_API_SECRET="your-api-secret"
-
-# JWT
-JWT_SECRET="your-super-secret-jwt-key"
-
-# CORS
-FRONTEND_URL="http://localhost:5173"
+# Usually needed in dev
+ALLOWED_ORIGINS="http://localhost:5173"
+REDIS_URL="redis://localhost:6379"
 ```
 
 **Frontend** (`frontend/.env`):
 
 ```env
-VITE_APP_BACKEND_URL="http://localhost:3000"
-VITE_LIVEKIT_URL="wss://your-livekit-server.com"  # Optional override
+VITE_API_URL="http://localhost:4000"
+# Optional (defaults to VITE_API_URL + /ws)
+VITE_WS_URL="ws://localhost:4000/ws"
 ```
 
-### 3. Install Dependencies
+### 3. Install dependencies
 
 ```bash
 # Backend
 cd backend
-npm install
+bun install
 
 # Frontend
 cd ../frontend
 pnpm install  # or npm install
 ```
 
-### 4. Set Up Database
+### 4. Set up the database
 
 ```bash
 cd backend
-npx prisma generate
-npx prisma migrate dev --name init
+bun run db:migrate
 ```
 
-### 5. Start Development Servers
+### 5. Start dev servers
 
-**Terminal 1 - Backend:**
+**Terminal 1 (backend):**
 
 ```bash
 cd backend
-npm run dev
+bun run dev
 ```
 
-**Terminal 2 - Frontend:**
+**Terminal 2 (frontend):**
 
 ```bash
 cd frontend
@@ -120,8 +113,8 @@ pnpm dev
 
 The application will be available at:
 
-- **Frontend**: http://localhost:5173
-- **Backend**: http://localhost:3000
+- Frontend: http://localhost:5173
+- Backend: http://localhost:4000
 
 ## Docker Deployment
 
@@ -140,122 +133,16 @@ docker-compose down
 
 Services:
 
-- **Frontend**: http://localhost:5173
-- **Backend**: http://localhost:3000
-- **PostgreSQL**: localhost:5432
-
-### Individual Docker Commands
-
-**Backend:**
-
-```bash
-cd backend
-docker build -t webrtc-backend .
-docker run -p 3000:3000 --env-file .env webrtc-backend
-```
-
-**Frontend:**
-
-```bash
-cd frontend
-docker build -t webrtc-frontend .
-docker run -p 5173:5173 webrtc-frontend
-```
+- Frontend: http://localhost:3000
+- Backend: http://localhost:4000
+- PostgreSQL: localhost:5432
+- Redis: localhost:6379
 
 ## Documentation
 
-- [Frontend README](./frontend/README.md) - Frontend architecture and development
-- [Backend README](./backend/README.md) - API documentation and backend details
-- [CONTRIBUTING.md](./CONTRIBUTING.md) - Contribution guidelines
-- [Developer Guide](#developer-guide) - Detailed development workflow
-
-## Tech Stack
-
-### Frontend
-
-- **React 19** - UI library
-- **TypeScript** - Type safety
-- **Vite** - Build tool
-- **TailwindCSS** - Styling
-- **LiveKit Components** - WebRTC UI components
-- **Jotai** - State management
-- **Sonner** - Toast notifications
-- **Zod** - Schema validation
-
-### Backend
-
-- **Node.js** - Runtime
-- **Express** - Web framework
-- **TypeScript** - Type safety
-- **Prisma** - ORM
-- **PostgreSQL** - Database
-- **LiveKit Server SDK** - WebRTC signaling
-- **JWT** - Authentication
-- **bcryptjs** - Password hashing
-
-## Key Features Explained
-
-### Authentication Flow
-
-1. User registers with username, password, and display name
-2. Backend hashes password with bcrypt and stores in PostgreSQL
-3. On login, JWT token is issued and stored in HTTP-only cookie
-4. All subsequent requests include the cookie for authentication
-
-### Video Conferencing
-
-1. User joins a room by entering a room name
-2. Backend generates a LiveKit token with room permissions
-3. Frontend connects to LiveKit server with the token
-4. Real-time video/audio streams are established via WebRTC
-
-### Recording
-
-1. User clicks "Start Recording" in the meeting
-2. Browser prompts to select screen/tab to record
-3. MediaRecorder API captures video and audio
-4. On stop, recording is downloaded as `.webm` file
-
-## Testing
-
-```bash
-# Backend tests (when implemented)
-cd backend
-npm test
-
-# Frontend tests (when implemented)
-cd frontend
-pnpm test
-
-# Linting
-cd frontend
-pnpm lint
-```
-
-## API Endpoints
-
-### Authentication
-
-- `POST /auth/register` - Register new user
-- `POST /auth/login` - Login user
-- `GET /auth/me` - Get current user
-- `POST /auth/logout` - Logout user
-- `PUT /auth/profile` - Update user profile
-
-### LiveKit
-
-- `POST /getToken` - Generate LiveKit room token
-
-See [Backend README](./backend/README.md) for detailed API documentation.
-
-## Contributing
-
-We welcome contributions! Please see our [Contributing Guide](./CONTRIBUTING.md) for details on:
-
-- Code of Conduct
-- Development workflow
-- Pull request process
-- Coding standards
+- Frontend notes: `frontend/README.md`
+- Backend notes: `backend/README.md`
+- Repo map: `CONTEXT.md`
 
 ## License
 
@@ -263,8 +150,6 @@ This project is licensed under the ISC License.
 
 ## Acknowledgments
 
-- [LiveKit](https://livekit.io/) - WebRTC infrastructure
-- [Prisma](https://www.prisma.io/) - Database ORM
 - [Vite](https://vitejs.dev/) - Frontend tooling
 - [TailwindCSS](https://tailwindcss.com/) - CSS framework
 
