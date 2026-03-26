@@ -22,6 +22,8 @@ export const users = pgTable('users', {
   name: varchar('name', { length: 255 }).notNull(),
   avatarUrl: varchar('avatar_url', { length: 512 }),
   googleId: varchar('google_id', { length: 255 }).unique(),
+  googleLinkedAt: timestamp('google_linked_at'),
+  googleEmail: varchar('google_email', { length: 255 }),
   passwordHash: varchar('password_hash', { length: 255 }),
   emailVerified: boolean('email_verified').notNull().default(false),
   failedLoginAttempts: integer('failed_login_attempts').notNull().default(0),
@@ -33,6 +35,7 @@ export const users = pgTable('users', {
   recoveryEmail: varchar('recovery_email', { length: 255 }),
   recoveryEmailVerified: boolean('recovery_email_verified').notNull().default(false),
   backupCodesGeneratedAt: timestamp('backup_codes_generated_at'),
+  deletedAt: timestamp('deleted_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
@@ -213,6 +216,33 @@ export const passwordResetTokens = pgTable(
   }),
 );
 
+export const deletionRequests = pgTable(
+  'deletion_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    originalEmail: varchar('original_email', { length: 255 }).notNull(),
+    originalName: varchar('original_name', { length: 255 }).notNull(),
+    originalPasswordHash: varchar('original_password_hash', { length: 255 }),
+    originalEmailVerified: boolean('original_email_verified').notNull().default(false),
+    originalAvatarUrl: varchar('original_avatar_url', { length: 512 }),
+    originalGoogleId: varchar('original_google_id', { length: 255 }),
+    originalGoogleEmail: varchar('original_google_email', { length: 255 }),
+    requestedAt: timestamp('requested_at').notNull().defaultNow(),
+    cancelledAt: timestamp('cancelled_at'),
+    processedAt: timestamp('processed_at'),
+    scheduledFor: timestamp('scheduled_for').notNull(),
+    jobId: varchar('job_id', { length: 255 }),
+  },
+  (table) => ({
+    userRequestedIdx: index('deletion_requests_user_requested_idx').on(
+      table.userId,
+      desc(table.requestedAt),
+    ),
+    originalEmailIdx: index('deletion_requests_original_email_idx').on(table.originalEmail),
+  }),
+);
+
 export type User = InferSelectModel<typeof users>;
 export type InsertUser = InferInsertModel<typeof users>;
 export type Room = InferSelectModel<typeof rooms>;
@@ -233,3 +263,5 @@ export type LoginEvent = InferSelectModel<typeof loginEvents>;
 export type InsertLoginEvent = InferInsertModel<typeof loginEvents>;
 export type PasswordResetToken = InferSelectModel<typeof passwordResetTokens>;
 export type InsertPasswordResetToken = InferInsertModel<typeof passwordResetTokens>;
+export type DeletionRequest = InferSelectModel<typeof deletionRequests>;
+export type InsertDeletionRequest = InferInsertModel<typeof deletionRequests>;

@@ -1,42 +1,100 @@
+import { createHash } from 'crypto';
 import { Router } from 'express';
 import passport from '../config/passport';
 import { createSessionForAccessToken } from '../services/session.js';
+import { generateAccessToken, generateRefreshToken } from '../utils/jwt.js';
+import { setRefreshSession } from '../config/redis.js';
+import { queueEmail } from '../services/email.js';
+
+type OAuthUser = {
+  id: string;
+  email: string;
+  name: string;
+};
 
 const router = Router();
 
-router.get(
-  '/google',
-  passport.authenticate('google', { scope: ['profile', 'email'], session: false })
-);
+function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
 
-router.get(
-  '/google/callback',
-  passport.authenticate('google', { session: false, failureRedirect: '/login' }),
-  async (req, res) => {
-    const user = req.user as
-      | {
-          user?: { id: string };
-          accessToken?: string;
-          refreshToken?: string;
-        }
-      | undefined;
-    if (!user?.accessToken || !user.user?.id) {
-      res.status(401).json({ error: 'OAuth authentication failed', code: 'UNAUTHORIZED' });
+function getFrontendBaseUrl(): string {
+  const configured =
+    process.env.FRONTEND_URL ||
+    process.env.BASE_URL ||
+    process.env.CLIENT_URL ||
+    process.env.ALLOWED_ORIGINS?.split(',')[0] ||
+    'http://localhost:3000';
+  return configured.replace(/\/$/, '');
+}
+
+router.get('/google', (req, res, next) => {
+  const state = typeof req.query?.state === 'string' ? req.query.state : undefined;
+  passport.authenticate('google', {
+    scope: ['profile', 'email'],
+    session: false,
+    ...(state ? { state } : {}),
+  })(req, res, next);
+});
+
+router.get('/google/callback', (req, res, next) => {
+  passport.authenticate('google', { session: false }, async (err: unknown, user: OAuthUser | false, info?: {
+    linkToken?: string;
+    linkError?: string;
+    linkedViaState?: boolean;
+  }) => {
+    if (err) {
+      console.error('[Google OAuth Callback Error]', err);
+      res.redirect(`${getFrontendBaseUrl()}/auth/login?oauthError=oauth_failed`);
       return;
     }
 
-    await createSessionForAccessToken(user.user.id, user.accessToken, req);
-
-    if (user.refreshToken) {
-      res.cookie('refreshToken', user.refreshToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      });
+    if (info?.linkToken) {
+      res.redirect(`${getFrontendBaseUrl()}/auth/link-account?token=${encodeURIComponent(info.linkToken)}`);
+      return;
     }
-    res.redirect(`http://localhost:3000/dashboard?token=${encodeURIComponent(user.accessToken)}`);
-  }
-);
+
+    if (!user) {
+      const errorCode = info?.linkError || 'oauth_failed';
+      res.redirect(`${getFrontendBaseUrl()}/auth/login?oauthError=${encodeURIComponent(errorCode)}`);
+      return;
+    }
+
+    const accessToken = generateAccessToken({ userId: user.id, email: user.email });
+    const refreshToken = generateRefreshToken({ userId: user.id, email: user.email });
+
+    await setRefreshSession(user.id, hashToken(refreshToken));
+    await createSessionForAccessToken(user.id, accessToken, req);
+
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    if (info?.linkedViaState) {
+      try {
+        await queueEmail({
+          to: user.email,
+          template: 'google_linked',
+          data: {
+            userName: user.name,
+            googleEmail: user.email,
+          },
+        });
+      } catch (emailError) {
+        console.error('[Google Linked Email Error]', emailError);
+      }
+    }
+
+    const redirectUrl = new URL(`${getFrontendBaseUrl()}/dashboard`);
+    redirectUrl.searchParams.set('token', accessToken);
+    if (info?.linkedViaState) {
+      redirectUrl.searchParams.set('googleLinked', '1');
+    }
+    res.redirect(redirectUrl.toString());
+  })(req, res, next);
+});
 
 export default router;

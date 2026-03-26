@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useSetAtom } from 'jotai';
 import HCaptcha from '@hcaptcha/react-hcaptcha';
 import { userAtom } from '@/store/atoms';
-import { api, ApiError } from '@/lib/api';
+import { api, API_BASE_URL, ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { toast } from 'sonner';
@@ -44,8 +45,11 @@ export function LoginPage() {
   const setUser = useSetAtom(userAtom);
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/dashboard';
   const captchaSiteKey = import.meta.env.VITE_HCAPTCHA_SITE_KEY || '';
+  const banner = (location.state as { banner?: string } | null)?.banner;
+  const oauthError = searchParams.get('oauthError');
 
   const lockoutActive = lockoutRemaining > 0;
   const captchaReady = !captchaRequired || Boolean(captchaToken);
@@ -224,6 +228,22 @@ export function LoginPage() {
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-4">
+                {banner ? (
+                  <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800/70 dark:bg-amber-900/20 dark:text-amber-200">
+                    {banner}
+                  </div>
+                ) : null}
+                {oauthError ? (
+                  <div className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-900/20 dark:text-red-300">
+                    {oauthError === 'INVALID_OR_EXPIRED_LINK_STATE'
+                      ? 'Google linking session expired. Please try again.'
+                      : oauthError === 'GOOGLE_ACCOUNT_ALREADY_LINKED'
+                        ? 'This Google account is already linked to another user.'
+                        : oauthError === 'ACCOUNT_SCHEDULED_FOR_DELETION'
+                          ? 'This account is scheduled for deletion.'
+                          : 'Google sign-in failed. Please try again.'}
+                  </div>
+                ) : null}
                 <div className="space-y-2">
                   <Label htmlFor="email" className="text-xs font-medium text-[var(--meet-text-muted)]">
                     Email
@@ -264,14 +284,13 @@ export function LoginPage() {
                   </div>
                   <div className="relative">
                     <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--meet-text-muted)]" />
-                    <Input
+                    <PasswordInput
                       id="password"
-                      type="password"
                       placeholder="Enter password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       autoComplete="current-password"
-                      className="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)] pl-10"
+                      inputClassName="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)] pl-10"
                     />
                   </div>
                 </div>
@@ -309,6 +328,16 @@ export function LoginPage() {
                   disabled={loading || !captchaReady || (captchaRequired && !captchaSiteKey)}
                 >
                   {loading ? 'Logging in...' : 'Login'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 w-full rounded-xl"
+                  onClick={() => {
+                    window.location.href = `${API_BASE_URL}/api/oauth/google`;
+                  }}
+                >
+                  Continue with Google
                 </Button>
               </form>
             )}

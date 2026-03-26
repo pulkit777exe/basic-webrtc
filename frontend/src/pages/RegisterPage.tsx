@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { toast } from 'sonner';
@@ -122,14 +123,13 @@ export function RegisterPage() {
                 </Label>
                 <div className="relative">
                   <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--meet-text-muted)]" />
-                  <Input
+                  <PasswordInput
                     id="password"
-                    type="password"
                     placeholder="Choose a password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     autoComplete="new-password"
-                    className="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)] pl-10"
+                    inputClassName="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)] pl-10"
                   />
                 </div>
               </div>
@@ -152,4 +152,3 @@ export function RegisterPage() {
     </div>
   );
 }
-

@@ -66,16 +66,13 @@ export function LobbyPage() {
     let stream: MediaStream | null = null;
     let cancelled = false;
     (async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true,
-        });
-      } catch {
-        // Camera/mic may not be available — continue without
-        return;
-      }
-      if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setCameras(devices.filter((d) => d.kind === "videoinput"));
+      setMics(devices.filter((d) => d.kind === "audioinput"));
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -99,6 +96,14 @@ export function LobbyPage() {
         source.connect(analyser);
         analyserRef.current = analyser;
       }
+      if (devices.filter((d) => d.kind === "videoinput").length)
+        setSelectedCamera(
+          devices.find((d) => d.kind === "videoinput")?.deviceId ?? "",
+        );
+      if (devices.filter((d) => d.kind === "audioinput").length)
+        setSelectedMic(
+          devices.find((d) => d.kind === "audioinput")?.deviceId ?? "",
+        );
     })();
     return () => {
       cancelled = true;

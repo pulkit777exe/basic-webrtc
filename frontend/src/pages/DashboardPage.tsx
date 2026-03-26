@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -84,9 +84,36 @@ export function DashboardPage() {
   const setWaitingToken = useSetAtom(waitingTokenAtom);
   const setWaitingPosition = useSetAtom(waitingRoomPositionAtom);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const createCardRef = useRef<HTMLDivElement>(null);
   const joinCardRef = useRef<HTMLDivElement>(null);
   const roomCodeRef = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    const token = searchParams.get("token");
+    const googleLinked = searchParams.get("googleLinked");
+    if (!token && !googleLinked) {
+      return;
+    }
+
+    if (token) {
+      setAccessToken(token);
+    }
+    if (googleLinked === "1") {
+      toast.success("Google account connected");
+    }
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("token");
+    nextParams.delete("googleLinked");
+    navigate(
+      {
+        pathname: "/dashboard",
+        search: nextParams.toString() ? `?${nextParams.toString()}` : "",
+      },
+      { replace: true },
+    );
+  }, [navigate, searchParams]);
 
   useGSAP(
     () => {
@@ -111,17 +138,26 @@ export function DashboardPage() {
     setCreateLoading(true);
     setCreatedRoomId(null);
     try {
-      const { roomId } = await api.createRoom({
+      const createResponse = await api.createRoom({
         title: createTitle.trim() || "Meeting",
         passcode: passcode || undefined,
         isLocked: createLocked,
         waitingRoomEnabled: createWaitingRoom,
         muteOnJoin: createMuteOnJoin,
       });
+      const roomId =
+        "room" in createResponse
+          ? createResponse.room.id
+          : "roomId" in createResponse
+            ? createResponse.roomId
+            : null;
+
+      if (!roomId) throw new Error("Invalid create room response");
+
       const joinRes = await api.joinRoom(roomId);
       if (joinRes.status === "joined" && joinRes.roomToken) {
-        setRoomToken(joinRes.roomToken);
         const { room } = await api.getRoom(roomId);
+        setRoomToken(joinRes.roomToken);
         setRoom({
           id: room.id,
           hostId: room.hostId,
@@ -129,7 +165,10 @@ export function DashboardPage() {
           isLocked: room.isLocked,
           maxParticipants: room.maxParticipants,
           participantCount: room.participantCount,
+          hostName: room.hostName,
           createdAt: room.createdAt,
+          endedAt: room.endedAt,
+          hasPasscode: room.hasPasscode,
         });
         if (roomCodeRef.current) {
           gsap.fromTo(
@@ -280,7 +319,6 @@ export function DashboardPage() {
             existing room using a code.
           </p>
           </div>
-
           {/* Profile dropdown */}
           <div ref={profileMenuRef} className="relative">
             <button
@@ -312,11 +350,14 @@ export function DashboardPage() {
                     Home
                   </button>
                   <button
-                    onClick={() => { setProfileMenuOpen(false); navigate('/settings/security'); }}
+                    onClick={() => {
+                      setProfileMenuOpen(false);
+                      navigate("/settings");
+                    }}
                     className="flex w-full items-center gap-2.5 px-4 py-2 text-sm transition-colors hover:bg-(--meet-elevated)"
                   >
                     <Shield className="h-4 w-4 opacity-60" />
-                    Security settings
+                    Settings
                   </button>
                   <div className="mx-3 my-1 border-t border-(--meet-border)" />
                   <button
