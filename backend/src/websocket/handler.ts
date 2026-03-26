@@ -740,7 +740,7 @@ export class WebSocketHandler {
 
       if (signal.type === "recording_track_offset") {
         // Sent by each client when recording starts, reports their startOffset
-        // No role check — any participant
+        // No role check: any participant
         const offset = signal.offset;
         if (typeof offset !== "number" || offset < 0) {
           this.sendError(ws, "Invalid offset");
@@ -768,7 +768,7 @@ export class WebSocketHandler {
             this.sendError(ws, "Unauthorized");
             return;
           }
-          // Check current recording state — reject if status is not 'idle' or 'done'
+          // Check current recording state; reject if status isn't 'idle' or 'done'
           const currentState = await getRecordingState(roomId);
           if (currentState && currentState.status === "recording") {
             this.sendError(ws, "Already recording");
@@ -809,7 +809,7 @@ export class WebSocketHandler {
             this.sendError(ws, "Unauthorized");
             return;
           }
-          // Check state is 'recording' — reject otherwise
+          // Check state is 'recording'; reject otherwise
           const currentState = await getRecordingState(roomId);
           if (!currentState || currentState.status !== "recording") {
             this.sendError(ws, "Not recording");

@@ -246,12 +246,12 @@ export async function getRecordingState(
   return value ? JSON.parse(value) : null;
 }
 
-// Heartbeat refresh — call this every 30s per participant
+// Heartbeat refresh: call this every 30s per participant
 export async function refreshParticipantTTL(roomId: string): Promise<void> {
   await redis.expire(roomParticipantsKey(roomId), ROOM_TTL_SEC);
 }
 
-// Cleanup — delete all Redis keys for a room on room end
+// Cleanup: delete all Redis keys for a room when it ends
 export async function deleteAllRoomKeys(roomId: string): Promise<void> {
   let cursor = "0";
   do {

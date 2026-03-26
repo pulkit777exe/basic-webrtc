@@ -58,7 +58,7 @@ export function LobbyPage() {
   const audioContextRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
-    // If in waiting mode we only need roomId — no roomToken required yet
+    // If we're waiting we only need roomId; no roomToken yet
     if (!roomId || (!roomToken && !isWaiting)) {
       navigate("/dashboard", { replace: true });
       return;
@@ -186,7 +186,7 @@ export function LobbyPage() {
 
   if (!room || !roomId) return null;
 
-  // ── Waiting room overlay ────────────────────────────────────────────────
+  // Waiting room overlay
   if (isWaiting && waitingToken) {
     return (
       <WaitingRoomLobby

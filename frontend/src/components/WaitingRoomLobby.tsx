@@ -59,7 +59,7 @@ export function WaitingRoomLobby({
   const [rejected, setRejected] = useState(false);
   const [admitting, setAdmitting] = useState(false);
 
-  // ── Camera preview ──────────────────────────────────────────────────────
+  // Camera preview
   useEffect(() => {
     let cancelled = false;
     let acquired: MediaStream | null = null;
@@ -78,7 +78,7 @@ export function WaitingRoomLobby({
         setHasCamera(true);
         if (videoRef.current) videoRef.current.srcObject = acquired;
       } catch {
-        // Camera unavailable — preview stays blank
+        // Camera unavailable, preview stays blank
       }
     })();
 
@@ -89,7 +89,7 @@ export function WaitingRoomLobby({
     };
   }, []);
 
-  // ── Elapsed timer ───────────────────────────────────────────────────────
+  // Elapsed timer
   useEffect(() => {
     startTimeRef.current = Date.now();
     elapsedIntervalRef.current = setInterval(() => {
@@ -100,7 +100,7 @@ export function WaitingRoomLobby({
     };
   }, []);
 
-  // ── Transition to room ──────────────────────────────────────────────────
+  // Transition to room
   const handleAdmitted = useCallback(
     (roomToken: string) => {
       setAdmitting(true);
@@ -113,7 +113,7 @@ export function WaitingRoomLobby({
     [navigate, roomId, setRoomToken, setIsWaiting],
   );
 
-  // ── Waiting WebSocket ───────────────────────────────────────────────────
+  // Waiting WebSocket
   useEffect(() => {
     const url = `${getWsUrl().replace(/\/$/, "")}/ws?token=${encodeURIComponent(waitingToken)}`;
     const ws = new WebSocket(url);
@@ -162,7 +162,7 @@ export function WaitingRoomLobby({
     };
   }, [waitingToken, handleAdmitted, setWaitingPosition]);
 
-  // ── Helpers ─────────────────────────────────────────────────────────────
+  // Helpers
   function formatElapsed(sec: number): string {
     const m = Math.floor(sec / 60)
       .toString()
@@ -196,7 +196,7 @@ export function WaitingRoomLobby({
     navigate("/dashboard", { replace: true });
   }
 
-  // ── CSS keyframes (injected once) ───────────────────────────────────────
+  // CSS keyframes (injected once)
   const keyframes = `
     @keyframes waitingRing {
       0%   { transform: scale(0.92); opacity: 0.7; }
@@ -209,7 +209,7 @@ export function WaitingRoomLobby({
     }
   `;
 
-  // ── Rejection screen ────────────────────────────────────────────────────
+  // Rejection screen
   if (rejected) {
     return (
       <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-6 bg-(--meet-bg) px-6 text-center">
@@ -262,7 +262,7 @@ export function WaitingRoomLobby({
     );
   }
 
-  // ── Admitting transition ────────────────────────────────────────────────
+  // Admitting transition
   if (admitting) {
     return (
       <div
@@ -276,7 +276,7 @@ export function WaitingRoomLobby({
     );
   }
 
-  // ── Main waiting screen ─────────────────────────────────────────────────
+  // Main waiting screen
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center overflow-hidden bg-(--meet-bg) px-6">
       <style>{keyframes}</style>
@@ -370,7 +370,7 @@ export function WaitingRoomLobby({
         </Button>
       </div>
 
-      {/* Camera preview — bottom-right corner */}
+      {/* Camera preview (bottom-right) */}
       <div
         className="absolute bottom-6 right-6 overflow-hidden rounded-2xl border border-(--meet-border) bg-(--meet-elevated) shadow-lg"
         style={{ width: 160, height: 90 }}

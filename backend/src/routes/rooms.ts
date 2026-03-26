@@ -38,7 +38,7 @@ import { verifyRoomToken } from "../utils/jwt";
 const router = Router();
 const SALT_ROUNDS = 10;
 
-// ─── Create room ────────────────────────────────────────────────────────────
+// Create room
 
 router.post(
   "/",
@@ -138,7 +138,7 @@ router.post(
   },
 );
 
-// ─── Get room ────────────────────────────────────────────────────────────────
+// Get room
 
 router.get(
   "/:id",
@@ -193,7 +193,7 @@ router.get(
   },
 );
 
-// ─── Delete room ─────────────────────────────────────────────────────────────
+// Delete room
 
 router.delete(
   "/:id",
@@ -236,7 +236,7 @@ router.delete(
   },
 );
 
-// ─── Join room ───────────────────────────────────────────────────────────────
+// Join room
 
 router.post(
   "/:id/join",
@@ -270,7 +270,7 @@ router.post(
         return;
       }
 
-      // 3. Check isRoomLocked — skip for the room host
+      // 3. Check isRoomLocked (skip for the host)
       const locked = await isRoomLocked(id);
       if (locked && userId !== room.hostId) {
         res
@@ -290,7 +290,7 @@ router.post(
         return;
       }
 
-      // 5. Passcode check — skip for the room host
+      // 5. Passcode check (skip for the host)
       if (room.passcodeHash && userId !== room.hostId) {
         if (!passcode) {
           res
@@ -326,7 +326,7 @@ router.post(
         await redis.del(attemptsKey);
       }
 
-      // 6. Waiting room check — fetch settings AND user details
+      // 6. Waiting room check (needs settings + user details)
       const [settings] = await db
         .select()
         .from(roomSettings)
@@ -393,7 +393,7 @@ router.post(
   },
 );
 
-// ─── Room state ──────────────────────────────────────────────────────────────
+// Room state
 
 router.get(
   "/:id/state",
@@ -454,7 +454,7 @@ router.get(
   },
 );
 
-// ─── Room messages ───────────────────────────────────────────────────────────
+// Room messages
 
 router.get(
   "/:id/messages",
@@ -513,7 +513,7 @@ router.get(
   },
 );
 
-// ─── Waiting room — list ─────────────────────────────────────────────────────
+// Waiting room: list
 
 router.get(
   "/:id/waiting-room",
@@ -540,7 +540,7 @@ router.get(
   },
 );
 
-// ─── Waiting room — admit one ────────────────────────────────────────────────
+// Waiting room: admit one
 
 router.post(
   "/:id/waiting-room/admit",
@@ -616,7 +616,7 @@ router.post(
   },
 );
 
-// ─── Waiting room — reject one ───────────────────────────────────────────────
+// Waiting room: reject one
 
 router.post(
   "/:id/waiting-room/reject",
@@ -681,7 +681,7 @@ router.post(
   },
 );
 
-// ─── Waiting room — admit all (host only) ────────────────────────────────────
+// Waiting room: admit all (host only)
 
 router.post(
   "/:id/waiting-room/admit-all",

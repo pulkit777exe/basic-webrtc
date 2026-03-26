@@ -173,7 +173,7 @@ export function WaitingRoomPanel({ onClose }: { onClose: () => void }) {
   async function handleAdmitAll() {
     if (!room?.id) return;
     setAdmitAllLoading(true);
-    // Optimistic update — clear the list immediately
+    // Optimistic update: clear the list immediately
     setWaiting([]);
     try {
       const result = await api.admitAll(room.id);
@@ -219,7 +219,7 @@ export function WaitingRoomPanel({ onClose }: { onClose: () => void }) {
 
       <Separator className="bg-[var(--room-border)]" />
 
-      {/* Admit-all bar — host only */}
+      {/* Admit-all bar (host only) */}
       {isHost && waiting.length > 1 && (
         <div className="border-b border-[var(--room-border)] px-4 py-3 sm:px-5">
           <Button

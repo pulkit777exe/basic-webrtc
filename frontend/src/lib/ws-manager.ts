@@ -341,7 +341,7 @@ export const WSManager = {
             return next.slice(-50);
           });
         } else if (data.type === "waiting_room_join") {
-          // A new participant entered the waiting room — update the host's list
+          // A new participant entered the waiting room; update the host list
           const current = store.get(waitingRoomParticipantsAtom);
           const already = current.some((p) => p.id === data.participant.id);
           if (!already) {

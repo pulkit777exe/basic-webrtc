@@ -152,7 +152,7 @@ export function LinkAccountPage() {
             {submitting ? 'Linking...' : 'Link Accounts'}
           </Button>
           <Link to="/auth/login" className="inline-flex items-center text-sm font-medium text-[var(--meet-accent)] hover:underline">
-            Cancel — create a separate account instead
+            Cancel and create a separate account instead
           </Link>
         </div>
       </div>

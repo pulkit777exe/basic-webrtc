@@ -20,7 +20,7 @@ try {
 export interface TrackInfo {
   participantId: string;
   path: string;           // local path to assembled .webm file
-  startOffset: number;    // ms since recording started — used for sync padding
+  startOffset: number;    // ms since recording started; used for sync padding
 }
 
 // Helper to build grid filter based on track count

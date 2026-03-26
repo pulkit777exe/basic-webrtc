@@ -107,7 +107,7 @@ router.post(
         const participantDir = path.join(RECORDINGS_DIR, roomId, sessionId, participantId);
         const outputPath = path.join(RECORDINGS_DIR, roomId, sessionId, `${participantId}.webm`);
 
-        // --- FIX: verify all chunk files exist BEFORE assembly ---
+        // Verify all chunk files exist before assembly
         const missingChunks: number[] = [];
         for (let i = 0; i < totalChunksNum; i++) {
           if (!fs.existsSync(path.join(participantDir, `chunk_${i}`))) {
@@ -116,7 +116,7 @@ router.post(
         }
 
         if (missingChunks.length > 0) {
-          // Don't delete the counter — let the client retry the missing chunks
+          // Keep the counter so the client can retry the missing chunks
           await redis.del(lockKey);
           lockAcquired = false;
           res.status(409).json({
@@ -137,19 +137,18 @@ router.post(
 
           await fs.promises.writeFile(outputPath, Buffer.concat(chunks));
 
-          // --- FIX: only delete chunks AFTER successful write ---
+          // Delete chunks only after a successful write
           for (let i = 0; i < totalChunksNum; i++) {
             const chunkPath = path.join(participantDir, `chunk_${i}`);
             await fs.promises.unlink(chunkPath);
           }
           await fs.promises.rmdir(participantDir);
 
-          // --- FIX: only delete counter on full success ---
+          // Delete the counter only after everything succeeds
           await redis.del(chunkCountKey);
         } catch (assemblyError) {
           console.error('Error assembling chunks:', assemblyError);
-          // --- FIX: do NOT delete counter on failure — preserve for retry ---
-          // Decrement counter so the final chunk can be retried
+          // Keep the counter so the client can retry the final chunk
           await redis.decr(chunkCountKey);
           await redis.del(lockKey);
           lockAcquired = false;
@@ -376,7 +375,7 @@ router.get(
         return;
       }
 
-      // --- FIX: merge Redis + Postgres for status — Redis may have expired ---
+      // Combine Redis (live) + Postgres (fallback) since Redis state can expire
       const recordingState = await getRecordingState(roomId);
       const dbSession = participant[0];
 

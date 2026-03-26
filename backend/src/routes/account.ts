@@ -111,7 +111,7 @@ router.post('/export', authenticateToken, async (req: Request, res: Response): P
       },
     });
 
-    res.status(200).json({ message: 'Export started — check your email when ready' });
+    res.status(200).json({ message: 'Export started. You\'ll get an email when it\'s ready.' });
   } catch (error) {
     console.error('[Account Export Error]', error);
     res.status(500).json({ error: 'Internal server error' });
