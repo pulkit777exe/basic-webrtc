@@ -30,7 +30,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Mic, Video } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff } from "lucide-react";
 
 const BARS = 20;
 
@@ -52,6 +52,10 @@ export function LobbyPage() {
   const [selectedCamera, setSelectedCamera] = useState<string>("");
   const [selectedMic, setSelectedMic] = useState<string>("");
   const [joining, setJoining] = useState(false);
+  const [videoEnabled, setVideoEnabled] = useState(true);
+  const [audioEnabled, setAudioEnabled] = useState(true);
+
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
     // If in waiting mode we only need roomId — no roomToken required yet
@@ -60,59 +64,73 @@ export function LobbyPage() {
       return;
     }
     let stream: MediaStream | null = null;
+    let cancelled = false;
     (async () => {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      setCameras(devices.filter((d) => d.kind === "videoinput"));
-      setMics(devices.filter((d) => d.kind === "audioinput"));
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
+        });
+      } catch {
+        // Camera/mic may not be available — continue without
+        return;
+      }
+      if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
+
+      // Re-enumerate after getUserMedia so labels are available
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter((d) => d.kind === "videoinput" && d.deviceId);
+      const micDevices = devices.filter((d) => d.kind === "audioinput" && d.deviceId);
+      setCameras(cams);
+      setMics(micDevices);
+      if (cams.length) setSelectedCamera(cams[0].deviceId);
+      if (micDevices.length) setSelectedMic(micDevices[0].deviceId);
+
       if (stream.getAudioTracks().length) {
         const ac = new AudioContext();
+        audioContextRef.current = ac;
         const source = ac.createMediaStreamSource(stream);
         const analyser = ac.createAnalyser();
         analyser.fftSize = 32;
         source.connect(analyser);
         analyserRef.current = analyser;
       }
-      if (devices.filter((d) => d.kind === "videoinput").length)
-        setSelectedCamera(
-          devices.find((d) => d.kind === "videoinput")?.deviceId ?? "",
-        );
-      if (devices.filter((d) => d.kind === "audioinput").length)
-        setSelectedMic(
-          devices.find((d) => d.kind === "audioinput")?.deviceId ?? "",
-        );
     })();
     return () => {
+      cancelled = true;
       stream?.getTracks().forEach((t) => t.stop());
+      audioContextRef.current?.close().catch(() => {});
+      audioContextRef.current = null;
+      analyserRef.current = null;
     };
-  }, [roomId, roomToken, navigate]);
+  }, [roomId, roomToken, navigate, isWaiting]);
 
   const rafRef = useRef<number>(0);
   useEffect(() => {
-    const analyser = analyserRef.current;
     const barsEl = barsRef.current;
-    if (!analyser || !barsEl) return;
-    const data = new Uint8Array(analyser.frequencyBinCount);
+    if (!barsEl) return;
+    let running = true;
 
     function tick() {
-      if (!analyser || !barsEl) return;
-      analyser.getByteFrequencyData(data);
-      const children = barsEl.children;
-      for (let i = 0; i < Math.min(children.length, data.length); i++) {
-        const h = (data[i] / 255) * 24;
-        (children[i] as HTMLElement).style.height = `${h}px`;
+      if (!running) return;
+      const analyser = analyserRef.current;
+      if (analyser && barsEl) {
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(data);
+        const children = barsEl.children;
+        for (let i = 0; i < Math.min(children.length, data.length); i++) {
+          const h = (data[i] / 255) * 24;
+          (children[i] as HTMLElement).style.height = `${h}px`;
+        }
       }
       rafRef.current = requestAnimationFrame(tick);
     }
     rafRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafRef.current);
+    return () => { running = false; cancelAnimationFrame(rafRef.current); };
   }, []);
 
   useGSAP(
@@ -126,10 +144,35 @@ export function LobbyPage() {
     { scope: barsRef },
   );
 
+  function handleToggleVideo() {
+    setVideoEnabled((prev) => {
+      const next = !prev;
+      const stream = streamRef.current;
+      if (stream) {
+        stream.getVideoTracks().forEach((t) => { t.enabled = next; });
+      }
+      return next;
+    });
+  }
+
+  function handleToggleAudio() {
+    setAudioEnabled((prev) => {
+      const next = !prev;
+      const stream = streamRef.current;
+      if (stream) {
+        stream.getAudioTracks().forEach((t) => { t.enabled = next; });
+      }
+      return next;
+    });
+  }
+
   async function handleJoinNow() {
     if (!roomId) return;
     setJoining(true);
     try {
+      // Store user's media preferences in sessionStorage so RoomPage can read them
+      sessionStorage.setItem('lobby_video', videoEnabled ? '1' : '0');
+      sessionStorage.setItem('lobby_audio', audioEnabled ? '1' : '0');
       navigate(`/room/${roomId}`);
     } finally {
       setJoining(false);
@@ -191,11 +234,45 @@ export function LobbyPage() {
                 autoPlay
                 muted
                 playsInline
-                className="h-full w-full object-cover [transform:scaleX(-1)]"
+                className={`h-full w-full object-cover [transform:scaleX(-1)] ${!videoEnabled ? 'invisible' : ''}`}
               />
+              {!videoEnabled && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="flex h-16 w-16 items-center justify-center rounded-full bg-(--meet-accent) text-2xl font-semibold text-white">
+                    {user?.name?.charAt(0).toUpperCase() ?? "U"}
+                  </span>
+                </div>
+              )}
               <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-full bg-black/55 px-3 py-1 text-xs font-medium text-white">
-                <Video className="h-3.5 w-3.5" />
+                {videoEnabled ? <Video className="h-3.5 w-3.5" /> : <VideoOff className="h-3.5 w-3.5 text-red-400" />}
                 {user?.name ?? "You"}
+              </div>
+              {/* Mic/Video toggles */}
+              <div className="absolute bottom-3 right-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleToggleAudio}
+                  className={`flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
+                    audioEnabled
+                      ? 'bg-white/20 text-white hover:bg-white/30'
+                      : 'bg-red-500/90 text-white hover:bg-red-600'
+                  }`}
+                  title={audioEnabled ? 'Mute microphone' : 'Unmute microphone'}
+                >
+                  {audioEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleToggleVideo}
+                  className={`flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
+                    videoEnabled
+                      ? 'bg-white/20 text-white hover:bg-white/30'
+                      : 'bg-red-500/90 text-white hover:bg-red-600'
+                  }`}
+                  title={videoEnabled ? 'Turn off camera' : 'Turn on camera'}
+                >
+                  {videoEnabled ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
+                </button>
               </div>
             </div>
           </CardContent>

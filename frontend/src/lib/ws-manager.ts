@@ -27,7 +27,9 @@ function getWsUrl(): string {
     import.meta.env.VITE_WS_URL ||
     import.meta.env.VITE_API_URL ||
     "http://localhost:4000";
-  return env.replace(/^http/, "ws");
+  // If the env already ends with /ws, use it as-is; otherwise append /ws
+  const base = env.replace(/^http/, "ws").replace(/\/+$/, "");
+  return base.endsWith("/ws") ? base : `${base}/ws`;
 }
 
 type Signal =
@@ -118,13 +120,22 @@ function applyHostMute() {
   store.set(mutedByHostAtom, true);
 }
 
+let pingInterval: ReturnType<typeof setInterval> | null = null;
+
 export const WSManager = {
   connect(roomToken: string) {
-    const url = `${getWsUrl().replace(/\/$/, "")}/ws?token=${encodeURIComponent(roomToken)}`;
+    const url = `${getWsUrl()}?token=${encodeURIComponent(roomToken)}`;
     ws = new WebSocket(url);
 
     ws.onopen = () => {
       reconnectAttempts = 0;
+      // Start heartbeat
+      if (pingInterval) clearInterval(pingInterval);
+      pingInterval = setInterval(() => {
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "ping" }));
+        }
+      }, 25000);
     };
 
     ws.onmessage = (event) => {
@@ -134,6 +145,8 @@ export const WSManager = {
           userId?: string;
           targetUserId?: string;
         };
+
+        if (data.type === "pong") return;
 
         if (data.type === "join" && data.user) {
           const participants = store.get(participantsAtom);
@@ -370,6 +383,7 @@ export const WSManager = {
 
     ws.onclose = () => {
       ws = null;
+      if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
       if (reconnectAttempts < MAX_RECONNECT) {
         const delay = DELAYS[Math.min(reconnectAttempts, DELAYS.length - 1)];
         reconnectAttempts++;
@@ -387,6 +401,7 @@ export const WSManager = {
   },
 
   disconnect() {
+    if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
     if (ws) {
       ws.close();
       ws = null;

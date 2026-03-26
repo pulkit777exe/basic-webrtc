@@ -38,6 +38,7 @@ import {
   getParticipant,
   setRecordingState,
   getRecordingState,
+  refreshParticipantTTL,
 } from "../lib/redis-rooms";
 import { redis } from "../config/redis";
 import { redisSub } from "../config/redis";
@@ -422,6 +423,7 @@ export class WebSocketHandler {
       }
 
       if (signal.type === "ping") {
+        await refreshParticipantTTL(roomId);
         this.send(ws, { type: "pong" });
         return;
       }

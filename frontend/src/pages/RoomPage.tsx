@@ -143,7 +143,30 @@ export function RoomPage() {
     if (hasInit.current) return;
     hasInit.current = true;
 
-    RTCManager.init().then(() => {
+    // Read user's lobby preferences
+    const lobbyVideo = sessionStorage.getItem('lobby_video') !== '0';
+    const lobbyAudio = sessionStorage.getItem('lobby_audio') !== '0';
+    sessionStorage.removeItem('lobby_video');
+    sessionStorage.removeItem('lobby_audio');
+
+    RTCManager.init().then(async () => {
+      // Small delay to allow browser to release previous getUserMedia handles from lobby
+      await new Promise((r) => setTimeout(r, 300));
+      // Always acquire both tracks, then disable based on user preference
+      const stream = await MediaManager.getStream(true, true);
+      if (stream) {
+        // Apply user's lobby preferences
+        if (!lobbyVideo) {
+          stream.getVideoTracks().forEach((t) => { t.enabled = false; });
+          const currentState = store.get(localMediaAtom);
+          store.set(localMediaAtom, { ...currentState, video: false });
+        }
+        if (!lobbyAudio) {
+          stream.getAudioTracks().forEach((t) => { t.enabled = false; });
+          const currentState = store.get(localMediaAtom);
+          store.set(localMediaAtom, { ...currentState, audio: false });
+        }
+      }
       WSManager.connect(roomToken);
     });
 
@@ -156,8 +179,8 @@ export function RoomPage() {
           avatarUrl: user.avatarUrl ?? undefined,
         },
         role: room?.hostId === user.id ? "host" : "participant",
-        video: true,
-        audio: true,
+        video: lobbyVideo,
+        audio: lobbyAudio,
         screen: false,
       },
     ]);
@@ -186,8 +209,6 @@ export function RoomPage() {
         RTCManager.addIceCandidate(s.from, s.candidate);
       }
     };
-
-    MediaManager.getStream(true, true);
 
     return () => {
       WSManager.disconnect();

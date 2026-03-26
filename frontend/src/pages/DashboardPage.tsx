@@ -1,16 +1,17 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import { useSetAtom } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import {
   roomAtom,
   roomTokenAtom,
   isWaitingAtom,
   waitingTokenAtom,
   waitingRoomPositionAtom,
+  userAtom,
 } from "@/store/atoms";
-import { api } from "@/lib/api";
+import { api, setAccessToken } from "@/lib/api";
 import {
   Card,
   CardContent,
@@ -33,9 +34,32 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { ArrowRight, DoorOpen, PlusSquare, Shield, Sparkles } from "lucide-react";
+import { ArrowRight, ChevronDown, DoorOpen, Home, LogOut, PlusSquare, Shield, Sparkles } from "lucide-react";
 
 export function DashboardPage() {
+  const user = useAtomValue(userAtom);
+  const setUser = useSetAtom(userAtom);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close profile dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
+        setProfileMenuOpen(false);
+      }
+    }
+    if (profileMenuOpen) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [profileMenuOpen]);
+
+  async function handleLogout() {
+    try { await api.logout(); } catch { /* ignore */ }
+    setAccessToken(null);
+    setUser(null);
+    navigate('/login');
+  }
+
   const [createTitle, setCreateTitle] = useState("");
   const [createPasscode, setCreatePasscode] = useState("");
   const [createLocked, setCreateLocked] = useState(false);
@@ -87,23 +111,24 @@ export function DashboardPage() {
     setCreateLoading(true);
     setCreatedRoomId(null);
     try {
-      const { room } = await api.createRoom({
+      const { roomId } = await api.createRoom({
         title: createTitle.trim() || "Meeting",
         passcode: passcode || undefined,
         isLocked: createLocked,
         waitingRoomEnabled: createWaitingRoom,
         muteOnJoin: createMuteOnJoin,
       });
-      const joinRes = await api.joinRoom(room.id);
+      const joinRes = await api.joinRoom(roomId);
       if (joinRes.status === "joined" && joinRes.roomToken) {
         setRoomToken(joinRes.roomToken);
+        const { room } = await api.getRoom(roomId);
         setRoom({
           id: room.id,
           hostId: room.hostId,
           title: room.title,
           isLocked: room.isLocked,
           maxParticipants: room.maxParticipants,
-          participantCount: 0,
+          participantCount: room.participantCount,
           createdAt: room.createdAt,
         });
         if (roomCodeRef.current) {
@@ -113,7 +138,7 @@ export function DashboardPage() {
             { clipPath: "inset(0 0% 0 0)", duration: 0.4, ease: "power2.out" },
           );
         }
-        setCreatedRoomId(room.id);
+        setCreatedRoomId(roomId);
         toast.success("Room created");
       }
     } catch (err) {
@@ -124,7 +149,7 @@ export function DashboardPage() {
   }
 
   async function handleJoin() {
-    const code = joinCode.trim().toUpperCase();
+    const code = joinCode.trim();
     if (!code) {
       toast.error("Enter a room code");
       return;
@@ -245,29 +270,75 @@ export function DashboardPage() {
           <div className="space-y-3">
           <Badge
             variant="secondary"
-            className="border border-[var(--meet-border)] bg-[var(--meet-elevated)] text-[var(--meet-text-muted)]"
+            className="border border-(--meet-border) bg-(--meet-elevated) text-(--meet-text-muted)"
           >
             Workspace
           </Badge>
           <h1 className="text-3xl font-semibold">Dashboard</h1>
-          <p className="max-w-xl text-sm text-[var(--meet-text-muted)]">
+          <p className="max-w-xl text-sm text-(--meet-text-muted)">
             Start a meeting with controls pre-configured, or jump into an
             existing room using a code.
           </p>
           </div>
-          <Button variant="outline" onClick={() => navigate("/settings/security")}>
-            <Shield className="h-4 w-4" />
-            Security settings
-          </Button>
+
+          {/* Profile dropdown */}
+          <div ref={profileMenuRef} className="relative">
+            <button
+              onClick={() => setProfileMenuOpen((o) => !o)}
+              className="flex items-center gap-2.5 rounded-full border border-(--meet-border) bg-(--meet-surface) py-2 pl-2 pr-4 transition-colors hover:bg-(--meet-elevated)"
+            >
+              {user?.avatarUrl ? (
+                <img src={user.avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
+              ) : (
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-(--meet-accent) text-sm font-semibold text-white">
+                  {user?.name?.charAt(0).toUpperCase() ?? "U"}
+                </span>
+              )}
+              <span className="hidden text-sm font-medium sm:inline">{user?.name ?? "User"}</span>
+              <ChevronDown className="h-3.5 w-3.5 opacity-50" />
+            </button>
+            {profileMenuOpen && (
+              <div className="absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-xl border border-(--meet-border) bg-(--meet-surface) shadow-xl animate-in fade-in slide-in-from-top-2 duration-150">
+                <div className="border-b border-(--meet-border) px-4 py-3">
+                  <p className="truncate text-sm font-semibold">{user?.name}</p>
+                  <p className="truncate text-xs text-(--meet-text-muted)">{user?.email}</p>
+                </div>
+                <div className="py-1">
+                  <button
+                    onClick={() => { setProfileMenuOpen(false); navigate('/'); }}
+                    className="flex w-full items-center gap-2.5 px-4 py-2 text-sm transition-colors hover:bg-(--meet-elevated)"
+                  >
+                    <Home className="h-4 w-4 opacity-60" />
+                    Home
+                  </button>
+                  <button
+                    onClick={() => { setProfileMenuOpen(false); navigate('/settings/security'); }}
+                    className="flex w-full items-center gap-2.5 px-4 py-2 text-sm transition-colors hover:bg-(--meet-elevated)"
+                  >
+                    <Shield className="h-4 w-4 opacity-60" />
+                    Security settings
+                  </button>
+                  <div className="mx-3 my-1 border-t border-(--meet-border)" />
+                  <button
+                    onClick={handleLogout}
+                    className="flex w-full items-center gap-2.5 px-4 py-2 text-sm text-red-500 transition-colors hover:bg-(--meet-elevated)"
+                  >
+                    <LogOut className="h-4 w-4 opacity-60" />
+                    Log out
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
           <Card
             ref={createCardRef}
-            className="card-glow rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md"
+            className="card-glow rounded-3xl border-(--meet-border) bg-(--meet-surface) py-0 backdrop-blur-md"
           >
             <CardHeader className="space-y-2 p-6 sm:p-7">
-              <div className="flex items-center gap-2 text-[var(--meet-accent)]">
+              <div className="flex items-center gap-2 text-(--meet-accent)">
                 <PlusSquare className="h-4 w-4" />
                 <span className="text-xs font-medium uppercase">Host</span>
               </div>
@@ -278,18 +349,18 @@ export function DashboardPage() {
             </CardHeader>
             <CardContent className="space-y-4 p-6 pt-0 sm:p-7 sm:pt-0">
               <div className="space-y-2">
-                <Label className="text-xs text-[var(--meet-text-muted)]">
+                <Label className="text-xs text-(--meet-text-muted)">
                   Title
                 </Label>
                 <Input
                   placeholder="Weekly sync, design review..."
                   value={createTitle}
                   onChange={(e) => setCreateTitle(e.target.value)}
-                  className="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)]"
+                  className="h-11 rounded-xl border-(--meet-border) bg-(--meet-surface)"
                 />
               </div>
               <div className="space-y-2">
-                <Label className="text-xs text-[var(--meet-text-muted)]">
+                <Label className="text-xs text-(--meet-text-muted)">
                   Passcode (optional)
                 </Label>
                 <Input
@@ -299,7 +370,7 @@ export function DashboardPage() {
                   onChange={(e) =>
                     setCreatePasscode(e.target.value.slice(0, 6))
                   }
-                  className="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)]"
+                  className="h-11 rounded-xl border-(--meet-border) bg-(--meet-surface)"
                   maxLength={6}
                 />
               </div>
@@ -307,21 +378,21 @@ export function DashboardPage() {
               <Separator />
 
               <div className="space-y-3">
-                <div className="flex items-center justify-between rounded-xl bg-[var(--meet-elevated)] px-3 py-2">
+                <div className="flex items-center justify-between rounded-xl bg-(--meet-elevated) px-3 py-2">
                   <Label className="text-sm font-medium">Lock room</Label>
                   <Switch
                     checked={createLocked}
                     onCheckedChange={setCreateLocked}
                   />
                 </div>
-                <div className="flex items-center justify-between rounded-xl bg-[var(--meet-elevated)] px-3 py-2">
+                <div className="flex items-center justify-between rounded-xl bg-(--meet-elevated) px-3 py-2">
                   <Label className="text-sm font-medium">Waiting room</Label>
                   <Switch
                     checked={createWaitingRoom}
                     onCheckedChange={setCreateWaitingRoom}
                   />
                 </div>
-                <div className="flex items-center justify-between rounded-xl bg-[var(--meet-elevated)] px-3 py-2">
+                <div className="flex items-center justify-between rounded-xl bg-(--meet-elevated) px-3 py-2">
                   <Label className="text-sm font-medium">Mute on join</Label>
                   <Switch
                     checked={createMuteOnJoin}
@@ -331,17 +402,17 @@ export function DashboardPage() {
               </div>
 
               {createdRoomId ? (
-                <div className="space-y-3 rounded-2xl border border-[var(--meet-border)] bg-[var(--meet-elevated)] p-4">
+                <div className="space-y-3 rounded-2xl border border-(--meet-border) bg-(--meet-elevated) p-4">
                   <p
                     ref={roomCodeRef}
-                    className="overflow-hidden font-mono text-sm font-semibold tracking-wide text-[var(--meet-text)]"
+                    className="overflow-hidden font-mono text-sm font-semibold tracking-wide text-(--meet-text)"
                     style={{ clipPath: "inset(0 0 0 0)" }}
                   >
                     Room code: {createdRoomId}
                   </p>
                   <Button
                     variant="default"
-                    className="h-11 w-full rounded-xl bg-[var(--meet-accent)] text-white hover:bg-blue-600"
+                    className="h-11 w-full rounded-xl bg-(--meet-accent) text-white hover:bg-blue-600"
                     onClick={() => goToLobby(createdRoomId)}
                   >
                     Continue to lobby
@@ -350,7 +421,7 @@ export function DashboardPage() {
                 </div>
               ) : (
                 <Button
-                  className="h-11 w-full rounded-xl bg-[var(--meet-accent)] text-white hover:bg-blue-600"
+                  className="h-11 w-full rounded-xl bg-(--meet-accent) text-white hover:bg-blue-600"
                   onClick={handleCreate}
                   disabled={createLoading}
                 >
@@ -362,7 +433,7 @@ export function DashboardPage() {
 
           <Card
             ref={joinCardRef}
-            className="card-glow rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md"
+            className="card-glow rounded-3xl border-(--meet-border) bg-(--meet-surface) py-0 backdrop-blur-md"
           >
             <CardHeader className="space-y-2 p-6 sm:p-7">
               <div className="flex items-center gap-2 text-cyan-700">
@@ -376,19 +447,19 @@ export function DashboardPage() {
             </CardHeader>
             <CardContent className="space-y-4 p-6 pt-0 sm:p-7 sm:pt-0">
               <div className="space-y-2">
-                <Label className="text-xs text-[var(--meet-text-muted)]">
+                <Label className="text-xs text-(--meet-text-muted)">
                   Room code
                 </Label>
                 <Input
                   placeholder="e.g. ABC12xyz45"
                   value={joinCode}
                   onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                  className="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)] font-mono text-base tracking-wide sm:text-lg"
+                  className="h-11 rounded-xl border-(--meet-border) bg-(--meet-surface) font-mono text-base tracking-wide sm:text-lg"
                   maxLength={10}
                 />
               </div>
               <div className="space-y-2">
-                <Label className="text-xs text-[var(--meet-text-muted)]">
+                <Label className="text-xs text-(--meet-text-muted)">
                   Passcode (if required)
                 </Label>
                 <Input
@@ -396,13 +467,13 @@ export function DashboardPage() {
                   placeholder="••••••"
                   value={joinPasscode}
                   onChange={(e) => setJoinPasscode(e.target.value.slice(0, 6))}
-                  className="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)]"
+                  className="h-11 rounded-xl border-(--meet-border) bg-(--meet-surface)"
                   maxLength={6}
                 />
               </div>
               <Button
                 variant="outline"
-                className="h-11 w-full rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)] hover:bg-[var(--meet-accent-soft)]"
+                className="h-11 w-full rounded-xl border-(--meet-border) bg-(--meet-surface) hover:bg-(--meet-accent-soft)"
                 onClick={handleJoin}
                 disabled={joinLoading}
               >
@@ -426,7 +497,7 @@ export function DashboardPage() {
           <div
             className={`space-y-2 ${passcodeShake ? "animate-[shake_0.35s_ease-in-out]" : ""}`}
           >
-            <Label className="text-xs text-[var(--meet-text-muted)]">
+            <Label className="text-xs text-(--meet-text-muted)">
               Passcode
             </Label>
             <Input
@@ -443,7 +514,7 @@ export function DashboardPage() {
               }}
               placeholder="••••••"
               maxLength={6}
-              className="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)] text-center font-mono text-lg tracking-[0.35em]"
+              className="h-11 rounded-xl border-(--meet-border) bg-(--meet-surface) text-center font-mono text-lg tracking-[0.35em]"
             />
           </div>
           <DialogFooter>

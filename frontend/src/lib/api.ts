@@ -191,14 +191,8 @@ export const api = {
     maxParticipants?: number;
   }) {
     return request<{
-      room: {
-        id: string;
-        title: string;
-        hostId: string;
-        isLocked: boolean;
-        maxParticipants: number;
-        createdAt: string;
-      };
+      roomId: string;
+      hasPasscode: boolean;
     }>("/api/rooms", {
       method: "POST",
       body: JSON.stringify(body),

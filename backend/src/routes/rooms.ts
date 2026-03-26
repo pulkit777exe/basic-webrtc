@@ -51,6 +51,8 @@ router.post(
         isLocked = false,
         passcode,
         maxParticipants = 50,
+        waitingRoomEnabled = false,
+        muteOnJoin = false,
       } = req.body;
 
       const roomId = generateRoomId();
@@ -74,8 +76,8 @@ router.post(
         roomId,
         allowScreenShare: true,
         allowChat: true,
-        muteOnJoin: false,
-        waitingRoomEnabled: false,
+        muteOnJoin: Boolean(muteOnJoin),
+        waitingRoomEnabled: Boolean(waitingRoomEnabled),
       });
 
       await db.insert(roomParticipants).values({
@@ -96,8 +98,8 @@ router.post(
         settings: JSON.stringify({
           allowScreenShare: true,
           allowChat: true,
-          muteOnJoin: false,
-          waitingRoomEnabled: false,
+          muteOnJoin: Boolean(muteOnJoin),
+          waitingRoomEnabled: Boolean(waitingRoomEnabled),
         }),
       });
 
@@ -243,9 +245,9 @@ router.post(
         return;
       }
 
-      // 3. Check isRoomLocked
+      // 3. Check isRoomLocked — skip for the room host
       const locked = await isRoomLocked(id);
-      if (locked) {
+      if (locked && userId !== room.hostId) {
         res
           .status(423)
           .json({ error: "Room is locked by the host", code: "ROOM_LOCKED" });
@@ -263,8 +265,8 @@ router.post(
         return;
       }
 
-      // 5. Passcode check
-      if (room.passcodeHash) {
+      // 5. Passcode check — skip for the room host
+      if (room.passcodeHash && userId !== room.hostId) {
         if (!passcode) {
           res
             .status(401)
@@ -294,6 +296,9 @@ router.post(
             .json({ error: "Invalid passcode", code: "INVALID_PASSCODE" });
           return;
         }
+
+        // Successfully validated passcode, delete rate limit key
+        await redis.del(attemptsKey);
       }
 
       // 6. Waiting room check — fetch settings AND user details

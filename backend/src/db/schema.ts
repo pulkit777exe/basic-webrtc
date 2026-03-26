@@ -174,7 +174,7 @@ export const loginEvents = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => users.id),
-    sessionId: uuid('session_id').references(() => userSessions.id),
+    sessionId: uuid('session_id').references(() => userSessions.id, { onDelete: 'cascade' }),
     ipAddress: varchar('ip_address', { length: 45 }).notNull(),
     country: varchar('country', { length: 100 }),
     city: varchar('city', { length: 100 }),

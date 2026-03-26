@@ -69,6 +69,8 @@ export function useWebSocket(onMessage: (message: WSMessage) => void) {
         localWs = ws;
         wsRef.current = ws;
 
+        let pingIntervalId: number | undefined;
+
         ws.onopen = () => {
           if (!isMountedRef.current) {
             ws.close();
@@ -84,6 +86,13 @@ export function useWebSocket(onMessage: (message: WSMessage) => void) {
           // Reset reconnect attempts on successful connection
           reconnectAttempts = 0;
           reconnectDelay = INITIAL_RECONNECT_DELAY;
+          
+          // Setup ping interval
+          pingIntervalId = window.setInterval(() => {
+            if (localWs?.readyState === WebSocket.OPEN) {
+              localWs.send(JSON.stringify({ type: "ping" }));
+            }
+          }, 25000);
         };
 
         ws.onmessage = (event) => {
@@ -91,6 +100,7 @@ export function useWebSocket(onMessage: (message: WSMessage) => void) {
           
           try {
             const message: WSMessage = JSON.parse(event.data);
+            if (message.type === "pong") return; // Ignore pong
             onMessageRef.current(message);
           } catch (error) {
             console.error("[WS] Error parsing message:", error);
@@ -109,6 +119,12 @@ export function useWebSocket(onMessage: (message: WSMessage) => void) {
             console.log("[WS] Connection closed (component unmounted)");
             return;
           }
+          
+          // Clear ping interval
+          if (pingIntervalId) {
+            clearInterval(pingIntervalId);
+          }
+
           
           console.log("[WS] Connection closed:", {
             code: event.code,

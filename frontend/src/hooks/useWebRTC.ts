@@ -63,11 +63,22 @@ export function useWebRTC(sendMessage: (msg: WSMessage) => void) {
         }
       };
 
-      pc.onconnectionstatechange = () => {
+      pc.oniceconnectionstatechange = () => {
         console.log(
-          "LOG: [WebRTC] Connection state change:",
-          pc.connectionState,
+          "LOG: [WebRTC] ICE connection state change:",
+          pc.iceConnectionState,
         );
+        if (
+          pc.iceConnectionState === "failed" ||
+          pc.iceConnectionState === "disconnected" ||
+          pc.iceConnectionState === "closed"
+        ) {
+          setPeers((prev) => {
+            const newPeers = new Map(prev);
+            newPeers.delete(targetUserId);
+            return newPeers;
+          });
+        }
       };
 
       pc.ontrack = (event) => {
@@ -139,11 +150,22 @@ export function useWebRTC(sendMessage: (msg: WSMessage) => void) {
         }
       };
 
-      pc.onconnectionstatechange = () => {
+      pc.oniceconnectionstatechange = () => {
         console.log(
-          "LOG: [WebRTC] Connection state change (receiver):",
-          pc.connectionState,
+          "LOG: [WebRTC] ICE connection state change (receiver):",
+          pc.iceConnectionState,
         );
+        if (
+          pc.iceConnectionState === "failed" ||
+          pc.iceConnectionState === "disconnected" ||
+          pc.iceConnectionState === "closed"
+        ) {
+          setPeers((prev) => {
+            const newPeers = new Map(prev);
+            newPeers.delete(fromUserId);
+            return newPeers;
+          });
+        }
       };
 
       pc.ontrack = (event) => {

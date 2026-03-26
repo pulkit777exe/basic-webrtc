@@ -7,24 +7,52 @@ let screenStream: MediaStream | null = null;
 
 export const MediaManager = {
   async getStream(video: boolean, audio: boolean) {
-    localStream = await navigator.mediaDevices.getUserMedia({
-      video: video ? { width: 1280, height: 720 } : false,
-      audio: audio
-        ? {
-            noiseSuppression: true,
-            echoCancellation: true,
-            autoGainControl: true,
-          }
-        : false,
-    });
-    store.set(localMediaAtom, {
-      stream: localStream,
-      video,
-      audio,
-      screen: false,
-    });
-    RTCManager.setLocalStream(localStream);
-    return localStream;
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        video: video ? { width: 1280, height: 720 } : false,
+        audio: audio
+          ? {
+              noiseSuppression: true,
+              echoCancellation: true,
+              autoGainControl: true,
+            }
+          : false,
+      });
+      store.set(localMediaAtom, {
+        stream: localStream,
+        video,
+        audio,
+        screen: false,
+      });
+      RTCManager.setLocalStream(localStream);
+      return localStream;
+    } catch (err) {
+      console.error('[MediaManager] getUserMedia failed, retrying...', err);
+      // Retry with relaxed constraints
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({
+          video: video,
+          audio: audio,
+        });
+        store.set(localMediaAtom, {
+          stream: localStream,
+          video,
+          audio,
+          screen: false,
+        });
+        RTCManager.setLocalStream(localStream);
+        return localStream;
+      } catch (retryErr) {
+        console.error('[MediaManager] getUserMedia retry failed', retryErr);
+        store.set(localMediaAtom, {
+          stream: null,
+          video: false,
+          audio: false,
+          screen: false,
+        });
+        return null;
+      }
+    }
   },
 
   toggleVideo() {

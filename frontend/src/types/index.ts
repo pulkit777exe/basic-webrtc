@@ -77,6 +77,8 @@ export type WSMessageType =
   | "mute-all"
   | "lock-room"
   | "unlock-room"
+  | "ping"
+  | "pong"
   | "error";
 
 export interface WSMessage {
