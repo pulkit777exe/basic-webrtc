@@ -71,8 +71,8 @@ export const VideoTile = memo(function VideoTile({
   return (
     <div
       className={cn(
-        'group relative aspect-video overflow-hidden rounded-2xl border bg-[var(--room-strong)] transition-all duration-300',
-        isPinned ? 'border-cyan-400 ring-2 ring-cyan-400/45' : 'border-[var(--room-border)]',
+        'group relative aspect-video overflow-hidden rounded-2xl border bg-(--room-strong) transition-all duration-300',
+        isPinned ? 'border-cyan-400 ring-2 ring-cyan-400/45' : 'border-(--room-border)',
         isSpeaking ? 'shadow-[0_0_0_2px_rgba(34,197,94,0.45),0_0_28px_rgba(34,197,94,0.45)]' : '',
         className
       )}
@@ -145,7 +145,7 @@ export const VideoTile = memo(function VideoTile({
         )}
       </div>
 
-      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/85 via-black/35 to-transparent px-3 py-2.5">
+      <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-linear-to-t from-black/85 via-black/35 to-transparent px-3 py-2.5">
         <span className="truncate text-sm font-medium text-white">
           {name}
           {isLocal ? ' (You)' : ''}

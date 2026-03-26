@@ -113,54 +113,54 @@ export function CookieConsentGate({ children }: { children: React.ReactNode }) {
     <>
       <div
         ref={overlayRef}
-        className="fixed inset-0 z-50 flex items-end justify-center bg-[var(--room-strong)] p-0 backdrop-blur-sm sm:p-6"
+        className="fixed inset-0 z-50 flex items-end justify-center bg-(--room-strong) p-0 backdrop-blur-sm sm:p-6"
       >
-        <Card className="w-full max-w-xl rounded-t-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 sm:rounded-3xl">
+        <Card className="w-full max-w-xl rounded-t-3xl border-(--meet-border) bg-(--meet-surface) py-0 sm:rounded-3xl">
           <CardContent className="p-6 sm:p-8">
           <div ref={logoRef} className="mb-8 text-center">
-            <Badge variant="secondary" className="border border-[var(--meet-border)] bg-[var(--meet-elevated)] text-[var(--meet-text-muted)]">
+            <Badge variant="secondary" className="border border-(--meet-border) bg-(--meet-elevated) text-(--meet-text-muted)">
               Privacy
             </Badge>
             <h2 className="mt-3 text-2xl font-semibold tracking-tight">Meetour</h2>
-            <p className="mt-2 text-sm text-[var(--meet-text-muted)]">We use cookies to improve your experience.</p>
+            <p className="mt-2 text-sm text-(--meet-text-muted)">We use cookies to improve your experience.</p>
           </div>
 
           <div ref={cardsRef} className="space-y-4">
-            <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)] py-0">
+            <Card className="rounded-2xl border-(--meet-border) bg-(--meet-elevated) py-0">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4">
                 <CardTitle className="text-sm font-medium">Essential</CardTitle>
                 <Switch checked={true} disabled />
               </CardHeader>
               <CardContent className="pb-4 pt-0">
-                <p className="text-xs text-[var(--meet-text-muted)]">Required for the app to work. Always on.</p>
+                <p className="text-xs text-(--meet-text-muted)">Required for the app to work. Always on.</p>
               </CardContent>
             </Card>
-            <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)] py-0">
+            <Card className="rounded-2xl border-(--meet-border) bg-(--meet-elevated) py-0">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4">
                 <Label htmlFor="analytics" className="text-sm font-medium cursor-pointer">Analytics</Label>
                 <Switch id="analytics" checked={analytics} onCheckedChange={setAnalytics} />
               </CardHeader>
               <CardContent className="pb-4 pt-0">
-                <p className="text-xs text-[var(--meet-text-muted)]">Help us improve with anonymous usage data.</p>
+                <p className="text-xs text-(--meet-text-muted)">Help us improve with anonymous usage data.</p>
               </CardContent>
             </Card>
-            <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)] py-0">
+            <Card className="rounded-2xl border-(--meet-border) bg-(--meet-elevated) py-0">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4">
                 <Label htmlFor="preferences" className="text-sm font-medium cursor-pointer">Preferences</Label>
                 <Switch id="preferences" checked={preferences} onCheckedChange={setPreferences} />
               </CardHeader>
               <CardContent className="pb-4 pt-0">
-                <p className="text-xs text-[var(--meet-text-muted)]">Remember your settings across sessions.</p>
+                <p className="text-xs text-(--meet-text-muted)">Remember your settings across sessions.</p>
               </CardContent>
             </Card>
           </div>
 
           <Separator className="my-6" />
           <div ref={ctaRef} className="mt-8 flex gap-3">
-            <Button variant="default" className="h-11 flex-1 rounded-xl bg-[var(--meet-accent)] text-white hover:bg-blue-600" onClick={handleAcceptAll}>
+            <Button variant="default" className="h-11 flex-1 rounded-xl bg-(--meet-accent) text-white hover:bg-blue-600" onClick={handleAcceptAll}>
               Accept All
             </Button>
-            <Button variant="outline" className="h-11 flex-1 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)]" onClick={handleSavePreferences}>
+            <Button variant="outline" className="h-11 flex-1 rounded-xl border-(--meet-border) bg-(--meet-surface)" onClick={handleSavePreferences}>
               Save Preferences
             </Button>
           </div>

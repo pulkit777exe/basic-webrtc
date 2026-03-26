@@ -25,14 +25,14 @@ export class AppErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div className="flex min-h-screen items-center justify-center px-4">
-          <Card className="w-full max-w-md rounded-2xl border-[var(--meet-border)] bg-[var(--meet-surface)]/90 py-0">
+          <Card className="w-full max-w-md rounded-2xl border-(--meet-border) bg-(--meet-surface)/90 py-0">
             <CardHeader className="p-6 pb-2">
               <CardTitle>App Error</CardTitle>
               <CardDescription>Something unexpected happened. Reload to continue.</CardDescription>
             </CardHeader>
             <CardContent className="p-6 pt-3">
               <Button
-                className="w-full rounded-xl bg-[var(--meet-accent)] text-white hover:bg-blue-600"
+                className="w-full rounded-xl bg-(--meet-accent) text-white hover:bg-blue-600"
                 onClick={() => window.location.reload()}
               >
                 Reload app

@@ -50,7 +50,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
             return;
           }
         }
-      } catch (_) {
+      } catch {
         setAccessToken(null);
       }
       if (!cancelled) setStatus('unauthenticated');
@@ -64,8 +64,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   if (status === 'loading') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--bg-base)]">
-        <div className="h-8 w-8 animate-pulse rounded-full border-2 border-[var(--border)] border-t-[var(--text-primary)]" />
+      <div className="flex min-h-screen items-center justify-center bg-(--meet-bg)">
+        <div className="h-8 w-8 animate-pulse rounded-full border-2 border-(--meet-border) border-t-(--meet-accent)" />
       </div>
     );
   }
