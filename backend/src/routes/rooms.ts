@@ -51,31 +51,48 @@ router.post(
         isLocked = false,
         passcode,
         maxParticipants = 50,
+        waitingRoomEnabled = false,
+        muteOnJoin = false,
       } = req.body;
 
       const roomId = generateRoomId();
+      const normalizedTitle = String(title).slice(0, 255) || "Meeting";
+      const normalizedLocked = Boolean(isLocked);
+      const normalizedMaxParticipants = Math.min(
+        100,
+        Math.max(1, Number(maxParticipants) || 50),
+      );
+      const normalizedMuteOnJoin = Boolean(muteOnJoin);
+      const normalizedWaitingRoomEnabled = Boolean(waitingRoomEnabled);
       const passcodeHash = passcode
         ? await bcrypt.hash(String(passcode), SALT_ROUNDS)
         : null;
 
-      await db.insert(rooms).values({
+      const [createdRoom] = await db
+        .insert(rooms)
+        .values({
         id: roomId,
         hostId: userId,
-        title: String(title).slice(0, 255) || "Meeting",
-        isLocked: Boolean(isLocked),
+        title: normalizedTitle,
+        isLocked: normalizedLocked,
         passcodeHash,
-        maxParticipants: Math.min(
-          100,
-          Math.max(1, Number(maxParticipants) || 50),
-        ),
-      });
+        maxParticipants: normalizedMaxParticipants,
+      })
+        .returning({
+          id: rooms.id,
+          hostId: rooms.hostId,
+          title: rooms.title,
+          isLocked: rooms.isLocked,
+          maxParticipants: rooms.maxParticipants,
+          createdAt: rooms.createdAt,
+        });
 
       await db.insert(roomSettings).values({
         roomId,
         allowScreenShare: true,
         allowChat: true,
-        muteOnJoin: false,
-        waitingRoomEnabled: false,
+        muteOnJoin: normalizedMuteOnJoin,
+        waitingRoomEnabled: normalizedWaitingRoomEnabled,
       });
 
       await db.insert(roomParticipants).values({
@@ -86,22 +103,32 @@ router.post(
 
       await setRoomMeta(roomId, {
         hostId: userId,
-        title: String(title).slice(0, 255) || "Meeting",
-        isLocked: Boolean(isLocked),
-        maxParticipants: Math.min(
-          100,
-          Math.max(1, Number(maxParticipants) || 50),
-        ),
+        title: normalizedTitle,
+        isLocked: normalizedLocked,
+        maxParticipants: normalizedMaxParticipants,
         reactionsEnabled: true,
         settings: JSON.stringify({
           allowScreenShare: true,
           allowChat: true,
-          muteOnJoin: false,
-          waitingRoomEnabled: false,
+          muteOnJoin: normalizedMuteOnJoin,
+          waitingRoomEnabled: normalizedWaitingRoomEnabled,
         }),
       });
 
-      res.status(201).json({ roomId, hasPasscode: Boolean(passcode) });
+      res.status(201).json({
+        room: {
+          id: createdRoom?.id ?? roomId,
+          hostId: createdRoom?.hostId ?? userId,
+          title: createdRoom?.title ?? normalizedTitle,
+          isLocked: createdRoom?.isLocked ?? normalizedLocked,
+          maxParticipants:
+            createdRoom?.maxParticipants ?? normalizedMaxParticipants,
+          createdAt:
+            createdRoom?.createdAt?.toISOString?.() ??
+            new Date().toISOString(),
+        },
+        hasPasscode: Boolean(passcode),
+      });
     } catch (error) {
       console.error("[Create Room Error]", error);
       res

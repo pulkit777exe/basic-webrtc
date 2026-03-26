@@ -21,7 +21,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         if (!hasToken) {
           const data = await api.refresh();
           if (data?.user && !cancelled) {
-            const refreshedUser = data.user as Parameters<typeof setUser>[0];
+            const refreshedUser = data.user;
             setUser(refreshedUser);
             if (!refreshedUser.emailVerified) {
               setUnverifiedEmail(refreshedUser.email);

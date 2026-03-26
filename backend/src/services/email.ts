@@ -20,7 +20,15 @@ type EmailTemplate =
   | 'account_lockout_cleared'
   | 'two_factor_enabled'
   | 'two_factor_disabled'
-  | 'suspicious_login';
+  | 'suspicious_login'
+  | 'profile_password_changed'
+  | 'google_linked'
+  | 'google_unlinked'
+  | 'password_added'
+  | 'data_export_started'
+  | 'data_export_ready'
+  | 'account_deletion_scheduled'
+  | 'account_deletion_cancelled';
 
 interface OtpTemplateData {
   code: string;
@@ -84,6 +92,42 @@ interface SuspiciousLoginTemplateData {
   revokeUrl: string;
 }
 
+interface ProfilePasswordChangedTemplateData {
+  userName: string;
+}
+
+interface GoogleLinkedTemplateData {
+  userName: string;
+  googleEmail: string;
+}
+
+interface GoogleUnlinkedTemplateData {
+  userName: string;
+}
+
+interface PasswordAddedTemplateData {
+  userName: string;
+}
+
+interface DataExportStartedTemplateData {
+  userName: string;
+}
+
+interface DataExportReadyTemplateData {
+  userName: string;
+  downloadUrl: string;
+  expiresInHours: number;
+}
+
+interface AccountDeletionScheduledTemplateData {
+  userName: string;
+  scheduledFor: string;
+}
+
+interface AccountDeletionCancelledTemplateData {
+  userName: string;
+}
+
 type EmailTemplateData =
   | OtpTemplateData
   | PasswordResetTemplateData
@@ -93,7 +137,15 @@ type EmailTemplateData =
   | AccountLockoutClearedTemplateData
   | TwoFactorEnabledTemplateData
   | TwoFactorDisabledTemplateData
-  | SuspiciousLoginTemplateData;
+  | SuspiciousLoginTemplateData
+  | ProfilePasswordChangedTemplateData
+  | GoogleLinkedTemplateData
+  | GoogleUnlinkedTemplateData
+  | PasswordAddedTemplateData
+  | DataExportStartedTemplateData
+  | DataExportReadyTemplateData
+  | AccountDeletionScheduledTemplateData
+  | AccountDeletionCancelledTemplateData;
 
 interface QueueEmailInput {
   to: string;
@@ -345,6 +397,124 @@ function renderSuspiciousLoginTemplate(
   };
 }
 
+function renderProfilePasswordChangedTemplate(
+  data: ProfilePasswordChangedTemplateData,
+): { subject: string; html: string } {
+  return {
+    subject: 'Your password was changed',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 620px; margin: 0 auto; color: #1f2937;">
+        <h2>Password updated</h2>
+        <p>Hi ${escapeHtml(data.userName)},</p>
+        <p>Your password was changed successfully. If this wasn't you, reset your password immediately.</p>
+      </div>
+    `,
+  };
+}
+
+function renderGoogleLinkedTemplate(data: GoogleLinkedTemplateData): { subject: string; html: string } {
+  return {
+    subject: 'Google account linked',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 620px; margin: 0 auto; color: #1f2937;">
+        <h2>Google account linked</h2>
+        <p>Hi ${escapeHtml(data.userName)},</p>
+        <p>Your account is now linked with Google: ${escapeHtml(data.googleEmail)}.</p>
+      </div>
+    `,
+  };
+}
+
+function renderGoogleUnlinkedTemplate(data: GoogleUnlinkedTemplateData): { subject: string; html: string } {
+  return {
+    subject: 'Google account unlinked',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 620px; margin: 0 auto; color: #1f2937;">
+        <h2>Google account unlinked</h2>
+        <p>Hi ${escapeHtml(data.userName)},</p>
+        <p>Your Google account was disconnected from your Meetour account.</p>
+      </div>
+    `,
+  };
+}
+
+function renderPasswordAddedTemplate(data: PasswordAddedTemplateData): { subject: string; html: string } {
+  return {
+    subject: 'Password added to your account',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 620px; margin: 0 auto; color: #1f2937;">
+        <h2>Password added</h2>
+        <p>Hi ${escapeHtml(data.userName)},</p>
+        <p>A new password was added to your account.</p>
+      </div>
+    `,
+  };
+}
+
+function renderDataExportStartedTemplate(
+  data: DataExportStartedTemplateData,
+): { subject: string; html: string } {
+  return {
+    subject: 'Your data export is being prepared',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 620px; margin: 0 auto; color: #1f2937;">
+        <h2>Data export requested</h2>
+        <p>Hi ${escapeHtml(data.userName)},</p>
+        <p>We're preparing your data export. It should be ready in around 5 minutes.</p>
+      </div>
+    `,
+  };
+}
+
+function renderDataExportReadyTemplate(data: DataExportReadyTemplateData): { subject: string; html: string } {
+  return {
+    subject: 'Your data export is ready',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 620px; margin: 0 auto; color: #1f2937;">
+        <h2>Your data export is ready</h2>
+        <p>Hi ${escapeHtml(data.userName)},</p>
+        <p>Your export is ready. This link expires in ${escapeHtml(String(data.expiresInHours))} hours.</p>
+        <div style="margin-top: 16px;">
+          <a href="${escapeHtml(data.downloadUrl)}" style="display:inline-block;background:#0f6fff;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700;">
+            Download export
+          </a>
+        </div>
+      </div>
+    `,
+  };
+}
+
+function renderAccountDeletionScheduledTemplate(
+  data: AccountDeletionScheduledTemplateData,
+): { subject: string; html: string } {
+  return {
+    subject: 'Account deletion scheduled',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 620px; margin: 0 auto; color: #1f2937;">
+        <h2>Account scheduled for deletion</h2>
+        <p>Hi ${escapeHtml(data.userName)},</p>
+        <p>Your account is scheduled for deletion on ${escapeHtml(data.scheduledFor)}.</p>
+        <p>You can cancel this request within 30 days.</p>
+      </div>
+    `,
+  };
+}
+
+function renderAccountDeletionCancelledTemplate(
+  data: AccountDeletionCancelledTemplateData,
+): { subject: string; html: string } {
+  return {
+    subject: 'Account deletion cancelled',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 620px; margin: 0 auto; color: #1f2937;">
+        <h2>Deletion cancelled</h2>
+        <p>Hi ${escapeHtml(data.userName)},</p>
+        <p>Your account deletion request has been cancelled.</p>
+      </div>
+    `,
+  };
+}
+
 function renderEmail(
   template: EmailTemplate,
   data: EmailTemplateData,
@@ -376,7 +546,31 @@ function renderEmail(
   if (template === 'two_factor_disabled') {
     return renderTwoFactorDisabledTemplate(data as TwoFactorDisabledTemplateData);
   }
-  return renderSuspiciousLoginTemplate(data as SuspiciousLoginTemplateData);
+  if (template === 'suspicious_login') {
+    return renderSuspiciousLoginTemplate(data as SuspiciousLoginTemplateData);
+  }
+  if (template === 'profile_password_changed') {
+    return renderProfilePasswordChangedTemplate(data as ProfilePasswordChangedTemplateData);
+  }
+  if (template === 'google_linked') {
+    return renderGoogleLinkedTemplate(data as GoogleLinkedTemplateData);
+  }
+  if (template === 'google_unlinked') {
+    return renderGoogleUnlinkedTemplate(data as GoogleUnlinkedTemplateData);
+  }
+  if (template === 'password_added') {
+    return renderPasswordAddedTemplate(data as PasswordAddedTemplateData);
+  }
+  if (template === 'data_export_started') {
+    return renderDataExportStartedTemplate(data as DataExportStartedTemplateData);
+  }
+  if (template === 'data_export_ready') {
+    return renderDataExportReadyTemplate(data as DataExportReadyTemplateData);
+  }
+  if (template === 'account_deletion_scheduled') {
+    return renderAccountDeletionScheduledTemplate(data as AccountDeletionScheduledTemplateData);
+  }
+  return renderAccountDeletionCancelledTemplate(data as AccountDeletionCancelledTemplateData);
 }
 
 export async function queueEmail(input: QueueEmailInput): Promise<void> {

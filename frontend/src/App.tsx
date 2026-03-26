@@ -22,7 +22,9 @@ const ResetPasswordPage = lazy(() => import('@/pages/ResetPasswordPage').then((m
 const AccountRecoveryPage = lazy(() => import('@/pages/AccountRecoveryPage').then((m) => ({ default: m.AccountRecoveryPage })));
 const TwoFactorChallengePage = lazy(() => import('@/pages/TwoFactorChallengePage').then((m) => ({ default: m.TwoFactorChallengePage })));
 const SuspiciousLoginPage = lazy(() => import('@/pages/SuspiciousLoginPage').then((m) => ({ default: m.SuspiciousLoginPage })));
+const LinkAccountPage = lazy(() => import('@/pages/LinkAccountPage').then((m) => ({ default: m.LinkAccountPage })));
 const DashboardPage = lazy(() => import('@/pages/DashboardPage').then((m) => ({ default: m.DashboardPage })));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 const SecuritySettingsPage = lazy(() => import('@/pages/SecuritySettingsPage').then((m) => ({ default: m.SecuritySettingsPage })));
 const LobbyPage = lazy(() => import('@/pages/LobbyPage').then((m) => ({ default: m.LobbyPage })));
 const RoomPage = lazy(() => import('@/pages/RoomPage').then((m) => ({ default: m.RoomPage })));
@@ -67,6 +69,7 @@ const router = createBrowserRouter([
       { path: '/auth/forgot-password', element: suspense(<ForgotPasswordPage />) },
       { path: '/auth/reset-password', element: suspense(<ResetPasswordPage />) },
       { path: '/auth/recover', element: suspense(<AccountRecoveryPage />) },
+      { path: '/auth/link-account', element: suspense(<LinkAccountPage />) },
       { path: '/auth/2fa', element: suspense(<TwoFactorChallengePage />) },
       {
         path: '/auth/suspicious-login',
@@ -81,6 +84,14 @@ const router = createBrowserRouter([
         element: suspense(
           <AuthGuard>
             <DashboardPage />
+          </AuthGuard>
+        ),
+      },
+      {
+        path: '/settings',
+        element: suspense(
+          <AuthGuard>
+            <SettingsPage />
           </AuthGuard>
         ),
       },

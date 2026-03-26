@@ -1,19 +1,61 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import { useAtom } from 'jotai';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { api, API_BASE_URL } from '@/lib/api';
+import { userAtom } from '@/store/atoms';
 import { ArrowRight, ShieldCheck, Sparkles, Users } from 'lucide-react';
 
 const TITLE = 'Meetour';
+
+function getInitials(name: string): string {
+  return (
+    name
+      .split(' ')
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() ?? '')
+      .join('') || 'U'
+  );
+}
+
+function resolveAvatarUrl(avatarUrl?: string | null): string | undefined {
+  if (!avatarUrl) return undefined;
+  if (avatarUrl.startsWith('http://') || avatarUrl.startsWith('https://')) {
+    return avatarUrl;
+  }
+  return `${API_BASE_URL}${avatarUrl}`;
+}
 
 export function LandingPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const ctaRef = useRef<HTMLDivElement>(null);
   const cardsRef = useRef<HTMLDivElement>(null);
+  const [user, setUser] = useAtom(userAtom);
+
+  useEffect(() => {
+    if (user) return;
+
+    let cancelled = false;
+    void api
+      .getMe()
+      .then((data) => {
+        if (!cancelled) {
+          setUser(data.user as Parameters<typeof setUser>[0]);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, setUser]);
 
   useGSAP(
     () => {
@@ -47,12 +89,32 @@ export function LandingPage() {
           Meetour
         </span>
         <div className="flex items-center gap-2 sm:gap-3">
-          <Button asChild variant="ghost" size="sm" className="rounded-full px-4">
-            <Link to="/login">Log in</Link>
-          </Button>
-          <Button asChild size="sm" className="rounded-full bg-[var(--meet-accent)] px-4 text-white hover:bg-blue-600">
-            <Link to="/register">Sign up</Link>
-          </Button>
+          {user ? (
+            <>
+              <Button asChild size="sm" className="rounded-full bg-[var(--meet-accent)] px-4 text-white hover:bg-blue-600">
+                <Link to="/dashboard">Dashboard</Link>
+              </Button>
+              <Link
+                to="/settings"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--meet-border)] bg-[var(--meet-surface)] transition hover:bg-[var(--meet-elevated)]"
+                aria-label="Open profile settings"
+              >
+                <Avatar size="sm" className="h-8 w-8">
+                  <AvatarImage src={resolveAvatarUrl(user.avatarUrl)} alt={user.name} />
+                  <AvatarFallback>{getInitials(user.name || user.email)}</AvatarFallback>
+                </Avatar>
+              </Link>
+            </>
+          ) : (
+            <>
+              <Button asChild variant="ghost" size="sm" className="rounded-full px-4">
+                <Link to="/login">Log in</Link>
+              </Button>
+              <Button asChild size="sm" className="rounded-full bg-[var(--meet-accent)] px-4 text-white hover:bg-blue-600">
+                <Link to="/register">Sign up</Link>
+              </Button>
+            </>
+          )}
         </div>
       </nav>
 

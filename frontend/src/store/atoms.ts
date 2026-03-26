@@ -19,6 +19,11 @@ export interface User {
   recoveryEmailVerified?: boolean;
   backupCodesGeneratedAt?: string | null;
   backupCodesRemaining?: number;
+  googleLinked?: boolean;
+  googleLinkedAt?: string | null;
+  googleEmail?: string | null;
+  hasPassword?: boolean;
+  pendingEmail?: string | null;
   restrictedSession?: boolean;
 }
 

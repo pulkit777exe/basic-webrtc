@@ -1,6 +1,7 @@
 const API_BASE = (
   import.meta.env.VITE_API_URL || "http://localhost:4000"
 ).replace(/\/$/, "");
+export const API_BASE_URL = API_BASE;
 const parsedTimeoutMs = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000);
 const API_TIMEOUT_MS =
   Number.isFinite(parsedTimeoutMs) && parsedTimeoutMs > 0
@@ -21,6 +22,11 @@ export interface ApiUser {
   recoveryEmailVerified?: boolean;
   backupCodesGeneratedAt?: string | null;
   backupCodesRemaining?: number;
+  googleLinked?: boolean;
+  googleLinkedAt?: string | null;
+  googleEmail?: string | null;
+  hasPassword?: boolean;
+  pendingEmail?: string | null;
   restrictedSession?: boolean;
 }
 
@@ -54,9 +60,11 @@ async function request<T>(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   const headers: HeadersInit = {
-    "Content-Type": "application/json",
     ...(init.headers as Record<string, string>),
   };
+  if (!(init.body instanceof FormData) && !(headers as Record<string, string>)["Content-Type"]) {
+    (headers as Record<string, string>)["Content-Type"] = "application/json";
+  }
   if (token) {
     (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
   }
@@ -190,16 +198,23 @@ export const api = {
     muteOnJoin?: boolean;
     maxParticipants?: number;
   }) {
-    return request<{
-      room: {
-        id: string;
-        title: string;
-        hostId: string;
-        isLocked: boolean;
-        maxParticipants: number;
-        createdAt: string;
-      };
-    }>("/api/rooms", {
+    return request<
+      | {
+          room: {
+            id: string;
+            title: string;
+            hostId: string;
+            isLocked: boolean;
+            maxParticipants: number;
+            createdAt: string;
+          };
+          hasPasscode?: boolean;
+        }
+      | {
+          roomId: string;
+          hasPasscode?: boolean;
+        }
+    >("/api/rooms", {
       method: "POST",
       body: JSON.stringify(body),
     });
@@ -341,6 +356,111 @@ export const api = {
     return request<{ message: string }>("/api/auth/reset-password", {
       method: "POST",
       body: JSON.stringify({ token, newPassword }),
+    });
+  },
+
+  async updateProfileName(name: string) {
+    return request<{ user: ApiUser }>("/api/auth/profile", {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  async uploadAvatar(file: File) {
+    const formData = new FormData();
+    formData.append("avatar", file);
+    return request<{ avatarUrl: string }>("/api/auth/profile/avatar", {
+      method: "POST",
+      body: formData,
+    });
+  },
+
+  async deleteAvatar() {
+    return request<{ success: boolean }>("/api/auth/profile/avatar", {
+      method: "DELETE",
+    });
+  },
+
+  async changeProfilePassword(currentPassword: string, newPassword: string) {
+    return request<{ success: boolean }>("/api/auth/profile/password", {
+      method: "PATCH",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+  },
+
+  async changeProfileEmail(newEmail: string, password: string) {
+    return request<{ message: string }>("/api/auth/profile/email", {
+      method: "PATCH",
+      body: JSON.stringify({ newEmail, password }),
+    });
+  },
+
+  async verifyProfileEmailChange(otp: string) {
+    return request<{ success: boolean; email: string }>("/api/auth/profile/email/verify", {
+      method: "POST",
+      body: JSON.stringify({ otp }),
+    });
+  },
+
+  async getPendingGoogleLink(linkToken: string) {
+    const query = new URLSearchParams({ token: linkToken }).toString();
+    return request<{
+      google: { email: string; name: string; avatarUrl?: string | null };
+      existing: { email: string; name: string; avatarUrl?: string | null };
+    }>(`/api/auth/link-google/pending?${query}`);
+  },
+
+  async confirmGoogleLink(linkToken: string, password: string) {
+    const data = await request<{
+      user: ApiUser;
+      accessToken: string;
+      message: string;
+    }>("/api/auth/link-google/confirm", {
+      method: "POST",
+      body: JSON.stringify({ linkToken, password }),
+    });
+    if (data.accessToken) {
+      setAccessToken(data.accessToken);
+    }
+    return data;
+  },
+
+  async unlinkGoogle(password: string) {
+    return request<{ success: boolean }>("/api/auth/unlink-google", {
+      method: "DELETE",
+      body: JSON.stringify({ password }),
+    });
+  },
+
+  async setPassword(newPassword: string) {
+    return request<{ success: boolean }>("/api/auth/set-password", {
+      method: "POST",
+      body: JSON.stringify({ newPassword }),
+    });
+  },
+
+  async requestDataExport(password: string) {
+    return request<{ message: string }>("/api/account/export", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    });
+  },
+
+  async getDataExportStatus() {
+    return request<{ canRequest: boolean; retryAfter: number }>("/api/account/export/status");
+  },
+
+  async deleteAccount(password: string, confirmation: string) {
+    return request<{ message: string }>("/api/account/delete", {
+      method: "POST",
+      body: JSON.stringify({ password, confirmation }),
+    });
+  },
+
+  async cancelAccountDeletion(originalEmail: string, password: string) {
+    return request<{ success: boolean }>("/api/account/cancel-deletion", {
+      method: "POST",
+      body: JSON.stringify({ originalEmail, password }),
     });
   },
 

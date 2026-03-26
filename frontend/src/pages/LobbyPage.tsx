@@ -61,9 +61,6 @@ export function LobbyPage() {
     }
     let stream: MediaStream | null = null;
     (async () => {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      setCameras(devices.filter((d) => d.kind === "videoinput"));
-      setMics(devices.filter((d) => d.kind === "audioinput"));
       stream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: true,
@@ -80,14 +77,27 @@ export function LobbyPage() {
         source.connect(analyser);
         analyserRef.current = analyser;
       }
-      if (devices.filter((d) => d.kind === "videoinput").length)
-        setSelectedCamera(
-          devices.find((d) => d.kind === "videoinput")?.deviceId ?? "",
-        );
-      if (devices.filter((d) => d.kind === "audioinput").length)
-        setSelectedMic(
-          devices.find((d) => d.kind === "audioinput")?.deviceId ?? "",
-        );
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cameraDevices = devices.filter(
+        (d) => d.kind === "videoinput" && d.deviceId,
+      );
+      const micDevices = devices.filter(
+        (d) => d.kind === "audioinput" && d.deviceId,
+      );
+
+      setCameras(cameraDevices);
+      setMics(micDevices);
+      setSelectedCamera((prev) =>
+        prev && cameraDevices.some((device) => device.deviceId === prev)
+          ? prev
+          : (cameraDevices[0]?.deviceId ?? ""),
+      );
+      setSelectedMic((prev) =>
+        prev && micDevices.some((device) => device.deviceId === prev)
+          ? prev
+          : (micDevices[0]?.deviceId ?? ""),
+      );
     })();
     return () => {
       stream?.getTracks().forEach((t) => t.stop());
