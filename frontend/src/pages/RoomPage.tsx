@@ -134,6 +134,7 @@ export function RoomPage() {
     start: () => void;
     stop: () => void;
   } | null>(null);
+  const cleanedUpRef = useRef(false);
 
   useEffect(() => {
     if (!roomId || !roomToken || !user) {
@@ -143,47 +144,42 @@ export function RoomPage() {
     if (hasInit.current) return;
     hasInit.current = true;
 
-    // Read user's lobby preferences
     const lobbyVideo = sessionStorage.getItem('lobby_video') !== '0';
     const lobbyAudio = sessionStorage.getItem('lobby_audio') !== '0';
     sessionStorage.removeItem('lobby_video');
     sessionStorage.removeItem('lobby_audio');
 
+    cleanedUpRef.current = false;
+
     RTCManager.init().then(async () => {
-      // Small delay to allow browser to release previous getUserMedia handles from lobby
+      if (cleanedUpRef.current) return;
       await new Promise((r) => setTimeout(r, 300));
-      // Always acquire both tracks, then disable based on user preference
-      const stream = await MediaManager.getStream(true, true);
-      if (stream) {
-        // Apply user's lobby preferences
-        if (!lobbyVideo) {
-          stream.getVideoTracks().forEach((t) => { t.enabled = false; });
-          const currentState = store.get(localMediaAtom);
-          store.set(localMediaAtom, { ...currentState, video: false });
-        }
-        if (!lobbyAudio) {
-          stream.getAudioTracks().forEach((t) => { t.enabled = false; });
-          const currentState = store.get(localMediaAtom);
-          store.set(localMediaAtom, { ...currentState, audio: false });
-        }
+      if (cleanedUpRef.current) {
+        MediaManager.stop();
+        return;
+      }
+      await MediaManager.getStream(lobbyVideo, lobbyAudio);
+      if (cleanedUpRef.current) {
+        MediaManager.stop();
+        return;
       }
       WSManager.connect(roomToken);
-    });
 
-    setParticipants([
-      {
-        userId: user.id,
-        user: {
-          id: user.id,
-          name: user.name,
-          avatarUrl: user.avatarUrl ?? undefined,
+      setParticipants([
+        {
+          userId: user.id,
+          user: {
+            id: user.id,
+            name: user.name,
+            avatarUrl: user.avatarUrl ?? undefined,
+          },
+          role: room?.hostId === user.id ? "host" : "participant",
+          video: lobbyVideo,
+          audio: lobbyAudio,
+          screen: false,
         },
-        role: room?.hostId === user.id ? "host" : "participant",
-        video: lobbyVideo,
-        audio: lobbyAudio,
-        screen: false,
-      },
-    ]);
+      ]);
+    });
     setChat([]);
     setChatReactions({});
     setPinnedChatMessage(null);
@@ -211,6 +207,7 @@ export function RoomPage() {
     };
 
     return () => {
+      cleanedUpRef.current = true;
       WSManager.disconnect();
       MediaManager.stop();
       setPinnedParticipants(new Set());

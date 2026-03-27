@@ -110,6 +110,94 @@ let reconnectAttempts = 0;
 const MAX_RECONNECT = 10;
 const DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
 
+// Pending subscriptions for role assignment when roomAtom is not yet available
+// Map<userId, unsubscribe>
+const _pendingRoomSubs = new Map<string, () => void>();
+
+/**
+ * Resolves participant role with proper handling for race conditions.
+ * - If room is already populated: derive isHost synchronously, patch both atoms, return
+ * - If room is null: add participant optimistically, create subscription, patch when room populates
+ * 
+ * Edge cases handled:
+ * - Duplicate join: check if role already 'host' before patching
+ * - User leaves before room populates: caller must clean up subscription in leave handler
+ * - roomAtom emits multiple times: delete from map before unsub to prevent re-entrancy
+ * - userAtom null: uses data.user.id from WS payload (not userAtom)
+ */
+function resolveParticipantRole(userId: string): void {
+  const room = store.get(roomAtom);
+  
+  if (room) {
+    // Room is already populated - derive role synchronously
+    const isHost = room.hostId === userId;
+    if (isHost) {
+      // Patch participantsAtom
+      const participants = store.get(participantsAtom);
+      const idx = participants.findIndex((p) => p.userId === userId);
+      if (idx >= 0) {
+        const updated = [...participants];
+        updated[idx] = { ...updated[idx], role: 'host' };
+        store.set(participantsAtom, updated);
+      }
+      // Patch peersAtom
+      const peers = new Map(store.get(peersAtom));
+      const peer = peers.get(userId);
+      if (peer) {
+        peers.set(userId, { ...peer, role: 'host' });
+        store.set(peersAtom, peers);
+      }
+    }
+    // Role resolved synchronously - no subscription needed
+    return;
+  }
+  
+  // Room is not yet populated - need to subscribe
+  // (Duplicate participant check is handled in the join handler before calling this function)
+  
+  // Create subscription for when roomAtom becomes available
+  const unsub = store.sub(roomAtom, () => {
+    const updatedRoom = store.get(roomAtom);
+    
+    // If still null, wait for next emission
+    if (!updatedRoom) {
+      return;
+    }
+    
+    // Room is now populated - check if user is host
+    if (updatedRoom.hostId === userId) {
+      // Check if role is already 'host' to avoid spurious updates (edge case 2)
+      const currentParticipants = store.get(participantsAtom);
+      const currentIdx = currentParticipants.findIndex((p) => p.userId === userId);
+      
+      if (currentIdx >= 0 && currentParticipants[currentIdx].role !== 'host') {
+        // Patch participantsAtom
+        const updatedParticipants = [...currentParticipants];
+        updatedParticipants[currentIdx] = { ...updatedParticipants[currentIdx], role: 'host' };
+        store.set(participantsAtom, updatedParticipants);
+        
+        // Patch peersAtom
+        const peers = new Map(store.get(peersAtom));
+        const peer = peers.get(userId);
+        if (peer) {
+          peers.set(userId, { ...peer, role: 'host' });
+          store.set(peersAtom, peers);
+        }
+      }
+    }
+    
+    // Always unsubscribe and delete from map (edge case 3: delete before unsub)
+    const subscription = _pendingRoomSubs.get(userId);
+    _pendingRoomSubs.delete(userId);
+    if (subscription) {
+      subscription();
+    }
+  });
+  
+  // Store subscription in map
+  _pendingRoomSubs.set(userId, unsub);
+}
+
 function applyHostMute() {
   const localMedia = store.get(localMediaAtom);
   const track = localMedia.stream?.getAudioTracks()[0];
@@ -150,17 +238,20 @@ export const WSManager = {
 
         if (data.type === "join" && data.user) {
           const participants = store.get(participantsAtom);
-          if (
-            !participants.find(
-              (participant) => participant.userId === data.user!.id,
-            )
-          ) {
+          const room = store.get(roomAtom);
+          
+          // Determine initial role synchronously (for optimistic add)
+          const isHost = room?.hostId === data.user.id;
+          const initialRole = isHost ? "host" : "participant";
+          
+          // Add participant if not already present
+          if (!participants.find((participant) => participant.userId === data.user!.id)) {
             store.set(participantsAtom, [
               ...participants,
               {
                 userId: data.user.id,
                 user: data.user,
-                role: "participant",
+                role: initialRole,
                 video: true,
                 audio: true,
                 screen: false,
@@ -168,8 +259,14 @@ export const WSManager = {
             ]);
           }
 
+          // Add to peersAtom - read role from participantsAtom after resolveParticipantRole, or default to "participant"
           const peers = new Map(store.get(peersAtom));
           if (!peers.has(data.user.id)) {
+            // Get the role from participantsAtom (may have been updated by resolveParticipantRole)
+            const updatedParticipants = store.get(participantsAtom);
+            const participant = updatedParticipants.find((p) => p.userId === data.user.id);
+            const role = participant?.role || "participant";
+            
             peers.set(data.user.id, {
               userId: data.user.id,
               user: data.user,
@@ -177,11 +274,21 @@ export const WSManager = {
               video: true,
               audio: true,
               screen: false,
-              role: "participant",
+              role: role,
             });
             store.set(peersAtom, peers);
           }
+          
+          // Resolve participant role (handles both sync and async cases)
+          resolveParticipantRole(data.user.id);
         } else if (data.type === "leave" && data.userId) {
+          // Edge case 1: Clean up pending subscription before removing participant
+          const pendingSub = _pendingRoomSubs.get(data.userId);
+          if (pendingSub) {
+            pendingSub();
+            _pendingRoomSubs.delete(data.userId);
+          }
+          
           const participants = store
             .get(participantsAtom)
             .filter((participant) => participant.userId !== data.userId);
@@ -401,6 +508,9 @@ export const WSManager = {
   },
 
   disconnect() {
+    // Clean up all pending subscriptions
+    _pendingRoomSubs.forEach((unsub) => unsub());
+    _pendingRoomSubs.clear();
     if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
     if (ws) {
       ws.close();

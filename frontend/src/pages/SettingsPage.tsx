@@ -682,7 +682,7 @@ export function SettingsPage() {
                 onChange={(e) => setNewPassword(e.target.value)}
               />
               <div className="mt-1 flex items-center gap-2">
-                <div className="h-1 flex-1 overflow-hidden rounded bg-[var(--meet-border)]">
+                <div className="h-1 flex-1 overflow-hidden rounded bg-(--meet-border)">
                   <div
                     className={`h-full transition-all ${strength.color}`}
                     style={{ width: `${(strength.score / 5) * 100}%` }}

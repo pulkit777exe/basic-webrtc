@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -152,7 +152,7 @@ export function SecuritySettingsPage() {
   const [disableTotp, setDisableTotp] = useState('');
   const [disableLoading, setDisableLoading] = useState(false);
 
-  async function loadSecurityData() {
+  const loadSecurityData = useCallback(async () => {
     setLoading(true);
     try {
       const [me, sessionResponse, backupStatus] = await Promise.all([
@@ -169,9 +169,9 @@ export function SecuritySettingsPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
-  async function loadLoginEvents(reset: boolean) {
+  const loadLoginEvents = useCallback(async (reset: boolean) => {
     const targetOffset = reset ? 0 : (nextEventsOffset ?? 0);
     if (!reset && nextEventsOffset === null) return;
 
@@ -194,12 +194,12 @@ export function SecuritySettingsPage() {
         setEventsLoadingMore(false);
       }
     }
-  }
+  }, [nextEventsOffset]);
 
   useEffect(() => {
     void loadSecurityData();
     void loadLoginEvents(true);
-  }, []);
+  }, [loadSecurityData, loadLoginEvents]);
 
   const backupStatusText = useMemo(() => {
     if (!backupGeneratedAt && backupRemaining === 0) {
@@ -453,7 +453,7 @@ export function SecuritySettingsPage() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--meet-border)] border-t-[var(--meet-accent)]" />
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-(--meet-border) border-t-(--meet-accent)" />
       </div>
     );
   }
@@ -464,7 +464,7 @@ export function SecuritySettingsPage() {
       <div className="pointer-events-none absolute -right-24 bottom-0 h-80 w-80 rounded-full bg-blue-500/20 blur-3xl" />
 
       <div className="relative z-10 mx-auto w-full max-w-5xl">
-        <Card className="rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)]">
+        <Card className="rounded-3xl border-(--meet-border) bg-(--meet-surface)">
           <CardHeader>
             <CardTitle className="text-3xl">Security Settings</CardTitle>
             <CardDescription>Manage sessions, recovery, two-factor auth, and login history.</CardDescription>
@@ -491,7 +491,7 @@ export function SecuritySettingsPage() {
                 ) : null}
 
                 {sessions.map((session) => (
-                  <Card key={session.id} className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)]">
+                  <Card key={session.id} className="rounded-2xl border-(--meet-border) bg-(--meet-elevated)">
                     <CardContent className="flex items-start justify-between gap-3 p-4">
                       <div className="space-y-1">
                         <p className="flex items-center gap-2 font-medium">
@@ -505,10 +505,10 @@ export function SecuritySettingsPage() {
                             </span>
                           ) : null}
                         </p>
-                        <p className="text-sm text-[var(--meet-text-muted)]">
+                        <p className="text-sm text-(--meet-text-muted)">
                           {session.location || 'Unknown location'} · {session.ipAddress || 'Unknown IP'}
                         </p>
-                        <p className="text-xs text-[var(--meet-text-muted)]">
+                        <p className="text-xs text-(--meet-text-muted)">
                           Last active: {formatRelativeTime(session.lastActiveAt)} · Signed in {formatRelativeTime(session.createdAt)}
                         </p>
                       </div>
@@ -533,7 +533,7 @@ export function SecuritySettingsPage() {
               </TabsContent>
 
               <TabsContent value="recovery" className="space-y-6">
-                <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)]">
+                <Card className="rounded-2xl border-(--meet-border) bg-(--meet-elevated)">
                   <CardHeader>
                     <CardTitle className="text-xl">Backup Codes</CardTitle>
                     <CardDescription>{backupStatusText}</CardDescription>
@@ -557,7 +557,7 @@ export function SecuritySettingsPage() {
                   </CardContent>
                 </Card>
 
-                <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)]">
+                <Card className="rounded-2xl border-(--meet-border) bg-(--meet-elevated)">
                   <CardHeader>
                     <CardTitle className="text-xl">Recovery Email</CardTitle>
                     <CardDescription>
@@ -641,7 +641,7 @@ export function SecuritySettingsPage() {
               </TabsContent>
 
               <TabsContent value="two-factor" className="space-y-4">
-                <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)]">
+                <Card className="rounded-2xl border-(--meet-border) bg-(--meet-elevated)">
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-xl">
                       <Shield className="h-5 w-5" />
@@ -660,7 +660,7 @@ export function SecuritySettingsPage() {
                         <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-800/70 dark:bg-emerald-900/20 dark:text-emerald-300">
                           Two-Factor Authentication - Enabled ✓
                         </div>
-                        <p className="text-sm text-[var(--meet-text-muted)]">
+                        <p className="text-sm text-(--meet-text-muted)">
                           Backup codes remaining: <span className="font-semibold">{backupRemaining}</span>
                         </p>
                         <div className="flex flex-wrap gap-2">
@@ -682,11 +682,11 @@ export function SecuritySettingsPage() {
               <TabsContent value="history" className="space-y-4">
                 {eventsLoading ? (
                   <div className="flex justify-center py-10">
-                    <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--meet-border)] border-t-[var(--meet-accent)]" />
+                    <div className="h-8 w-8 animate-spin rounded-full border-2 border-(--meet-border) border-t-(--meet-accent)" />
                   </div>
                 ) : loginEvents.length === 0 ? (
-                  <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)]">
-                    <CardContent className="p-6 text-sm text-[var(--meet-text-muted)]">No login events yet.</CardContent>
+                  <Card className="rounded-2xl border-(--meet-border) bg-(--meet-elevated)">
+                    <CardContent className="p-6 text-sm text-(--meet-text-muted)">No login events yet.</CardContent>
                   </Card>
                 ) : (
                   <>
@@ -695,7 +695,7 @@ export function SecuritySettingsPage() {
                       return (
                         <Card
                           key={event.id}
-                          className={`rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)] ${
+                          className={`rounded-2xl border-(--meet-border) bg-(--meet-elevated) ${
                             suspicious ? 'border-amber-300 dark:border-amber-800/70' : ''
                           }`}
                         >
@@ -715,7 +715,7 @@ export function SecuritySettingsPage() {
                                 </span>
                               ) : null}
                             </p>
-                            <p className="text-sm text-[var(--meet-text-muted)]">
+                            <p className="text-sm text-(--meet-text-muted)">
                               {formatDateTime(event.createdAt)} · {event.ipAddress}
                             </p>
                             {suspicious && event.suspiciousReasons.length > 0 ? (
@@ -788,7 +788,7 @@ export function SecuritySettingsPage() {
                 {generatedCodes.map((code) => (
                   <div
                     key={code}
-                    className="flex items-center justify-between rounded-lg border border-[var(--meet-border)] bg-[var(--meet-elevated)] px-3 py-2 font-mono text-sm"
+                    className="flex items-center justify-between rounded-lg border border-(--meet-border) bg-(--meet-elevated) px-3 py-2 font-mono text-sm"
                   >
                     <span>{code}</span>
                     <Button size="sm" variant="ghost" onClick={() => copyCode(code)}>
@@ -853,10 +853,10 @@ export function SecuritySettingsPage() {
             <div className="space-y-4">
               <div className="flex justify-center">
                 {setupQrCode ? (
-                  <img src={setupQrCode} alt="Authenticator QR" className="h-52 w-52 rounded-lg border border-[var(--meet-border)] bg-white p-2" />
+                  <img src={setupQrCode} alt="Authenticator QR" className="h-52 w-52 rounded-lg border border-(--meet-border) bg-white p-2" />
                 ) : null}
               </div>
-              <div className="space-y-2 rounded-xl border border-[var(--meet-border)] bg-[var(--meet-elevated)] p-3">
+              <div className="space-y-2 rounded-xl border border-(--meet-border) bg-(--meet-elevated) p-3">
                 <p className="text-sm font-medium">Can&apos;t scan? Enter this key manually:</p>
                 <p className="font-mono text-sm">{setupManualKey}</p>
                 <Button variant="outline" size="sm" onClick={() => copyCode(setupManualKey)}>
@@ -899,7 +899,7 @@ export function SecuritySettingsPage() {
                 {setupBackupCodes.map((code) => (
                   <div
                     key={code}
-                    className="flex items-center justify-between rounded-lg border border-[var(--meet-border)] bg-[var(--meet-elevated)] px-3 py-2 font-mono text-sm"
+                    className="flex items-center justify-between rounded-lg border border-(--meet-border) bg-(--meet-elevated) px-3 py-2 font-mono text-sm"
                   >
                     <span>{code}</span>
                     <Button size="sm" variant="ghost" onClick={() => copyCode(code)}>
