@@ -30,10 +30,74 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Switch } from "@/components/ui/switch";
-import { Mic, MicOff, Video, VideoOff } from "lucide-react";
+import { AlertCircle, Mic, MicOff, Video, VideoOff } from "lucide-react";
 
 const BARS = 20;
+
+const VIDEO_RESOLUTION_LADDER = [
+  { width: 1920, height: 1080 },
+  { width: 1280, height: 720 },
+  { width: 854,  height: 480 },
+  { width: 640,  height: 360 },
+] as const;
+
+type MediaError = { video?: string; audio?: string };
+
+async function acquireVideoTrack(deviceId: string | null): Promise<MediaStreamTrack | null> {
+  const base = deviceId ? { deviceId: { exact: deviceId } } : {};
+  const failures: Array<{ width: number; height: number; error: string }> = [];
+  for (const { width, height } of VIDEO_RESOLUTION_LADDER) {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { ...base, width: { ideal: width }, height: { ideal: height } },
+      });
+      return s.getVideoTracks()[0] ?? null;
+    } catch (err) { failures.push({ width, height, error: err instanceof Error ? err.message : String(err) }); }
+  }
+  if (failures.length > 0) {
+    console.debug('[MediaManager] Video ladder failures:', failures);
+  }
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: deviceId ? { deviceId: { exact: deviceId } } : true,
+    });
+    return s.getVideoTracks()[0] ?? null;
+  } catch {
+    // exact deviceId may have been unplugged — try any camera
+    if (deviceId) {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+        return s.getVideoTracks()[0] ?? null;
+      } catch { return null; }
+    }
+    return null;
+  }
+}
+
+async function acquireAudioTrack(deviceId?: string): Promise<MediaStreamTrack | null> {
+  const preferred: MediaTrackConstraints = {
+    ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+    noiseSuppression: true,
+    echoCancellation: true,
+    autoGainControl: true,
+  };
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({ audio: preferred, video: false });
+    return s.getAudioTracks()[0] ?? null;
+  } catch (err) {
+    // DSP constraints rejected — collect the error before the plain fallback attempt
+    console.debug('[MediaManager] Audio DSP constraints rejected:', err instanceof Error ? err.message : String(err), '— falling back to plain audio');
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({
+        audio: deviceId ? { deviceId: { exact: deviceId } } : true,
+        video: false,
+      });
+      return s.getAudioTracks()[0] ?? null;
+    } catch { return null; }
+  }
+}
 
 export function LobbyPage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -44,12 +108,11 @@ export function LobbyPage() {
   const [isWaiting, setIsWaiting] = useAtom(isWaitingAtom);
   const waitingToken = useAtomValue(waitingTokenAtom);
   const waitingPosition = useAtomValue(waitingRoomPositionAtom);
-
-  const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const barsRef = useRef<HTMLDivElement>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
@@ -58,65 +121,134 @@ export function LobbyPage() {
   const [joining, setJoining] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [audioEnabled, setAudioEnabled] = useState(true);
-
-  const audioContextRef = useRef<AudioContext | null>(null);
+  const [mediaErrors, setMediaErrors] = useState<MediaError>({});
+  const [activeResolution, setActiveResolution] = useState<string | null>(null);
 
   useEffect(() => {
-    // If we're waiting we only need roomId; no roomToken yet
     if (!roomId || (!roomToken && !isWaiting)) {
       navigate("/dashboard", { replace: true });
       return;
     }
-    let stream: MediaStream | null = null;
+
     let cancelled = false;
+
     (async () => {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
-      if (cancelled) {
-        stream.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
+      const errors: MediaError = {};
+
+      const videoTrack = await acquireVideoTrack(null);
+      if (cancelled) { videoTrack?.stop(); return; }
+
+      if (videoTrack) {
+        const { width, height } = videoTrack.getSettings();
+        if (width && height) setActiveResolution(`${width}×${height}`);
+      } else {
+        errors.video = "Camera unavailable";
+        setVideoEnabled(false);
       }
 
-      // Enumerate after getUserMedia so labels are available
+      const audioTrack = await acquireAudioTrack();
+      if (cancelled) { videoTrack?.stop(); audioTrack?.stop(); return; }
+
+      if (!audioTrack) {
+        errors.audio = "Microphone unavailable";
+        setAudioEnabled(false);
+      }
+
+      setMediaErrors(errors);
+
+      const tracks = [videoTrack, audioTrack].filter(Boolean) as MediaStreamTrack[];
+      const stream = new MediaStream(tracks);
+      streamRef.current = stream;
+      if (videoRef.current) videoRef.current.srcObject = stream;
+
       const devices = await navigator.mediaDevices.enumerateDevices();
+      if (cancelled) return;
+
       const cams = devices.filter((d) => d.kind === "videoinput" && d.deviceId);
       const micDevices = devices.filter((d) => d.kind === "audioinput" && d.deviceId);
       setCameras(cams);
       setMics(micDevices);
-      if (cams.length) setSelectedCamera(cams[0].deviceId);
-      if (micDevices.length) setSelectedMic(micDevices[0].deviceId);
 
-      if (stream.getAudioTracks().length) {
+      const activeVideoDeviceId = videoTrack?.getSettings().deviceId;
+      const activeMicDeviceId = audioTrack?.getSettings().deviceId;
+      if (activeVideoDeviceId) setSelectedCamera(activeVideoDeviceId);
+      else if (cams.length) setSelectedCamera(cams[0].deviceId);
+      if (activeMicDeviceId) setSelectedMic(activeMicDeviceId);
+      else if (micDevices.length) setSelectedMic(micDevices[0].deviceId);
+
+      if (audioTrack) {
         const ac = new AudioContext();
         audioContextRef.current = ac;
-        const source = ac.createMediaStreamSource(stream);
+        const source = ac.createMediaStreamSource(new MediaStream([audioTrack]));
         const analyser = ac.createAnalyser();
         analyser.fftSize = 32;
         source.connect(analyser);
         analyserRef.current = analyser;
       }
     })();
+
     return () => {
       cancelled = true;
-      stream?.getTracks().forEach((t) => t.stop());
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
       audioContextRef.current?.close().catch(() => {});
       audioContextRef.current = null;
       analyserRef.current = null;
     };
   }, [roomId, roomToken, navigate, isWaiting]);
 
+  useEffect(() => {
+    if (!selectedCamera || !streamRef.current) return;
+    const stream = streamRef.current;
+    const currentTrack = stream.getVideoTracks()[0];
+    if (currentTrack?.getSettings().deviceId === selectedCamera) return;
+
+    let cancelled = false;
+    (async () => {
+      const nextTrack = await acquireVideoTrack(selectedCamera);
+      if (cancelled || !nextTrack) return;
+      if (currentTrack) { stream.removeTrack(currentTrack); currentTrack.stop(); }
+      stream.addTrack(nextTrack);
+      nextTrack.enabled = videoEnabled;
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      const { width, height } = nextTrack.getSettings();
+      if (width && height) setActiveResolution(`${width}×${height}`);
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCamera]);
+
+  useEffect(() => {
+    if (!selectedMic || !streamRef.current) return;
+    const stream = streamRef.current;
+    const currentTrack = stream.getAudioTracks()[0];
+    if (currentTrack?.getSettings().deviceId === selectedMic) return;
+
+    let cancelled = false;
+    (async () => {
+      const nextTrack = await acquireAudioTrack(selectedMic);
+      if (cancelled || !nextTrack) return;
+      if (currentTrack) { stream.removeTrack(currentTrack); currentTrack.stop(); }
+      stream.addTrack(nextTrack);
+      nextTrack.enabled = audioEnabled;
+      audioContextRef.current?.close().catch(() => {});
+      const ac = new AudioContext();
+      audioContextRef.current = ac;
+      const source = ac.createMediaStreamSource(new MediaStream([nextTrack]));
+      const analyser = ac.createAnalyser();
+      analyser.fftSize = 32;
+      source.connect(analyser);
+      analyserRef.current = analyser;
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMic]);
+
   const rafRef = useRef<number>(0);
   useEffect(() => {
     const barsEl = barsRef.current;
     if (!barsEl) return;
     let running = true;
-
     function tick() {
       if (!running) return;
       const analyser = analyserRef.current;
@@ -125,7 +257,7 @@ export function LobbyPage() {
         analyser.getByteFrequencyData(data);
         const children = barsEl.children;
         for (let i = 0; i < Math.min(children.length, data.length); i++) {
-          const h = Math.max(4, (data[i] / 255) * 32);
+          const h = (data[i] / 255) * 24;
           (children[i] as HTMLElement).style.height = `${h}px`;
         }
       }
@@ -143,75 +275,29 @@ export function LobbyPage() {
         { opacity: 1, scale: 1, duration: 0.4, ease: "power2.out" },
       );
     },
-    { scope: containerRef },
+    { scope: barsRef },
   );
 
-  async function setVideoTrackEnabled(enabled: boolean) {
-    const stream = streamRef.current;
-    if (!stream) {
-      setVideoEnabled(enabled);
-      return;
-    }
-
-    if (!enabled) {
-      stream.getVideoTracks().forEach((track) => {
-        stream.removeTrack(track);
-        track.stop();
-      });
-      setVideoEnabled(false);
-      return;
-    }
-
-    const existingTrack = stream.getVideoTracks()[0];
-    if (existingTrack) {
-      existingTrack.enabled = true;
-      setVideoEnabled(true);
-      return;
-    }
-
-    try {
-      const nextVideoStream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: selectedCamera
-          ? { deviceId: { exact: selectedCamera }, width: 1280, height: 720 }
-          : { width: 1280, height: 720 },
-      });
-      const nextVideoTrack = nextVideoStream.getVideoTracks()[0];
-      if (!nextVideoTrack) {
-        setVideoEnabled(false);
-        return;
-      }
-      stream.addTrack(nextVideoTrack);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-      setVideoEnabled(true);
-    } catch {
-      setVideoEnabled(false);
-    }
-  }
-
-  function setAudioTrackEnabled(enabled: boolean) {
-    setAudioEnabled(enabled);
-    const stream = streamRef.current;
-    if (stream) {
-      stream.getAudioTracks().forEach((t) => { t.enabled = enabled; });
-    }
-  }
-
   function handleToggleVideo() {
-    setVideoTrackEnabled(!videoEnabled);
+    setVideoEnabled((prev) => {
+      const next = !prev;
+      streamRef.current?.getVideoTracks().forEach((t) => { t.enabled = next; });
+      return next;
+    });
   }
 
   function handleToggleAudio() {
-    setAudioTrackEnabled(!audioEnabled);
+    setAudioEnabled((prev) => {
+      const next = !prev;
+      streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = next; });
+      return next;
+    });
   }
 
   async function handleJoinNow() {
     if (!roomId) return;
     setJoining(true);
     try {
-      // Store user's media preferences in sessionStorage so RoomPage can read them
       sessionStorage.setItem('lobby_video', videoEnabled ? '1' : '0');
       sessionStorage.setItem('lobby_audio', audioEnabled ? '1' : '0');
       navigate(`/room/${roomId}`);
@@ -222,7 +308,6 @@ export function LobbyPage() {
 
   if (!room || !roomId) return null;
 
-  // Waiting room overlay
   if (isWaiting && waitingToken) {
     return (
       <WaitingRoomLobby
@@ -238,18 +323,19 @@ export function LobbyPage() {
   }
 
   return (
-    <div ref={containerRef} className="relative min-h-screen overflow-hidden px-4 py-8 sm:px-6">
+    <div className="relative min-h-screen overflow-hidden px-4 py-8 sm:px-6">
       <div className="pointer-events-none absolute -left-20 top-6 h-72 w-72 rounded-full bg-cyan-400/20 blur-3xl" />
       <div className="pointer-events-none absolute -right-20 bottom-0 h-80 w-80 rounded-full bg-blue-500/20 blur-3xl" />
 
       <div className="relative mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1fr_360px]">
-        <Card className="lobby-preview card-glow rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md">
+        {/* Preview card */}
+        <Card className="lobby-preview card-glow rounded-3xl border-(--meet-border) bg-(--meet-surface) py-0 backdrop-blur-md">
           <CardHeader className="p-5 sm:p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <Badge
                   variant="secondary"
-                  className="border border-[var(--meet-border)] bg-[var(--meet-elevated)] text-[var(--meet-text-muted)]"
+                  className="border border-(--meet-border) bg-(--meet-elevated) text-(--meet-text-muted)"
                 >
                   Pre-join
                 </Badge>
@@ -260,41 +346,48 @@ export function LobbyPage() {
               </div>
               <Badge
                 variant="outline"
-                className="rounded-full border-[var(--meet-border)] bg-[var(--meet-surface)] text-[var(--meet-text)]"
+                className="rounded-full border-(--meet-border) bg-(--meet-surface) text-(--meet-text)"
               >
                 {room.id}
               </Badge>
             </div>
           </CardHeader>
           <CardContent className="px-5 pb-5 sm:px-6 sm:pb-6">
-            <div className="relative aspect-video w-full overflow-hidden rounded-2xl border border-[var(--meet-border)] bg-[var(--room-strong)]">
+            <div className="relative aspect-video w-full overflow-hidden rounded-2xl border border-(--meet-border) bg-(--room-strong)">
               <video
                 ref={videoRef}
                 autoPlay
                 muted
                 playsInline
-                className={`h-full w-full object-cover [transform:scaleX(-1)] ${!videoEnabled ? 'invisible' : ''}`}
+                className={`h-full w-full object-cover transform:scaleX(-1) ${!videoEnabled ? 'invisible' : ''}`}
               />
               {!videoEnabled && (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="flex h-16 w-16 items-center justify-center rounded-full bg-[var(--meet-accent)] text-2xl font-semibold text-white">
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                  <span className="flex h-16 w-16 items-center justify-center rounded-full bg-(--meet-accent) text-2xl font-semibold text-white">
                     {user?.name?.charAt(0).toUpperCase() ?? "U"}
                   </span>
+                  {mediaErrors.video && (
+                    <p className="text-xs text-(--meet-text-muted)">{mediaErrors.video}</p>
+                  )}
+                </div>
+              )}
+              {/* Negotiated resolution badge */}
+              {videoEnabled && activeResolution && (
+                <div className="absolute left-3 top-3 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white/70">
+                  {activeResolution}
                 </div>
               )}
               <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-full bg-black/55 px-3 py-1 text-xs font-medium text-white">
                 {videoEnabled ? <Video className="h-3.5 w-3.5" /> : <VideoOff className="h-3.5 w-3.5 text-red-400" />}
                 {user?.name ?? "You"}
               </div>
-              {/* Mic/Video toggles */}
               <div className="absolute bottom-3 right-3 flex items-center gap-2">
                 <button
                   type="button"
                   onClick={handleToggleAudio}
-                  className={`flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
-                    audioEnabled
-                      ? 'bg-white/20 text-white hover:bg-white/30'
-                      : 'bg-red-500/90 text-white hover:bg-red-600'
+                  disabled={!!mediaErrors.audio}
+                  className={`flex h-9 w-9 items-center justify-center rounded-full transition-colors disabled:opacity-40 ${
+                    audioEnabled ? 'bg-white/20 text-white hover:bg-white/30' : 'bg-red-500/90 text-white hover:bg-red-600'
                   }`}
                   title={audioEnabled ? 'Mute microphone' : 'Unmute microphone'}
                 >
@@ -303,10 +396,9 @@ export function LobbyPage() {
                 <button
                   type="button"
                   onClick={handleToggleVideo}
-                  className={`flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
-                    videoEnabled
-                      ? 'bg-white/20 text-white hover:bg-white/30'
-                      : 'bg-red-500/90 text-white hover:bg-red-600'
+                  disabled={!!mediaErrors.video}
+                  className={`flex h-9 w-9 items-center justify-center rounded-full transition-colors disabled:opacity-40 ${
+                    videoEnabled ? 'bg-white/20 text-white hover:bg-white/30' : 'bg-red-500/90 text-white hover:bg-red-600'
                   }`}
                   title={videoEnabled ? 'Turn off camera' : 'Turn on camera'}
                 >
@@ -317,21 +409,30 @@ export function LobbyPage() {
           </CardContent>
         </Card>
 
+        {/* Settings card */}
         <Card className="card-glow rounded-3xl border-(--meet-border) bg-(--meet-surface) py-0 backdrop-blur-md">
           <CardHeader className="p-5 sm:p-6">
             <CardTitle className="text-xl">Lobby settings</CardTitle>
-            <CardDescription>
-              Choose your camera and microphone.
-            </CardDescription>
+            <CardDescription>Choose your camera and microphone.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 px-5 pb-5 sm:px-6 sm:pb-6">
+
+            {/* Hardware error banner */}
+            {(mediaErrors.video || mediaErrors.audio) && (
+              <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400">
+                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <div className="space-y-0.5">
+                  {mediaErrors.video && <p>{mediaErrors.video} — you'll join with video off.</p>}
+                  {mediaErrors.audio && <p>{mediaErrors.audio} — you'll join muted.</p>}
+                </div>
+              </div>
+            )}
+
             <div className="space-y-2">
-              <Label className="text-xs text-(--meet-text-muted)">
-                Camera
-              </Label>
-              <Select value={selectedCamera} onValueChange={setSelectedCamera}>
+              <Label className="text-xs text-(--meet-text-muted)">Camera</Label>
+              <Select value={selectedCamera} onValueChange={setSelectedCamera} disabled={!!mediaErrors.video}>
                 <SelectTrigger className="h-11 w-full rounded-xl border-(--meet-border) bg-(--meet-surface)">
-                  <SelectValue placeholder="Select camera" />
+                  <SelectValue placeholder={mediaErrors.video ? "No camera found" : "Select camera"} />
                 </SelectTrigger>
                 <SelectContent>
                   {cameras.map((d) => (
@@ -344,12 +445,10 @@ export function LobbyPage() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-xs text-(--meet-text-muted)">
-                Microphone
-              </Label>
-              <Select value={selectedMic} onValueChange={setSelectedMic}>
+              <Label className="text-xs text-(--meet-text-muted)">Microphone</Label>
+              <Select value={selectedMic} onValueChange={setSelectedMic} disabled={!!mediaErrors.audio}>
                 <SelectTrigger className="h-11 w-full rounded-xl border-(--meet-border) bg-(--meet-surface)">
-                  <SelectValue placeholder="Select microphone" />
+                  <SelectValue placeholder={mediaErrors.audio ? "No microphone found" : "Select microphone"} />
                 </SelectTrigger>
                 <SelectContent>
                   {mics.map((d) => (
@@ -363,40 +462,6 @@ export function LobbyPage() {
 
             <Separator />
 
-            <div className="space-y-3">
-              <div className="flex items-center justify-between rounded-xl border border-(--meet-border) bg-(--meet-elevated) px-3 py-2">
-                <Label className="flex items-center gap-2 text-sm font-medium">
-                  {videoEnabled ? (
-                    <Video className="h-4 w-4 text-(--meet-accent)" />
-                  ) : (
-                    <VideoOff className="h-4 w-4 text-red-500" />
-                  )}
-                  Camera
-                </Label>
-                <Switch
-                  checked={videoEnabled}
-                  onCheckedChange={setVideoTrackEnabled}
-                  aria-label="Toggle camera"
-                />
-              </div>
-
-              <div className="flex items-center justify-between rounded-xl border border-(--meet-border) bg-(--meet-elevated) px-3 py-2">
-                <Label className="flex items-center gap-2 text-sm font-medium">
-                  {audioEnabled ? (
-                    <Mic className="h-4 w-4 text-(--meet-accent)" />
-                  ) : (
-                    <MicOff className="h-4 w-4 text-red-500" />
-                  )}
-                  Microphone
-                </Label>
-                <Switch
-                  checked={audioEnabled}
-                  onCheckedChange={setAudioTrackEnabled}
-                  aria-label="Toggle microphone"
-                />
-              </div>
-            </div>
-
             <div className="space-y-2">
               <Label className="flex items-center gap-2 text-xs text-(--meet-text-muted)">
                 <Mic className="h-3.5 w-3.5" />
@@ -404,13 +469,13 @@ export function LobbyPage() {
               </Label>
               <div
                 ref={barsRef}
-                className="flex h-12 items-end gap-0.5 rounded-xl border border-(--meet-border) bg-(--meet-elevated) p-2"
+                className={`flex h-10 items-end gap-px rounded-xl border border-(--meet-border) bg-(--meet-elevated) p-2 ${mediaErrors.audio ? 'opacity-40' : ''}`}
               >
                 {Array.from({ length: BARS }).map((_, i) => (
                   <div
                     key={i}
-                    className="w-1 min-w-1 rounded-full bg-(--meet-accent)/75"
-                    style={{ height: 4 }}
+                    className="w-2 min-w-0.75 rounded-full bg-(--meet-accent)/75 transition-[height] duration-75 ease-out"
+                    style={{ height: 1 }}
                   />
                 ))}
               </div>
@@ -419,9 +484,7 @@ export function LobbyPage() {
             {isWaiting ? (
               <div className="flex flex-col items-center gap-3 rounded-xl bg-(--meet-elevated) px-4 py-5 text-center">
                 <div className="h-2.5 w-2.5 animate-pulse rounded-full bg-(--meet-accent)" />
-                <p className="text-sm text-(--meet-text-muted)">
-                  Waiting for host approval...
-                </p>
+                <p className="text-sm text-(--meet-text-muted)">Waiting for host approval...</p>
               </div>
             ) : (
               <Button

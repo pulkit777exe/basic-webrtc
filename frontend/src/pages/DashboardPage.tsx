@@ -34,13 +34,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { ArrowRight, ChevronDown, DoorOpen, Home, LogOut, PlusSquare, Shield, Sparkles } from "lucide-react";
+import { ArrowRight, ChevronDown, DoorOpen, Home, LogOut, PlusSquare, Shield, Sparkles, Sun, Moon } from "lucide-react";
+import { useTheme } from "next-themes";
 
 export function DashboardPage() {
   const user = useAtomValue(userAtom);
   const setUser = useSetAtom(userAtom);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
+  const { setTheme, resolvedTheme } = useTheme();
 
   // Close profile dropdown on outside click
   useEffect(() => {
@@ -358,6 +360,20 @@ export function DashboardPage() {
                   >
                     <Shield className="h-4 w-4 opacity-60" />
                     Settings
+                  </button>
+                  <div className="mx-3 my-1 border-t border-(--meet-border)" />
+                  <button
+                    onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+                    className="flex w-full items-center justify-between gap-2.5 px-4 py-2 text-sm transition-colors hover:bg-(--meet-elevated)"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      {resolvedTheme === 'dark'
+                        ? <Moon className="h-4 w-4 opacity-60" />
+                        : <Sun className="h-4 w-4 opacity-60" />
+                      }
+                      {resolvedTheme === 'dark' ? 'Dark mode' : 'Light mode'}
+                    </span>
+                    <span className="text-xs text-(--meet-text-muted)">Toggle</span>
                   </button>
                   <div className="mx-3 my-1 border-t border-(--meet-border)" />
                   <button

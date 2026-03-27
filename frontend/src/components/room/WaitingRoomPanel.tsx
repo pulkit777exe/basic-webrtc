@@ -75,7 +75,7 @@ function ParticipantRow({
   }
 
   return (
-    <div className="flex items-center gap-3 rounded-xl bg-[var(--room-elevated)] px-3 py-2.5">
+    <div className="flex items-center gap-3 rounded-xl bg-(--room-elevated) px-3 py-2.5">
       {/* Avatar */}
       <div className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-cyan-500/20 text-xs font-semibold text-cyan-200">
         {avatarUrl ? (
@@ -88,13 +88,13 @@ function ParticipantRow({
           getInitials(name)
         )}
         {/* Pulsing green dot */}
-        <span className="absolute bottom-0.5 right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[var(--room-elevated)] bg-amber-400" />
+        <span className="absolute bottom-0.5 right-0.5 h-2.5 w-2.5 rounded-full border-2 border-(--room-elevated) bg-amber-400" />
       </div>
 
       {/* Info */}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-[var(--room-text)]">{name}</p>
-        <p className="text-xs text-[var(--room-muted)]">Waiting since {relTime}</p>
+        <p className="truncate text-sm font-medium text-(--room-text)">{name}</p>
+        <p className="text-xs text-(--room-muted)">Waiting since {relTime}</p>
       </div>
 
       {/* Controls */}
@@ -190,18 +190,18 @@ export function WaitingRoomPanel({ onClose }: { onClose: () => void }) {
   return (
     <div
       ref={panelRef}
-      className="fixed inset-x-0 bottom-0 z-30 flex h-[70vh] flex-col border-t border-[var(--room-border)] bg-[var(--room-surface)] backdrop-blur-xl sm:inset-y-0 sm:left-auto sm:h-full sm:w-[360px] sm:border-l sm:border-t-0"
+      className="fixed inset-x-0 bottom-0 z-30 flex h-[70vh] flex-col border-t border-(--room-border) bg-(--room-surface) backdrop-blur-xl sm:inset-y-0 sm:left-auto sm:h-full sm:w-90 sm:border-l sm:border-t-0"
     >
       {/* Header */}
       <div className="flex items-center justify-between p-4 sm:p-5">
         <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold text-[var(--room-text)]">Waiting Room</h3>
+          <h3 className="text-sm font-semibold text-(--room-text)">Waiting Room</h3>
           <Badge
             variant="secondary"
-            className={`h-5 rounded-full border-0 px-2 text-[10px] hover:bg-[var(--room-elevated)] ${
+            className={`h-5 rounded-full border-0 px-2 text-[10px] hover:bg-(--room-elevated) ${
               waiting.length > 0
                 ? 'animate-pulse bg-amber-500/30 text-amber-300'
-                : 'bg-[var(--room-elevated)] text-[var(--room-text)]'
+                : 'bg-(--room-elevated) text-(--room-text)'
             }`}
           >
             {waiting.length}
@@ -210,18 +210,18 @@ export function WaitingRoomPanel({ onClose }: { onClose: () => void }) {
         <Button
           variant="ghost"
           size="icon-sm"
-          className="rounded-full text-[var(--room-text)] hover:bg-[var(--room-elevated)] hover:text-[var(--room-text)]"
+          className="rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)"
           onClick={onClose}
         >
           <X className="h-4 w-4" />
         </Button>
       </div>
 
-      <Separator className="bg-[var(--room-border)]" />
+      <Separator className="bg-(--room-border)" />
 
       {/* Admit-all bar (host only) */}
       {isHost && waiting.length > 1 && (
-        <div className="border-b border-[var(--room-border)] px-4 py-3 sm:px-5">
+        <div className="border-b border-(--room-border) px-4 py-3 sm:px-5">
           <Button
             className="h-9 w-full rounded-xl bg-emerald-500/20 text-sm font-medium text-emerald-300 hover:bg-emerald-500/30 hover:text-emerald-200 disabled:opacity-50"
             variant="ghost"
@@ -242,11 +242,11 @@ export function WaitingRoomPanel({ onClose }: { onClose: () => void }) {
       <div className="flex-1 overflow-y-auto p-4 sm:p-5">
         {waiting.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--room-elevated)]">
-              <Users className="h-5 w-5 text-[var(--room-muted)]" />
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-(--room-elevated)">
+              <Users className="h-5 w-5 text-(--room-muted)" />
             </div>
-            <p className="text-sm font-medium text-[var(--room-muted)]">No one is waiting</p>
-            <p className="max-w-[200px] text-xs text-[var(--room-muted)]">
+            <p className="text-sm font-medium text-(--room-muted)">No one is waiting</p>
+            <p className="max-w-50 text-xs text-(--room-muted)">
               Participants will appear here when they request to join.
             </p>
           </div>
@@ -255,7 +255,7 @@ export function WaitingRoomPanel({ onClose }: { onClose: () => void }) {
             {waiting.map((p, index) => (
               <div key={p.id}>
                 <div className="mb-1 flex items-center gap-1.5">
-                  <span className="text-[10px] font-medium text-[var(--room-muted)]">#{index + 1}</span>
+                  <span className="text-[10px] font-medium text-(--room-muted)">#{index + 1}</span>
                 </div>
                 <ParticipantRow
                   id={p.id}

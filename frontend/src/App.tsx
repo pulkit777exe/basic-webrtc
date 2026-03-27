@@ -9,7 +9,6 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { AuthGuard } from '@/components/AuthGuard';
 import { ThemeProvider } from '@/components/ThemeProvider';
-import { ThemeToggle } from '@/components/ThemeToggle';
 import { RouteErrorPage } from '@/components/RouteErrorPage';
 import { AppErrorBoundary } from '@/components/AppErrorBoundary';
 
@@ -28,11 +27,12 @@ const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((m) => ({ de
 const SecuritySettingsPage = lazy(() => import('@/pages/SecuritySettingsPage').then((m) => ({ default: m.SecuritySettingsPage })));
 const LobbyPage = lazy(() => import('@/pages/LobbyPage').then((m) => ({ default: m.LobbyPage })));
 const RoomPage = lazy(() => import('@/pages/RoomPage').then((m) => ({ default: m.RoomPage })));
+const JoinByInvitePage = lazy(() => import('@/pages/JoinByInvitePage').then((m) => ({ default: m.JoinByInvitePage })));
 
 function RouteLoader() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[var(--meet-bg)]">
-      <div className="h-9 w-9 animate-spin rounded-full border-2 border-[var(--meet-border)] border-t-[var(--meet-accent)]" />
+    <div className="flex min-h-screen items-center justify-center bg-(--meet-bg)">
+      <div className="h-9 w-9 animate-spin rounded-full border-2 border-(--meet-border) border-t-(--meet-accent)" />
     </div>
   );
 }
@@ -44,7 +44,6 @@ function suspense(element: ReactElement) {
 function Layout() {
   return (
     <>
-      <ThemeToggle />
       <PageTransition>
         <Outlet />
       </PageTransition>
@@ -118,6 +117,10 @@ const router = createBrowserRouter([
             <RoomPage />
           </AuthGuard>
         ),
+      },
+      {
+        path: '/join/:token',
+        element: suspense(<JoinByInvitePage />),
       },
       { path: '*', element: suspense(<LandingPage />) },
     ],

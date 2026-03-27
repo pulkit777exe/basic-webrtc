@@ -47,8 +47,13 @@ import {
   MessageSquare,
   Unlock,
   Users,
+  Link,
+  Sun,
+  Moon,
 } from "lucide-react";
+import { useTheme } from "next-themes";
 import { toast } from "sonner";
+import { InviteModal } from "@/components/InviteModal";
 
 function formatElapsed(seconds: number): string {
   const mins = Math.floor(seconds / 60)
@@ -135,6 +140,8 @@ export function RoomPage() {
     stop: () => void;
   } | null>(null);
   const cleanedUpRef = useRef(false);
+  const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  const { setTheme, resolvedTheme } = useTheme();
 
   useEffect(() => {
     if (!roomId || !roomToken || !user) {
@@ -616,9 +623,33 @@ export function RoomPage() {
             >
               <Users className="h-4 w-4" />
             </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)"
+              onClick={() => setInviteModalOpen(true)}
+              title={isHost ? "Invite people to this room" : "Only the host can invite others"}
+            >
+              <Link className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)"
+              onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+            >
+              {resolvedTheme === 'dark' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+            </Button>
           </div>
         </div>
       </header>
+
+      <InviteModal
+        roomId={roomId || ""}
+        roomTitle={room?.title ?? "Meeting Room"}
+        open={inviteModalOpen}
+        onOpenChange={setInviteModalOpen}
+      />
 
       <div
         ref={gridRef}

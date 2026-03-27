@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import crypto from "crypto";
 import { db } from "../db";
 import {
   rooms,
@@ -7,7 +8,7 @@ import {
   roomSettings,
   messages,
 } from "../db/schema";
-import { authenticate, authenticateToken } from "../middleware/auth";
+import { authenticate, authenticateToken, optionalAuthenticate } from "../middleware/auth";
 import { generateRoomId } from "../utils/validation";
 import { generateRoomToken, generateWaitingToken } from "../utils/jwt";
 import { eq, and, desc } from "drizzle-orm";
@@ -34,6 +35,9 @@ import {
 } from "../lib/redis-rooms";
 import { redis } from "../config/redis";
 import { verifyRoomToken } from "../utils/jwt";
+import { apiLimiter } from "../lib/rate-limiters";
+import { verifyAccessToken } from "../utils/jwt";
+import { globalLimiter } from "../lib/rate-limiters";
 
 const router = Router();
 const SALT_ROUNDS = 10;
@@ -290,8 +294,37 @@ router.post(
         return;
       }
 
-      // 5. Passcode check (skip for the host)
-      if (room.passcodeHash && userId !== room.hostId) {
+      // 5. Passcode check (skip for the host or invite bypass)
+      // Server-side derivation: bypass if user is host OR has valid Redis invite bypass token
+      // The Redis token is set when user accesses the invite link while authenticated
+      // Host bypass: Room hosts skip passcode check automatically (userId === room.hostId)
+      // Invite bypass: Authenticated users who accessed a valid invite link skip passcode AND waiting room
+      const bypassKey = `invite:bypass:${userId}:${id}`;
+      // Use GETDEL for atomic check-and-delete to prevent race conditions and ensure single-use
+      const bypassValue = await redis.getdel(bypassKey);
+      const shouldBypass = userId === room.hostId || bypassValue === "1";
+
+      // Audit logging for bypass attempts
+      if (shouldBypass) {
+        console.info(
+          "[BYPASS GRANTED] userId=%s roomId=%s reason=%s ip=%s timestamp=%s",
+          userId,
+          id,
+          userId === room.hostId ? "host" : "invite_token",
+          ip,
+          new Date().toISOString()
+        );
+      } else {
+        console.info(
+          "[BYPASS DENIED] userId=%s roomId=%s reason=key_not_found ip=%s timestamp=%s",
+          userId,
+          id,
+          ip,
+          new Date().toISOString()
+        );
+      }
+
+      if (room.passcodeHash && !shouldBypass) {
         if (!passcode) {
           res
             .status(401)
@@ -327,13 +360,14 @@ router.post(
       }
 
       // 6. Waiting room check (needs settings + user details)
+      // Skip if user is host OR has valid invite bypass token
       const [settings] = await db
         .select()
         .from(roomSettings)
         .where(eq(roomSettings.roomId, id))
         .limit(1);
 
-      if (settings?.waitingRoomEnabled && room.hostId !== userId) {
+      if (!shouldBypass && settings?.waitingRoomEnabled && room.hostId !== userId) {
         // Fetch user details for the waiting room display
         const [waitingUser] = await db
           .select({
@@ -750,6 +784,145 @@ router.post(
       res
         .status(500)
         .json({ error: "Internal server error", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+
+// Generate invite token (host only)
+
+router.post(
+  "/:roomId/invite-token",
+  authenticateToken,
+  apiLimiter,
+  async (
+    req: Request<{ roomId: string }, unknown, { previousToken?: string }>,
+    res: Response,
+  ): Promise<void> => {
+    try {
+      const { roomId } = req.params;
+      const userId = req.user!.id;
+      const { previousToken } = req.body || {};
+
+      // Validate room exists and user is host
+      const [room] = await db
+        .select({ hostId: rooms.hostId })
+        .from(rooms)
+        .where(eq(rooms.id, roomId))
+        .limit(1);
+
+      if (!room) {
+        res.status(404).json({ error: "Room not found", code: "ROOM_NOT_FOUND" });
+        return;
+      }
+
+      if (room.hostId !== userId) {
+        res.status(403).json({ error: "Only the host can generate invite links", code: "FORBIDDEN" });
+        return;
+      }
+
+      // Delete previous token if provided (regenerate case)
+      if (previousToken && typeof previousToken === 'string') {
+        // Validate format: 64-character hex string (32 bytes)
+        // If it does not match, skip deletion entirely without logging — it's either a client error or a different token format
+        if (typeof previousToken === 'string' && /^[a-f0-9]{64}$/.test(previousToken)) {
+          // Verify the previous token belongs to this room before deletion
+          const previousRoomId = await redis.get(`invite:${previousToken}`);
+          if (previousRoomId && previousRoomId !== roomId) {
+            res.status(400).json({ error: "Token does not belong to this room", code: "INVALID_TOKEN" });
+            return;
+          }
+          // Wrap deletion with error handling so failures don't abort new token generation
+          await redis.del(`invite:${previousToken}`).catch(err => { console.error('[Invite Token Cleanup]', { error: err.message, roomId }); return 0; });
+        }
+      }
+
+      // Generate 32-byte random hex token
+      const inviteToken = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(Date.now() + 86400 * 1000); // 24 hours
+
+      // Store in Redis with 24h expiry
+      await redis.set(`invite:${inviteToken}`, roomId, "EX", 86400);
+
+      const appUrl = process.env.APP_URL || process.env.VITE_APP_URL || "http://localhost:5173";
+      const inviteUrl = `${appUrl.replace(/\/$/, '')}/join/${inviteToken}`;
+
+      res.json({
+        token: inviteToken,
+        inviteUrl,
+        expiresAt: expiresAt.toISOString(),
+      });
+    } catch (error) {
+      console.error("[Generate Invite Token Error]", error);
+      res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+
+// Join by invite token (public)
+
+router.get(
+  "/join-by-invite/:token",
+  globalLimiter,
+  optionalAuthenticate,
+  async (
+    req: Request<{ token: string }>,
+    res: Response,
+  ): Promise<void> => {
+    try {
+      const { token } = req.params;
+
+      // Look up invite token in Redis
+      const roomId = await redis.get(`invite:${token}`);
+
+      if (!roomId) {
+        res.status(410).json({ error: "invite_expired", code: "INVITE_EXPIRED" });
+        return;
+      }
+
+      // Fetch room from PostgreSQL
+      const [room] = await db
+        .select()
+        .from(rooms)
+        .where(eq(rooms.id, roomId))
+        .limit(1);
+
+      if (!room) {
+        res.status(404).json({ error: "Room not found", code: "ROOM_NOT_FOUND" });
+        return;
+      }
+
+      if (room.endedAt) {
+        res.status(410).json({ error: "invite_expired", code: "ROOM_ENDED" });
+        return;
+      }
+
+      // If user is authenticated (via optionalAuthenticate middleware), set bypass token
+      if (req.user) {
+        // Set bypass flag for 120 seconds - allows join without passcode or waiting room
+        // Server derives bypass state from this Redis key in the join handler
+        await redis.set(`invite:bypass:${req.user.id}:${roomId}`, "1", "EX", 120);
+      }
+
+      // Return room info - the actual join will happen after auth on the frontend
+      // The frontend will call the normal join endpoint (server will check Redis for bypass)
+      const participantCount = await getRoomPeerCount(roomId);
+
+      res.json({
+        room: {
+          id: room.id,
+          hostId: room.hostId,
+          title: room.title,
+          isLocked: room.isLocked,
+          maxParticipants: room.maxParticipants,
+          participantCount,
+          hasPasscode: Boolean(room.passcodeHash),
+          createdAt: room.createdAt?.toISOString(),
+        },
+        inviteValid: true,
+      });
+    } catch (error) {
+      console.error("[Join By Invite Error]", error);
+      res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" });
     }
   },
 );

@@ -76,8 +76,15 @@ export function LoginPage() {
   }
 
   async function handleLoginSuccess(normalizedEmail: string, data: Awaited<ReturnType<typeof api.login>>) {
+    // Check for pending invite redirect
+    const pendingInvite = sessionStorage.getItem("pendingInvite");
+
     if (data.requires2FA && data.pendingToken) {
       sessionStorage.setItem(TWO_FACTOR_PENDING_STORAGE_KEY, data.pendingToken);
+      // Preserve pending invite across 2FA flow
+      if (pendingInvite) {
+        sessionStorage.setItem("pendingInvite", pendingInvite);
+      }
       navigate('/auth/2fa', {
         replace: true,
         state: { pendingToken: data.pendingToken, email: normalizedEmail },
@@ -88,6 +95,10 @@ export function LoginPage() {
     if (data.requiresSuspiciousLoginVerification) {
       const reasons = Array.isArray(data.reasons) ? data.reasons : [];
       sessionStorage.setItem(SUSPICIOUS_REASONS_STORAGE_KEY, JSON.stringify(reasons));
+      // Preserve pending invite across suspicious login flow
+      if (pendingInvite) {
+        sessionStorage.setItem("pendingInvite", pendingInvite);
+      }
       navigate('/auth/suspicious-login', {
         replace: true,
         state: { reasons },
@@ -97,7 +108,13 @@ export function LoginPage() {
 
     if (data.user) {
       setUser(data.user as Parameters<typeof setUser>[0]);
-      navigate(from, { replace: true });
+      // Redirect to pending invite if present, otherwise to from
+      if (pendingInvite) {
+        sessionStorage.removeItem("pendingInvite");
+        navigate(pendingInvite, { replace: true });
+      } else {
+        navigate(from, { replace: true });
+      }
       return;
     }
 
@@ -181,28 +198,28 @@ export function LoginPage() {
       <div className="pointer-events-none absolute -right-24 bottom-0 h-80 w-80 rounded-full bg-cyan-400/20 blur-3xl" />
 
       <div className="relative z-10 mx-auto grid min-h-[calc(100vh-4rem)] w-full max-w-5xl items-center gap-6 lg:grid-cols-[1fr_440px]">
-        <Card className="hidden rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md lg:block">
+        <Card className="hidden rounded-3xl border-(--meet-border) bg-(--meet-surface) py-0 backdrop-blur-md lg:block">
           <CardContent className="p-8">
-            <p className="text-sm font-medium text-[var(--meet-text-muted)]">Meetour Workspace</p>
+            <p className="text-sm font-medium text-(--meet-text-muted)">Meetour Workspace</p>
             <h1 className="mt-3 max-w-sm text-4xl font-semibold leading-tight">Join your team in seconds.</h1>
-            <p className="mt-4 max-w-md text-sm text-[var(--meet-text-muted)]">
+            <p className="mt-4 max-w-md text-sm text-(--meet-text-muted)">
               Continue where you left off: quick room joins, stable screen sharing, and chat that stays tied to the call.
             </p>
             <div className="mt-8 space-y-3">
-              <div className="glass rounded-2xl px-4 py-3 text-sm text-[var(--meet-text-muted)]">End-to-end room controls for hosts</div>
-              <div className="glass rounded-2xl px-4 py-3 text-sm text-[var(--meet-text-muted)]">Adaptive brute-force protection with CAPTCHA</div>
-              <div className="glass rounded-2xl px-4 py-3 text-sm text-[var(--meet-text-muted)]">Mobile-friendly call interface</div>
+              <div className="glass rounded-2xl px-4 py-3 text-sm text-(--meet-text-muted)">End-to-end room controls for hosts</div>
+              <div className="glass rounded-2xl px-4 py-3 text-sm text-(--meet-text-muted)">Adaptive brute-force protection with CAPTCHA</div>
+              <div className="glass rounded-2xl px-4 py-3 text-sm text-(--meet-text-muted)">Mobile-friendly call interface</div>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="card-glow rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md">
+        <Card className="card-glow rounded-3xl border-(--meet-border) bg-(--meet-surface) py-0 backdrop-blur-md">
           <CardHeader className="p-6 sm:p-8 sm:pb-2">
-            <p className="text-xs font-semibold tracking-[0.2em] text-[var(--meet-text-muted)] uppercase">Welcome back</p>
+            <p className="text-xs font-semibold tracking-[0.2em] text-(--meet-text-muted) uppercase">Welcome back</p>
             <CardTitle className="mt-1 text-3xl font-semibold">Sign in</CardTitle>
-            <CardDescription className="mt-2 text-sm text-[var(--meet-text-muted)]">
+            <CardDescription className="mt-2 text-sm text-(--meet-text-muted)">
               No account?{' '}
-              <Link to="/register" className="font-semibold text-[var(--meet-accent)] hover:underline">
+              <Link to="/register" className="font-semibold text-(--meet-accent) hover:underline">
                 Create one
               </Link>
             </CardDescription>
@@ -221,7 +238,7 @@ export function LoginPage() {
                 ) : null}
                 <Link
                   to="/auth/forgot-password"
-                  className="inline-block text-sm font-semibold text-[var(--meet-accent)] hover:underline"
+                  className="inline-block text-sm font-semibold text-(--meet-accent) hover:underline"
                 >
                   Forgot your password?
                 </Link>
@@ -245,11 +262,11 @@ export function LoginPage() {
                   </div>
                 ) : null}
                 <div className="space-y-2">
-                  <Label htmlFor="email" className="text-xs font-medium text-[var(--meet-text-muted)]">
+                  <Label htmlFor="email" className="text-xs font-medium text-(--meet-text-muted)">
                     Email
                   </Label>
                   <div className="relative">
-                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--meet-text-muted)]" />
+                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-(--meet-text-muted)" />
                     <Input
                       id="email"
                       type="email"
@@ -257,33 +274,33 @@ export function LoginPage() {
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       autoComplete="email"
-                      className="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)] pl-10"
+                      className="h-11 rounded-xl border-(--meet-border) bg-(--meet-surface) pl-10"
                     />
                   </div>
                 </div>
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <Label htmlFor="password" className="text-xs font-medium text-[var(--meet-text-muted)]">
+                    <Label htmlFor="password" className="text-xs font-medium text-(--meet-text-muted)">
                       Password
                     </Label>
                     <div className="flex items-center gap-3">
                       <Link
                         to="/auth/forgot-password"
-                        className="text-xs font-semibold text-[var(--meet-accent)] hover:underline"
+                        className="text-xs font-semibold text-(--meet-accent) hover:underline"
                       >
                         Forgot password?
                       </Link>
                       <Link
                         to="/auth/recover"
-                        className="text-xs font-semibold text-[var(--meet-accent)] hover:underline"
+                        className="text-xs font-semibold text-(--meet-accent) hover:underline"
                       >
                         Can&apos;t access your email?
                       </Link>
                     </div>
                   </div>
                   <div className="relative">
-                    <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--meet-text-muted)]" />
+                    <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-(--meet-text-muted)" />
                     <PasswordInput
                       id="password"
                       placeholder="Enter password"
@@ -296,8 +313,8 @@ export function LoginPage() {
                 </div>
 
                 {captchaRequired ? (
-                  <div className="space-y-2 rounded-xl border border-[var(--meet-border)] bg-[var(--meet-elevated)] p-3">
-                    <p className="text-xs font-medium text-[var(--meet-text-muted)]">
+                  <div className="space-y-2 rounded-xl border border-(--meet-border) bg-(--meet-elevated) p-3">
+                    <p className="text-xs font-medium text-(--meet-text-muted)">
                       Complete CAPTCHA to continue signing in.
                     </p>
                     {captchaSiteKey ? (
@@ -324,7 +341,7 @@ export function LoginPage() {
 
                 <Button
                   type="submit"
-                  className="mt-2 h-11 w-full rounded-xl bg-[var(--meet-accent)] text-white hover:bg-blue-600"
+                  className="mt-2 h-11 w-full rounded-xl bg-(--meet-accent) text-white hover:bg-blue-600"
                   disabled={loading || !captchaReady || (captchaRequired && !captchaSiteKey)}
                 >
                   {loading ? 'Logging in...' : 'Login'}
@@ -342,7 +359,7 @@ export function LoginPage() {
               </form>
             )}
 
-            <p className="mt-6 text-center text-xs text-[var(--meet-text-muted)]">
+            <p className="mt-6 text-center text-xs text-(--meet-text-muted)">
               Your email must be verified before you can access protected pages.
             </p>
           </CardContent>

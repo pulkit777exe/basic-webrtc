@@ -501,6 +501,33 @@ export const api = {
     );
   },
 
+  async generateInviteToken(roomId: string, previousToken?: string) {
+    return request<{
+      token: string;
+      inviteUrl: string;
+      expiresAt: string;
+    }>(`/api/rooms/${roomId}/invite-token`, {
+      method: "POST",
+      body: previousToken ? JSON.stringify({ previousToken }) : undefined,
+    });
+  },
+
+  async joinByInvite(token: string) {
+    return request<{
+      room: {
+        id: string;
+        hostId: string;
+        title: string;
+        isLocked: boolean;
+        maxParticipants: number;
+        participantCount: number;
+        hasPasscode: boolean;
+        createdAt: string;
+      };
+      inviteValid: boolean;
+    }>(`/api/rooms/join-by-invite/${token}`);
+  },
+
   async generateBackupCodes(password: string) {
     return request<{ codes: string[]; generatedAt: string }>(
       "/api/auth/backup-codes/generate",

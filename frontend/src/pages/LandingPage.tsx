@@ -12,13 +12,15 @@ import { userAtom } from '@/store/atoms';
 import {
   ArrowRight,
   ChevronDown,
-  LayoutDashboard,
   LogOut,
   Settings,
   ShieldCheck,
   Sparkles,
+  Sun,
+  Moon,
   Users,
 } from 'lucide-react';
+import { useTheme } from 'next-themes';
 
 const TITLE = 'Meetour';
 
@@ -49,6 +51,7 @@ export function LandingPage() {
   const [user, setUser] = useAtom(userAtom);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const { setTheme, resolvedTheme } = useTheme();
 
   useEffect(() => {
     if (user) return;
@@ -114,7 +117,7 @@ export function LandingPage() {
       ref={containerRef}
       className="relative min-h-screen overflow-hidden bg-grid text-(--meet-text)"
     >
-      <div className="pointer-events-none absolute -left-40 top-6 h-90 w-[360px] rounded-full bg-cyan-400/15 blur-3xl" />
+      <div className="pointer-events-none absolute -left-40 top-6 h-90 w-90 rounded-full bg-cyan-400/15 blur-3xl" />
       <div className="pointer-events-none absolute -right-44 bottom-0 h-105 w-105 rounded-full bg-blue-500/15 blur-3xl" />
 
       <nav className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-6 sm:px-6">
@@ -169,6 +172,19 @@ export function LandingPage() {
                         Settings
                       </Link>
                       <button
+                        onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+                        className="flex w-full items-center justify-between gap-2.5 px-3.5 py-2 text-sm transition-colors hover:bg-(--meet-elevated)"
+                      >
+                        <span className="flex items-center gap-2.5">
+                          {resolvedTheme === 'dark'
+                            ? <Moon className="h-4 w-4 opacity-60" />
+                            : <Sun className="h-4 w-4 opacity-60" />
+                          }
+                          {resolvedTheme === 'dark' ? 'Dark mode' : 'Light mode'}
+                        </span>
+                        <span className="text-xs text-(--meet-text-muted)">Toggle</span>
+                      </button>
+                      <button
                         type="button"
                         onClick={handleLogout}
                         className="flex w-full items-center gap-2.5 px-3.5 py-2 text-sm text-red-500 transition-colors hover:bg-(--meet-elevated)"
@@ -183,6 +199,14 @@ export function LandingPage() {
             </>
           ) : (
             <>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="rounded-full"
+                onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+              >
+                {resolvedTheme === 'dark' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+              </Button>
               <Button
                 asChild
                 variant="ghost"

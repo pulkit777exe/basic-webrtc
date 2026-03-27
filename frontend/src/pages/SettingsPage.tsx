@@ -340,7 +340,7 @@ export function SettingsPage() {
   if (loading || !user) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--meet-border)] border-t-[var(--meet-accent)]" />
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-(--meet-border) border-t-(--meet-accent)" />
       </div>
     );
   }
@@ -351,7 +351,7 @@ export function SettingsPage() {
       <div className="pointer-events-none absolute -right-24 bottom-0 h-80 w-80 rounded-full bg-blue-500/20 blur-3xl" />
 
       <div className="relative z-10 mx-auto w-full max-w-6xl">
-        <Card className="rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)]">
+        <Card className="rounded-3xl border-(--meet-border) bg-(--meet-surface)">
           <CardHeader>
             <CardTitle className="text-3xl">Settings</CardTitle>
             <CardDescription>Manage your profile, security, notifications, and account.</CardDescription>
@@ -368,7 +368,7 @@ export function SettingsPage() {
 
               <div className="space-y-6">
                 <TabsContent value="profile" className="space-y-6">
-                  <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)]">
+                  <Card className="rounded-2xl border-(--meet-border) bg-(--meet-elevated)">
                     <CardHeader>
                       <CardTitle>Avatar</CardTitle>
                       <CardDescription>Update your profile photo.</CardDescription>
@@ -413,7 +413,7 @@ export function SettingsPage() {
                     </CardContent>
                   </Card>
 
-                  <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)]">
+                  <Card className="rounded-2xl border-(--meet-border) bg-(--meet-elevated)">
                     <CardHeader>
                       <CardTitle>Name</CardTitle>
                     </CardHeader>
@@ -444,7 +444,7 @@ export function SettingsPage() {
                     </CardContent>
                   </Card>
 
-                  <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)]">
+                  <Card className="rounded-2xl border-(--meet-border) bg-(--meet-elevated)">
                     <CardHeader>
                       <CardTitle>Email</CardTitle>
                     </CardHeader>
@@ -468,7 +468,7 @@ export function SettingsPage() {
                     </CardContent>
                   </Card>
 
-                  <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)]">
+                  <Card className="rounded-2xl border-(--meet-border) bg-(--meet-elevated)">
                     <CardHeader>
                       <CardTitle>Password</CardTitle>
                     </CardHeader>
@@ -497,7 +497,7 @@ export function SettingsPage() {
                                 {user.googleLinkedAt ? ` · Linked on ${new Date(user.googleLinkedAt).toLocaleDateString()}` : ''}
                               </p>
                             ) : (
-                              <p className="text-sm text-[var(--meet-text-muted)]">Sign in faster with your Google account.</p>
+                              <p className="text-sm text-(--meet-text-muted)">Sign in faster with your Google account.</p>
                             )}
                           </div>
 
@@ -534,13 +534,13 @@ export function SettingsPage() {
                 </TabsContent>
 
                 <TabsContent value="notifications" className="space-y-6">
-                  <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)]">
+                  <Card className="rounded-2xl border-(--meet-border) bg-(--meet-elevated)">
                     <CardHeader>
                       <CardTitle>Notifications</CardTitle>
                       <CardDescription>Notification preferences will appear here.</CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <p className="text-sm text-[var(--meet-text-muted)]">
+                      <p className="text-sm text-(--meet-text-muted)">
                         Email and in-app notification controls are coming soon.
                       </p>
                     </CardContent>
@@ -548,14 +548,14 @@ export function SettingsPage() {
                 </TabsContent>
 
                 <TabsContent value="account" className="space-y-6">
-                  <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)]">
+                  <Card className="rounded-2xl border-(--meet-border) bg-(--meet-elevated)">
                     <CardHeader>
                       <CardTitle>Export Data</CardTitle>
                       <CardDescription>Download a copy of all your account data.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       {!exportStatus.canRequest ? (
-                        <p className="text-sm text-[var(--meet-text-muted)]">
+                        <p className="text-sm text-(--meet-text-muted)">
                           Next export request available in {formatDuration(exportStatus.retryAfter)}.
                         </p>
                       ) : null}

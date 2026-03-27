@@ -23,6 +23,7 @@ async function negotiateBestVideoTrack(
   deviceId: string | null,
 ): Promise<MediaStreamTrack | null> {
   const baseConstraints = deviceId ? { deviceId: { exact: deviceId } } : {};
+  const failures: Array<{ width: number; height: number; error: string }> = [];
 
   for (const { width, height } of VIDEO_RESOLUTION_LADDER) {
     try {
@@ -31,9 +32,13 @@ async function negotiateBestVideoTrack(
         video: { ...baseConstraints, width: { ideal: width }, height: { ideal: height } },
       });
       return stream.getVideoTracks()[0] ?? null;
-    } catch {
-      // Try next rung
+    } catch (err) {
+      failures.push({ width, height, error: err instanceof Error ? err.message : String(err) });
     }
+  }
+
+  if (failures.length > 0) {
+    console.debug('[MediaManager] Video ladder failures:', failures);
   }
 
   // Last resort: let the browser pick anything
@@ -71,8 +76,9 @@ async function negotiateBestAudioTrack(
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: baseConstraints, video: false });
     return stream.getAudioTracks()[0] ?? null;
-  } catch {
-    // DSP constraints rejected — try without them
+  } catch (err) {
+    // DSP constraints rejected — collect the error before the plain fallback attempt
+    console.debug('[MediaManager] Audio DSP constraints rejected:', err instanceof Error ? err.message : String(err), '— falling back to plain audio');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: deviceId ? { deviceId: { exact: deviceId } } : true,
