@@ -30,6 +30,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { Mic, MicOff, Video, VideoOff } from "lucide-react";
 
 const BARS = 20;
@@ -43,10 +44,13 @@ export function LobbyPage() {
   const [isWaiting, setIsWaiting] = useAtom(isWaitingAtom);
   const waitingToken = useAtomValue(waitingTokenAtom);
   const waitingPosition = useAtomValue(waitingRoomPositionAtom);
+
+  const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const barsRef = useRef<HTMLDivElement>(null);
+
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
   const [selectedCamera, setSelectedCamera] = useState<string>("");
@@ -66,19 +70,20 @@ export function LobbyPage() {
     let stream: MediaStream | null = null;
     let cancelled = false;
     (async () => {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      setCameras(devices.filter((d) => d.kind === "videoinput"));
-      setMics(devices.filter((d) => d.kind === "audioinput"));
       stream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: true,
       });
+      if (cancelled) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
 
-      // Re-enumerate after getUserMedia so labels are available
+      // Enumerate after getUserMedia so labels are available
       const devices = await navigator.mediaDevices.enumerateDevices();
       const cams = devices.filter((d) => d.kind === "videoinput" && d.deviceId);
       const micDevices = devices.filter((d) => d.kind === "audioinput" && d.deviceId);
@@ -96,14 +101,6 @@ export function LobbyPage() {
         source.connect(analyser);
         analyserRef.current = analyser;
       }
-      if (devices.filter((d) => d.kind === "videoinput").length)
-        setSelectedCamera(
-          devices.find((d) => d.kind === "videoinput")?.deviceId ?? "",
-        );
-      if (devices.filter((d) => d.kind === "audioinput").length)
-        setSelectedMic(
-          devices.find((d) => d.kind === "audioinput")?.deviceId ?? "",
-        );
     })();
     return () => {
       cancelled = true;
@@ -128,7 +125,7 @@ export function LobbyPage() {
         analyser.getByteFrequencyData(data);
         const children = barsEl.children;
         for (let i = 0; i < Math.min(children.length, data.length); i++) {
-          const h = (data[i] / 255) * 24;
+          const h = Math.max(4, (data[i] / 255) * 32);
           (children[i] as HTMLElement).style.height = `${h}px`;
         }
       }
@@ -146,29 +143,68 @@ export function LobbyPage() {
         { opacity: 1, scale: 1, duration: 0.4, ease: "power2.out" },
       );
     },
-    { scope: barsRef },
+    { scope: containerRef },
   );
 
-  function handleToggleVideo() {
-    setVideoEnabled((prev) => {
-      const next = !prev;
-      const stream = streamRef.current;
-      if (stream) {
-        stream.getVideoTracks().forEach((t) => { t.enabled = next; });
+  async function setVideoTrackEnabled(enabled: boolean) {
+    const stream = streamRef.current;
+    if (!stream) {
+      setVideoEnabled(enabled);
+      return;
+    }
+
+    if (!enabled) {
+      stream.getVideoTracks().forEach((track) => {
+        stream.removeTrack(track);
+        track.stop();
+      });
+      setVideoEnabled(false);
+      return;
+    }
+
+    const existingTrack = stream.getVideoTracks()[0];
+    if (existingTrack) {
+      existingTrack.enabled = true;
+      setVideoEnabled(true);
+      return;
+    }
+
+    try {
+      const nextVideoStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: selectedCamera
+          ? { deviceId: { exact: selectedCamera }, width: 1280, height: 720 }
+          : { width: 1280, height: 720 },
+      });
+      const nextVideoTrack = nextVideoStream.getVideoTracks()[0];
+      if (!nextVideoTrack) {
+        setVideoEnabled(false);
+        return;
       }
-      return next;
-    });
+      stream.addTrack(nextVideoTrack);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      setVideoEnabled(true);
+    } catch {
+      setVideoEnabled(false);
+    }
+  }
+
+  function setAudioTrackEnabled(enabled: boolean) {
+    setAudioEnabled(enabled);
+    const stream = streamRef.current;
+    if (stream) {
+      stream.getAudioTracks().forEach((t) => { t.enabled = enabled; });
+    }
+  }
+
+  function handleToggleVideo() {
+    setVideoTrackEnabled(!videoEnabled);
   }
 
   function handleToggleAudio() {
-    setAudioEnabled((prev) => {
-      const next = !prev;
-      const stream = streamRef.current;
-      if (stream) {
-        stream.getAudioTracks().forEach((t) => { t.enabled = next; });
-      }
-      return next;
-    });
+    setAudioTrackEnabled(!audioEnabled);
   }
 
   async function handleJoinNow() {
@@ -201,10 +237,8 @@ export function LobbyPage() {
     );
   }
 
-  if (!room) return null;
-
   return (
-    <div className="relative min-h-screen overflow-hidden px-4 py-8 sm:px-6">
+    <div ref={containerRef} className="relative min-h-screen overflow-hidden px-4 py-8 sm:px-6">
       <div className="pointer-events-none absolute -left-20 top-6 h-72 w-72 rounded-full bg-cyan-400/20 blur-3xl" />
       <div className="pointer-events-none absolute -right-20 bottom-0 h-80 w-80 rounded-full bg-blue-500/20 blur-3xl" />
 
@@ -243,7 +277,7 @@ export function LobbyPage() {
               />
               {!videoEnabled && (
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="flex h-16 w-16 items-center justify-center rounded-full bg-(--meet-accent) text-2xl font-semibold text-white">
+                  <span className="flex h-16 w-16 items-center justify-center rounded-full bg-[var(--meet-accent)] text-2xl font-semibold text-white">
                     {user?.name?.charAt(0).toUpperCase() ?? "U"}
                   </span>
                 </div>
@@ -283,7 +317,7 @@ export function LobbyPage() {
           </CardContent>
         </Card>
 
-        <Card className="card-glow rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md">
+        <Card className="card-glow rounded-3xl border-(--meet-border) bg-(--meet-surface) py-0 backdrop-blur-md">
           <CardHeader className="p-5 sm:p-6">
             <CardTitle className="text-xl">Lobby settings</CardTitle>
             <CardDescription>
@@ -292,11 +326,11 @@ export function LobbyPage() {
           </CardHeader>
           <CardContent className="space-y-4 px-5 pb-5 sm:px-6 sm:pb-6">
             <div className="space-y-2">
-              <Label className="text-xs text-[var(--meet-text-muted)]">
+              <Label className="text-xs text-(--meet-text-muted)">
                 Camera
               </Label>
               <Select value={selectedCamera} onValueChange={setSelectedCamera}>
-                <SelectTrigger className="h-11 w-full rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)]">
+                <SelectTrigger className="h-11 w-full rounded-xl border-(--meet-border) bg-(--meet-surface)">
                   <SelectValue placeholder="Select camera" />
                 </SelectTrigger>
                 <SelectContent>
@@ -310,11 +344,11 @@ export function LobbyPage() {
             </div>
 
             <div className="space-y-2">
-              <Label className="text-xs text-[var(--meet-text-muted)]">
+              <Label className="text-xs text-(--meet-text-muted)">
                 Microphone
               </Label>
               <Select value={selectedMic} onValueChange={setSelectedMic}>
-                <SelectTrigger className="h-11 w-full rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)]">
+                <SelectTrigger className="h-11 w-full rounded-xl border-(--meet-border) bg-(--meet-surface)">
                   <SelectValue placeholder="Select microphone" />
                 </SelectTrigger>
                 <SelectContent>
@@ -329,35 +363,69 @@ export function LobbyPage() {
 
             <Separator />
 
+            <div className="space-y-3">
+              <div className="flex items-center justify-between rounded-xl border border-(--meet-border) bg-(--meet-elevated) px-3 py-2">
+                <Label className="flex items-center gap-2 text-sm font-medium">
+                  {videoEnabled ? (
+                    <Video className="h-4 w-4 text-(--meet-accent)" />
+                  ) : (
+                    <VideoOff className="h-4 w-4 text-red-500" />
+                  )}
+                  Camera
+                </Label>
+                <Switch
+                  checked={videoEnabled}
+                  onCheckedChange={setVideoTrackEnabled}
+                  aria-label="Toggle camera"
+                />
+              </div>
+
+              <div className="flex items-center justify-between rounded-xl border border-(--meet-border) bg-(--meet-elevated) px-3 py-2">
+                <Label className="flex items-center gap-2 text-sm font-medium">
+                  {audioEnabled ? (
+                    <Mic className="h-4 w-4 text-(--meet-accent)" />
+                  ) : (
+                    <MicOff className="h-4 w-4 text-red-500" />
+                  )}
+                  Microphone
+                </Label>
+                <Switch
+                  checked={audioEnabled}
+                  onCheckedChange={setAudioTrackEnabled}
+                  aria-label="Toggle microphone"
+                />
+              </div>
+            </div>
+
             <div className="space-y-2">
-              <Label className="flex items-center gap-2 text-xs text-[var(--meet-text-muted)]">
+              <Label className="flex items-center gap-2 text-xs text-(--meet-text-muted)">
                 <Mic className="h-3.5 w-3.5" />
                 Audio level
               </Label>
               <div
                 ref={barsRef}
-                className="flex h-7 items-end gap-px rounded-xl border border-[var(--meet-border)] bg-[var(--meet-elevated)] p-2"
+                className="flex h-12 items-end gap-0.5 rounded-xl border border-(--meet-border) bg-(--meet-elevated) p-2"
               >
                 {Array.from({ length: BARS }).map((_, i) => (
                   <div
                     key={i}
-                    className="w-[2px] min-w-[2px] rounded-full bg-[var(--meet-accent)]/75 transition-[height] duration-75 ease-out"
-                    style={{ height: 2 }}
+                    className="w-1 min-w-1 rounded-full bg-(--meet-accent)/75"
+                    style={{ height: 4 }}
                   />
                 ))}
               </div>
             </div>
 
             {isWaiting ? (
-              <div className="flex flex-col items-center gap-3 rounded-xl bg-[var(--meet-elevated)] px-4 py-5 text-center">
-                <div className="h-2.5 w-2.5 animate-pulse rounded-full bg-[var(--meet-accent)]" />
-                <p className="text-sm text-[var(--meet-text-muted)]">
+              <div className="flex flex-col items-center gap-3 rounded-xl bg-(--meet-elevated) px-4 py-5 text-center">
+                <div className="h-2.5 w-2.5 animate-pulse rounded-full bg-(--meet-accent)" />
+                <p className="text-sm text-(--meet-text-muted)">
                   Waiting for host approval...
                 </p>
               </div>
             ) : (
               <Button
-                className="h-11 w-full rounded-xl bg-[var(--meet-accent)] text-white hover:bg-blue-600"
+                className="h-11 w-full rounded-xl bg-(--meet-accent) text-white hover:bg-blue-600"
                 onClick={handleJoinNow}
                 disabled={joining}
               >
