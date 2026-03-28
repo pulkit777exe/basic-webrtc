@@ -21,6 +21,7 @@ import {
   waitingRoomParticipantsAtom,
 } from "@/store/atoms";
 import { toast } from "sonner";
+import { RTCManager } from "./rtc-manager";
 
 function getWsUrl(): string {
   const env =
@@ -281,6 +282,15 @@ export const WSManager = {
           
           // Resolve participant role (handles both sync and async cases)
           resolveParticipantRole(data.user.id);
+          
+          // Initiate WebRTC connection to the new peer
+          const currentUserId = store.get(userAtom)?.id;
+          if (data.user.id !== currentUserId) {
+            const localMedia = store.get(localMediaAtom);
+            RTCManager.createPeer(data.user.id, localMedia?.stream ?? null).then(() => {
+              RTCManager.offer(data.user.id);
+            });
+          }
         } else if (data.type === "leave" && data.userId) {
           // Edge case 1: Clean up pending subscription before removing participant
           const pendingSub = _pendingRoomSubs.get(data.userId);

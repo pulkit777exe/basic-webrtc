@@ -47,6 +47,10 @@ export const RTCManager = {
   },
 
   async createPeer(userId: string, stream: MediaStream | null) {
+    // Prevent duplicate peer connections - return early if already exists
+    if (peerConnections.has(userId)) {
+      return peerConnections.get(userId)!;
+    }
     const connection = new RTCPeerConnection({ iceServers });
     attachLocalTracks(connection, stream ?? localStream);
 

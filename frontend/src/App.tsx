@@ -120,7 +120,11 @@ const router = createBrowserRouter([
       },
       {
         path: '/join/:token',
-        element: suspense(<JoinByInvitePage />),
+        element: suspense(
+          <AuthGuard>
+            <JoinByInvitePage />
+          </AuthGuard>
+        ),
       },
       { path: '*', element: suspense(<LandingPage />) },
     ],
