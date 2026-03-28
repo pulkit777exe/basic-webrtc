@@ -231,6 +231,17 @@ export class WebSocketHandler {
           this.addToMap(roomId, userId, ext);
           this.subscribeRoom(roomId);
 
+          // Send roster to the new connection: Redis join broadcast only reaches peers already
+          // connected, so without this they would never learn about existing participants.
+          const roomPeers = this.rooms.get(roomId);
+          roomPeers?.forEach((peerWs, uid) => {
+            if (uid === userId) return;
+            const peerExt = peerWs as ExtendedWebSocket;
+            if (peerExt.user) {
+              this.send(ext, { type: "join", roomId, user: peerExt.user });
+            }
+          });
+
           const reactionsEnabled = await getRoomReactionsEnabled(roomId);
           this.send(ext, {
             type: "admin_reactions_toggle",
@@ -549,7 +560,11 @@ export class WebSocketHandler {
           return;
         }
         await setForceMuted(roomId, true);
-        await publishSignal(roomId, { type: "force_mute_all" });
+        this.publish(roomId, {
+          type: "admin_mute_all",
+          from: userId,
+          roomId,
+        });
         this.send(ws, { type: "ack", action: "mute_all" });
         return;
       }
@@ -566,21 +581,19 @@ export class WebSocketHandler {
         return;
       }
 
-      if (signal.type === "admin_lock") {
+      if (signal.type === "admin_lock" || signal.type === "room_locked") {
         const allowed = await requireRole(roomId, userId, "host");
         if (!allowed) {
           ws.close(4003);
           return;
         }
-        await setRoomLocked(roomId, signal.locked);
+        const locked = signal.locked;
+        await setRoomLocked(roomId, locked);
         await db
           .update(rooms)
-          .set({ isLocked: signal.locked })
+          .set({ isLocked: locked })
           .where(eq(rooms.id, roomId));
-        await publishSignal(roomId, {
-          type: "room_lock_changed",
-          locked: signal.locked,
-        });
+        this.publish(roomId, { type: "room_locked", locked, roomId });
         this.send(ws, { type: "ack", action: "lock" });
         return;
       }
@@ -596,9 +609,10 @@ export class WebSocketHandler {
           .update(roomSettings)
           .set({ reactionsEnabled: signal.enabled })
           .where(eq(roomSettings.roomId, roomId));
-        await publishSignal(roomId, {
-          type: "reactions_toggled",
+        this.publish(roomId, {
+          type: "admin_reactions_toggle",
           enabled: signal.enabled,
+          roomId,
         });
         this.send(ws, { type: "ack", action: "reactions_toggle" });
         return;

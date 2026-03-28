@@ -51,11 +51,27 @@ export const VideoTile = memo(function VideoTile({
     [name]
   );
 
-  useEffect(() => {
-    if (videoRef.current && stream && videoRef.current.srcObject !== stream) {
-      videoRef.current.srcObject = stream;
-    }
+  const hasLiveRemoteVideo =
+    Boolean(stream?.getVideoTracks().some((t) => t.readyState === 'live'));
+
+  const showVideo =
+    Boolean(stream) &&
+    ((!videoMuted || isScreenShare) || hasLiveRemoteVideo);
+
+  const streamBindKey = useMemo(() => {
+    if (!stream) return '';
+    return stream
+      .getTracks()
+      .map((t) => `${t.id}:${t.kind}:${t.readyState}:${t.enabled}`)
+      .join('|');
   }, [stream]);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || !stream) return;
+    el.srcObject = stream;
+    void el.play().catch(() => {});
+  }, [stream, streamBindKey]);
 
   useEffect(() => {
     registerVideoElement?.(participantId, videoRef.current);
@@ -77,13 +93,17 @@ export const VideoTile = memo(function VideoTile({
         className
       )}
     >
-      {!videoMuted && stream ? (
+      {showVideo ? (
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted={isLocal}
-          className={cn('h-full w-full object-cover', isLocal && !isScreenShare ? '[transform:scaleX(-1)]' : '')}
+          className={cn(
+            'h-full w-full',
+            isScreenShare ? 'object-contain bg-black' : 'object-cover',
+            isLocal && !isScreenShare ? '-scale-x-100' : ''
+          )}
         />
       ) : (
         <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_25%_25%,rgba(59,130,246,0.25),transparent_45%),radial-gradient(circle_at_80%_20%,rgba(34,211,238,0.2),transparent_40%),rgba(2,6,23,0.72)]">
@@ -133,7 +153,7 @@ export const VideoTile = memo(function VideoTile({
           </Button>
         )}
 
-        {videoMuted && (
+        {videoMuted && !isScreenShare && (
           <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/20 bg-black/45 text-white">
             <VideoOff className="h-3.5 w-3.5" />
           </span>

@@ -29,6 +29,7 @@ import {
   uiAtom,
   waitingRoomParticipantsAtom,
 } from "@/store/atoms";
+import { store } from "@/store";
 import { WSManager } from "@/lib/ws-manager";
 import { RTCManager } from "@/lib/rtc-manager";
 import { MediaManager } from "@/lib/media-manager";
@@ -106,6 +107,7 @@ export function RoomPage() {
   const [ui, setUi] = useAtom(uiAtom);
   const [roomLocked, setRoomLocked] = useAtom(roomLockedAtom);
   const waitingParticipants = useAtomValue(waitingRoomParticipantsAtom);
+  const participants = useAtomValue(participantsAtom);
   const setParticipants = useSetAtom(participantsAtom);
   const setChat = useSetAtom(chatAtom);
   const setChatReactions = useSetAtom(chatReactionsAtom);
@@ -128,7 +130,6 @@ export function RoomPage() {
   const slateRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const controlBarRef = useRef<HTMLDivElement>(null);
-  const hasInit = useRef(false);
   const speechRecognitionRef = useRef<{
     continuous: boolean;
     interimResults: boolean;
@@ -144,12 +145,10 @@ export function RoomPage() {
   const { setTheme, resolvedTheme } = useTheme();
 
   useEffect(() => {
-    if (!roomId || !roomToken || !user) {
+    if (!roomId || !roomToken || !user?.id) {
       navigate("/dashboard", { replace: true });
       return;
     }
-    if (hasInit.current) return;
-    hasInit.current = true;
 
     const lobbyVideo = sessionStorage.getItem('lobby_video') !== '0';
     const lobbyAudio = sessionStorage.getItem('lobby_audio') !== '0';
@@ -165,22 +164,35 @@ export function RoomPage() {
         MediaManager.stop();
         return;
       }
-      await MediaManager.getStream(lobbyVideo, lobbyAudio);
+      const stream = await MediaManager.getStream(lobbyVideo, lobbyAudio);
+
+      if (cleanedUpRef.current) {
+        MediaManager.stop();
+        return;
+      }
+      if (stream) {
+        RTCManager.setLocalStream(stream);
+      }
+
       if (cleanedUpRef.current) {
         MediaManager.stop();
         return;
       }
       WSManager.connect(roomToken);
 
+      const u = store.get(userAtom);
+      const r = store.get(roomAtom);
+      if (!u?.id || cleanedUpRef.current) return;
+
       setParticipants([
         {
-          userId: user.id,
+          userId: u.id,
           user: {
-            id: user.id,
-            name: user.name,
-            avatarUrl: user.avatarUrl ?? undefined,
+            id: u.id,
+            name: u.name,
+            avatarUrl: u.avatarUrl ?? undefined,
           },
-          role: room?.hostId === user.id ? "host" : "participant",
+          role: r?.hostId === u.id ? "host" : "participant",
           video: lobbyVideo,
           audio: lobbyAudio,
           screen: false,
@@ -202,12 +214,24 @@ export function RoomPage() {
         candidate?: RTCIceCandidateInit;
       };
       if (s.type === "offer" && s.from && s.sdp) {
-        RTCManager.createPeer(s.from, null).then(() => {
-          RTCManager.setRemoteDescription(s.from!, s.sdp!);
-          RTCManager.answer(s.from!);
-        });
+        const stream = store.get(localMediaAtom).stream;
+        void (async () => {
+          try {
+            await RTCManager.createPeer(s.from!, stream);
+            await RTCManager.setRemoteDescription(s.from!, s.sdp!);
+            await RTCManager.answer(s.from!);
+          } catch (err) {
+            console.error("[RTC] offer handling failed", err);
+          }
+        })();
       } else if (s.type === "answer" && s.from && s.sdp) {
-        RTCManager.setRemoteDescription(s.from, s.sdp);
+        void (async () => {
+          try {
+            await RTCManager.setRemoteDescription(s.from!, s.sdp!);
+          } catch (err) {
+            console.error("[RTC] answer handling failed", err);
+          }
+        })();
       } else if (s.type === "ice" && s.from && s.candidate) {
         RTCManager.addIceCandidate(s.from, s.candidate);
       }
@@ -216,6 +240,7 @@ export function RoomPage() {
     return () => {
       cleanedUpRef.current = true;
       WSManager.disconnect();
+      RTCManager.disconnectAll();
       MediaManager.stop();
       setPinnedParticipants(new Set());
       setRecordingUploads(new Map());
@@ -232,7 +257,7 @@ export function RoomPage() {
     room?.hostId,
     roomId,
     roomToken,
-    user,
+    user?.id,
     navigate,
     setCaptions,
     setChat,
@@ -403,8 +428,7 @@ export function RoomPage() {
   }, [recording.active, recording.startedAt]);
 
   useEffect(() => {
-    if (!recording.active || localRecordingRef.current || !localMedia.stream)
-      return;
+    if (!recording.active || !localMedia.stream) return;
     let cancelled = false;
     (async () => {
       if (!recordingManagerRef.current) {
@@ -412,15 +436,18 @@ export function RoomPage() {
         if (cancelled) return;
         recordingManagerRef.current = new module.RecordingManager();
       }
-      recordingManagerRef.current?.startRecording(localMedia.stream!);
-      localRecordingRef.current = true;
-    })().catch((error: unknown) => {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Unable to start local recording",
-      );
-    });
+      if (cancelled) return;
+      try {
+        recordingManagerRef.current!.startRecording(localMedia.stream!);
+        localRecordingRef.current = true;
+      } catch (error: unknown) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Unable to start local recording",
+        );
+      }
+    })();
 
     return () => {
       cancelled = true;
@@ -487,7 +514,7 @@ export function RoomPage() {
   );
 
   const peerList = Array.from(peers.values());
-  const participantCount = peerList.length + 1;
+  const participantCount = Math.max(participants.length, peerList.length + 1);
 
   function togglePin(participantId: string) {
     setPinnedParticipants((current) => {

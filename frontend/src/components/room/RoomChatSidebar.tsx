@@ -100,7 +100,7 @@ export function RoomChatSidebar({ onClose }: { onClose: () => void }) {
   return (
     <div
       ref={panelRef}
-      className="fixed inset-x-0 bottom-0 z-30 flex h-[70vh] flex-col border-t border-(--room-border) bg-(--room-surface) backdrop-blur-xl sm:inset-y-0 sm:left-auto sm:h-full sm:w-[360px] sm:border-l sm:border-t-0"
+      className="fixed inset-x-0 bottom-0 z-30 flex h-[70vh] flex-col border-t border-(--room-border) bg-(--room-surface) backdrop-blur-xl sm:inset-y-0 sm:left-auto sm:h-full sm:w-90 sm:border-l sm:border-t-0"
     >
       <div className="flex items-center justify-between p-4 sm:p-5">
         <div className="flex items-center gap-2">

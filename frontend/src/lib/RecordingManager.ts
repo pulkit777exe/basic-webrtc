@@ -46,17 +46,48 @@ export class RecordingManager {
   private chunks: Blob[] = [];
   private recordingPromise: Promise<void> | null = null;
 
+  /**
+   * Stop the recorder without uploading (e.g. swap to a new MediaStream while the room is still recording).
+   */
+  discardAndStop(): void {
+    if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') {
+      this.mediaRecorder = null;
+      this.chunks = [];
+      return;
+    }
+    this.mediaRecorder.ondataavailable = null;
+    this.mediaRecorder.onstop = null;
+    try {
+      this.mediaRecorder.stop();
+    } catch {
+      // ignore
+    }
+    this.mediaRecorder = null;
+    this.chunks = [];
+  }
+
   startRecording(stream: MediaStream) {
-    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') return;
+    this.discardAndStop();
     this.chunks = [];
 
-    const mimeCandidates = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+    const hasVideo = stream.getVideoTracks().length > 0;
+    const hasAudio = stream.getAudioTracks().length > 0;
+    const mimeCandidates = hasVideo
+      ? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+      : ['audio/webm;codecs=opus', 'audio/webm'];
     const mimeType = mimeCandidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? '';
-    this.mediaRecorder = new MediaRecorder(stream, {
+
+    const options: MediaRecorderOptions = {
       ...(mimeType ? { mimeType } : {}),
-      videoBitsPerSecond: 8_000_000,
-      audioBitsPerSecond: 320_000,
-    });
+    };
+    if (hasVideo) {
+      options.videoBitsPerSecond = 8_000_000;
+    }
+    if (hasAudio) {
+      options.audioBitsPerSecond = 128_000;
+    }
+
+    this.mediaRecorder = new MediaRecorder(stream, options);
 
     this.mediaRecorder.ondataavailable = (event) => {
       if (event.data.size > 0) this.chunks.push(event.data);
@@ -80,7 +111,8 @@ export class RecordingManager {
     this.recordingPromise = new Promise<void>((resolve, reject) => {
       recorder.onstop = async () => {
         try {
-          const blob = new Blob(this.chunks, { type: 'video/webm' });
+          const mime = recorder.mimeType || 'video/webm';
+          const blob = new Blob(this.chunks, { type: mime });
           await this.uploadInChunks(blob, roomId, participantId, roomToken, onProgress);
           resolve();
         } catch (error) {

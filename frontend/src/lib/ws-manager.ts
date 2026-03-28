@@ -108,6 +108,7 @@ type Signal =
 
 let ws: WebSocket | null = null;
 let reconnectAttempts = 0;
+let intentionalDisconnect = false;
 const MAX_RECONNECT = 10;
 const DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
 
@@ -213,6 +214,7 @@ let pingInterval: ReturnType<typeof setInterval> | null = null;
 
 export const WSManager = {
   connect(roomToken: string) {
+    intentionalDisconnect = false;
     const url = `${getWsUrl()}?token=${encodeURIComponent(roomToken)}`;
     ws = new WebSocket(url);
 
@@ -283,14 +285,26 @@ export const WSManager = {
           // Resolve participant role (handles both sync and async cases)
           resolveParticipantRole(data.user.id);
           
-          // Initiate WebRTC connection to the new peer
+          // Only the peer with lexicographically greater userId creates the offer
+          // This prevents double-offer collision where both peers try to initiate
           const currentUserId = store.get(userAtom)?.id;
-          if (data.user.id !== currentUserId) {
+          if (
+            data.user.id !== currentUserId &&
+            currentUserId != null &&
+            currentUserId > data.user.id
+          ) {
             const localMedia = store.get(localMediaAtom);
-            RTCManager.createPeer(data.user.id, localMedia?.stream ?? null).then(() => {
-              RTCManager.offer(data.user.id);
-            });
+            const stream = localMedia?.stream ?? null;
+            void (async () => {
+              try {
+                const { created } = await RTCManager.createPeer(data.user.id, stream);
+                if (created) await RTCManager.offer(data.user.id);
+              } catch (err) {
+                console.error("[RTC] initial offer failed", err);
+              }
+            })();
           }
+          // If currentUserId < data.user.id, wait - the other peer will send the offer to us
         } else if (data.type === "leave" && data.userId) {
           // Edge case 1: Clean up pending subscription before removing participant
           const pendingSub = _pendingRoomSubs.get(data.userId);
@@ -307,6 +321,8 @@ export const WSManager = {
           const peers = new Map(store.get(peersAtom));
           peers.delete(data.userId);
           store.set(peersAtom, peers);
+
+          RTCManager.removePeer(data.userId);
 
           store.set(speakingPeersAtom, (current) => {
             if (!current.has(data.userId!)) return current;
@@ -326,12 +342,20 @@ export const WSManager = {
             store.set(activeSpeakerAtom, null);
           }
         } else if (data.type === "chat") {
+          const participants = store.get(participantsAtom);
+          const peers = store.get(peersAtom);
+          const fromId = data.from ?? "";
+          const userName =
+            participants.find((p) => p.userId === fromId)?.user.name ??
+            peers.get(fromId)?.user.name ??
+            "Participant";
           const list = store.get(chatAtom);
           store.set(chatAtom, [
             ...list,
             {
               id: `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-              userId: data.from ?? "",
+              userId: fromId,
+              userName,
               content: data.content,
               type: "text",
               timestamp: data.timestamp ?? Date.now(),
@@ -498,17 +522,31 @@ export const WSManager = {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       ws = null;
       if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+      if (event.code !== 1000 || !event.wasClean) {
+        console.error("[WS] socket closed", {
+          code: event.code,
+          reason: event.reason || "(none)",
+          wasClean: event.wasClean,
+          url,
+        });
+      }
       if (reconnectAttempts < MAX_RECONNECT) {
         const delay = DELAYS[Math.min(reconnectAttempts, DELAYS.length - 1)];
         reconnectAttempts++;
         setTimeout(() => WSManager.connect(roomToken), delay);
+      } else if (!intentionalDisconnect) {
+        toast.error(
+          "Could not stay connected to the room. Check your network or WebSocket URL, then refresh.",
+        );
       }
     };
 
-    ws.onerror = () => {};
+    ws.onerror = () => {
+      console.error("[WS] connection error", { url });
+    };
   },
 
   send(signal: object) {
@@ -518,6 +556,7 @@ export const WSManager = {
   },
 
   disconnect() {
+    intentionalDisconnect = true;
     // Clean up all pending subscriptions
     _pendingRoomSubs.forEach((unsub) => unsub());
     _pendingRoomSubs.clear();
