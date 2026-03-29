@@ -1,5 +1,5 @@
-import { memo, useEffect, useMemo, useRef } from 'react';
-import { ExternalLink, MicOff, Monitor, Pin, PinOff, VideoOff } from 'lucide-react';
+import { useEffect, useMemo, useRef } from 'react';
+import { ExternalLink, MicOff, Monitor, PictureInPicture2, Pin, PinOff, VideoOff } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -16,13 +16,15 @@ export interface VideoTileProps {
   isScreenShare: boolean;
   canPin?: boolean;
   onTogglePin?: (participantId: string) => void;
+  /** Browser PiP for this tile’s video (intended for remote camera/screen). */
+  onEnterPiP?: () => void;
   onPopOutScreen?: (participantId: string) => void;
   registerVideoElement?: (participantId: string, element: HTMLVideoElement | null) => void;
   audioOutputDeviceId?: string | null;
   className?: string;
 }
 
-export const VideoTile = memo(function VideoTile({
+export function VideoTile({
   stream,
   participantId,
   name,
@@ -34,6 +36,7 @@ export const VideoTile = memo(function VideoTile({
   isScreenShare,
   canPin = false,
   onTogglePin,
+  onEnterPiP,
   onPopOutScreen,
   registerVideoElement,
   audioOutputDeviceId,
@@ -51,12 +54,16 @@ export const VideoTile = memo(function VideoTile({
     [name]
   );
 
-  const hasLiveRemoteVideo =
-    Boolean(stream?.getVideoTracks().some((t) => t.readyState === 'live'));
+  const hasLiveRemoteVideo = Boolean(
+    stream?.getVideoTracks().some((t) => t.readyState !== 'ended'),
+  );
 
+  // Camera off: do not keep showing the last decoded frame (peer still has a live but disabled track).
   const showVideo =
     Boolean(stream) &&
-    ((!videoMuted || isScreenShare) || hasLiveRemoteVideo);
+    (isScreenShare
+      ? (!videoMuted || hasLiveRemoteVideo)
+      : !videoMuted && hasLiveRemoteVideo);
 
   const streamBindKey = useMemo(() => {
     if (!stream) return '';
@@ -64,14 +71,32 @@ export const VideoTile = memo(function VideoTile({
       .getTracks()
       .map((t) => `${t.id}:${t.kind}:${t.readyState}:${t.enabled}`)
       .join('|');
-  }, [stream]);
+  }, [
+    stream,
+    stream?.id,
+    stream?.getAudioTracks().length,
+    stream?.getVideoTracks().length,
+  ]);
 
   useEffect(() => {
     const el = videoRef.current;
-    if (!el || !stream) return;
-    el.srcObject = stream;
-    void el.play().catch(() => {});
-  }, [stream, streamBindKey]);
+    if (!el) return;
+    if (!stream || !showVideo) {
+      el.srcObject = null;
+      return;
+    }
+    const bind = () => {
+      el.srcObject = stream;
+      void el.play().catch(() => {});
+    };
+    bind();
+    stream.addEventListener('addtrack', bind);
+    stream.addEventListener('removetrack', bind);
+    return () => {
+      stream.removeEventListener('addtrack', bind);
+      stream.removeEventListener('removetrack', bind);
+    };
+  }, [stream, streamBindKey, showVideo]);
 
   useEffect(() => {
     registerVideoElement?.(participantId, videoRef.current);
@@ -137,6 +162,18 @@ export const VideoTile = memo(function VideoTile({
       </div>
 
       <div className="absolute right-2.5 top-2.5 flex items-center gap-1.5">
+        {onEnterPiP && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="h-7 w-7 rounded-full border border-white/20 bg-black/45 text-white opacity-0 transition-opacity hover:bg-black/65 group-hover:opacity-100"
+            onClick={onEnterPiP}
+            title="Picture-in-picture"
+          >
+            <PictureInPicture2 className="h-3.5 w-3.5" />
+          </Button>
+        )}
         {canPin && onTogglePin && (
           <Button
             type="button"
@@ -173,4 +210,4 @@ export const VideoTile = memo(function VideoTile({
       </div>
     </div>
   );
-});
+}

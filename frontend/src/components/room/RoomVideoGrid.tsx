@@ -135,34 +135,21 @@ export function RoomVideoGrid({
     videoElementsRef.current.delete(participantId);
   }, []);
 
-  const pipTargetId = featuredParticipant?.id ?? visibleParticipants[0]?.id ?? null;
-
-  const startPiP = useCallback(async () => {
-    if (!document.pictureInPictureEnabled || !pipTargetId) return;
-    const target = videoElementsRef.current.get(pipTargetId);
+  const enterPiPForParticipant = useCallback(async (participantId: string) => {
+    if (!document.pictureInPictureEnabled) return;
+    const target = videoElementsRef.current.get(participantId);
     if (!target) return;
-    if (document.pictureInPictureElement === target) return;
     try {
-      if (document.pictureInPictureElement) {
+      if (document.pictureInPictureElement && document.pictureInPictureElement !== target) {
         await document.exitPictureInPicture();
       }
-      await target.requestPictureInPicture();
-    } catch {
-      // PiP requests can fail when the browser blocks autoplay/user gesture constraints.
-    }
-  }, [pipTargetId]);
-
-  useEffect(() => {
-    const shouldAutoPiP = localScreen || peers.some((peer) => peer.screen);
-    const onVisibility = () => {
-      if (document.visibilityState === 'hidden' || shouldAutoPiP) {
-        void startPiP();
+      if (document.pictureInPictureElement !== target) {
+        await target.requestPictureInPicture();
       }
-    };
-    onVisibility();
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [localScreen, peers, startPiP]);
+    } catch {
+      // PiP requests need a user gesture; browsers may still refuse.
+    }
+  }, []);
 
   useEffect(() => {
     const onResize = () => setFloatingPosition((current) => clampPosition(current.x, current.y));
@@ -242,6 +229,11 @@ export function RoomVideoGrid({
       isScreenShare={participant.screen}
       canPin={!participant.isLocal}
       onTogglePin={onTogglePin}
+      onEnterPiP={
+        !participant.isLocal && participant.stream && (participant.video || participant.screen)
+          ? () => void enterPiPForParticipant(participant.id)
+          : undefined
+      }
       onPopOutScreen={
         participant.screen && participant.stream
           ? () => {
