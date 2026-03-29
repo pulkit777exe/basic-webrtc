@@ -49,6 +49,7 @@ import { logger } from "../lib/logger";
 import { publishSignal, readSignals } from "../lib/redis-streams";
 import { generateRoomToken } from "../utils/jwt";
 import { nanoid } from "nanoid";
+import { WS_MAX_MESSAGE_BYTES } from "../config/scaling";
 
 const HEARTBEAT_INTERVAL_MS = 30000;
 
@@ -410,6 +411,10 @@ export class WebSocketHandler {
     data: Buffer,
   ): Promise<void> {
     try {
+      if (data.length > WS_MAX_MESSAGE_BYTES) {
+        this.sendError(ws, "Message too large");
+        return;
+      }
       const raw = JSON.parse(data.toString());
       if (!isSignal(raw)) {
         this.sendError(ws, "Invalid message");
@@ -952,6 +957,10 @@ export class WebSocketHandler {
     data: Buffer,
   ): Promise<void> {
     try {
+      if (data.length > WS_MAX_MESSAGE_BYTES) {
+        this.sendError(ws, "Message too large");
+        return;
+      }
       const raw = JSON.parse(data.toString()) as { type: string };
       const userId = ws.userId!;
       const roomId = ws.roomId!;
