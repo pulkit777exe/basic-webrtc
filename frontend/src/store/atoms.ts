@@ -144,10 +144,13 @@ export const recordingAtom = atom<{
   active: boolean;
   startedAt: number | null;
   uploading: boolean;
+  /** Set when the server starts a recording session (required for uploads) */
+  sessionId: string | null;
 }>({
   active: false,
   startedAt: null,
   uploading: false,
+  sessionId: null,
 });
 export const recordingUploadsAtom = atom<Map<string, number>>(
   new Map<string, number>(),

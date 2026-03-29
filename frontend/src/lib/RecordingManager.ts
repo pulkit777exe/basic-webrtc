@@ -100,6 +100,7 @@ export class RecordingManager {
     roomId: string,
     participantId: string,
     roomToken: string,
+    sessionId: string,
     onProgress?: (progressPercent: number) => void
   ): Promise<void> {
     if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') return;
@@ -113,7 +114,7 @@ export class RecordingManager {
         try {
           const mime = recorder.mimeType || 'video/webm';
           const blob = new Blob(this.chunks, { type: mime });
-          await this.uploadInChunks(blob, roomId, participantId, roomToken, onProgress);
+          await this.uploadInChunks(blob, roomId, participantId, roomToken, sessionId, onProgress);
           resolve();
         } catch (error) {
           reject(error);
@@ -132,6 +133,7 @@ export class RecordingManager {
     roomId: string,
     participantId: string,
     roomToken: string,
+    sessionId: string,
     onProgress?: (progressPercent: number) => void
   ) {
     const totalChunks = Math.ceil(blob.size / CHUNK_SIZE);
@@ -144,7 +146,7 @@ export class RecordingManager {
       const chunk = blob.slice(index * CHUNK_SIZE, (index + 1) * CHUNK_SIZE);
       const backupKey = `${roomId}:${participantId}:${index}`;
       await saveChunkBackup(backupKey, chunk);
-      await this.uploadChunkWithRetry(chunk, roomId, participantId, roomToken, index, totalChunks);
+      await this.uploadChunkWithRetry(chunk, roomId, participantId, roomToken, sessionId, index, totalChunks);
       await removeChunkBackup(backupKey);
       onProgress?.(((index + 1) / totalChunks) * 100);
     }
@@ -155,21 +157,27 @@ export class RecordingManager {
     roomId: string,
     participantId: string,
     roomToken: string,
+    sessionId: string,
     chunkIndex: number,
     totalChunks: number
   ) {
     let attempt = 0;
     while (attempt < MAX_UPLOAD_RETRIES) {
       try {
-        const url = `${API_BASE}/api/recordings/chunk?roomId=${encodeURIComponent(roomId)}&participantId=${encodeURIComponent(participantId)}&chunkIndex=${chunkIndex}&totalChunks=${totalChunks}`;
-        const response = await fetch(url, {
+        const form = new FormData();
+        form.append('roomId', roomId);
+        form.append('sessionId', sessionId);
+        form.append('participantId', participantId);
+        form.append('chunkIndex', String(chunkIndex));
+        form.append('totalChunks', String(totalChunks));
+        form.append('chunk', chunk, `chunk_${chunkIndex}.webm`);
+        const response = await fetch(`${API_BASE}/api/recordings/chunk`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${roomToken}`,
-            'Content-Type': 'application/octet-stream',
           },
           credentials: 'include',
-          body: chunk,
+          body: form,
         });
         if (!response.ok) {
           throw new Error(`Chunk upload failed with status ${response.status}`);

@@ -23,7 +23,7 @@ import {
 import { toast } from "sonner";
 import { RTCManager } from "./rtc-manager";
 
-function getWsUrl(): string {
+export function getWsUrl(): string {
   const env =
     import.meta.env.VITE_WS_URL ||
     import.meta.env.VITE_API_URL ||
@@ -48,7 +48,7 @@ type Signal =
       user: { id: string; name: string; avatarUrl?: string | null };
     }
   | { type: "leave"; userId: string }
-  | { type: "chat"; content: string; timestamp: number; from?: string }
+  | { type: "chat"; content: string; timestamp: number; from?: string; id?: string }
   | { type: "chat_pin"; messageId: string; text: string; authorName: string }
   | { type: "chat_reaction"; messageId: string; emoji: string; from?: string }
   | {
@@ -66,8 +66,8 @@ type Signal =
   | { type: "admin_promote"; targetId: string }
   | { type: "admin_reactions_toggle"; enabled: boolean }
   | { type: "room_locked"; locked: boolean }
-  | { type: "recording_start"; startedAt: number }
-  | { type: "recording_stop" }
+  | { type: "recording_start"; startedAt: number; sessionId?: string }
+  | { type: "recording_stop"; sessionId?: string }
   | {
       type: "recording_upload_progress";
       participantId: string;
@@ -104,11 +104,13 @@ type Signal =
   | { type: "ping" }
   | { type: "pong" }
   | { type: "error"; message: string }
-  | { type: "kicked" };
+  | { type: "kicked" }
+  | { type: "rate_limited" };
 
 let ws: WebSocket | null = null;
 let reconnectAttempts = 0;
 let intentionalDisconnect = false;
+let recordingNoticeShown = false;
 const MAX_RECONNECT = 10;
 const DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
 
@@ -239,6 +241,11 @@ export const WSManager = {
 
         if (data.type === "pong") return;
 
+        if (data.type === "rate_limited") {
+          toast.warning("Sending too fast. Wait a moment and try again.");
+          return;
+        }
+
         if (data.type === "join" && data.user) {
           const participants = store.get(participantsAtom);
           const room = store.get(roomAtom);
@@ -353,7 +360,9 @@ export const WSManager = {
           store.set(chatAtom, [
             ...list,
             {
-              id: `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+              id:
+                data.id ??
+                `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
               userId: fromId,
               userName,
               content: data.content,
@@ -368,17 +377,20 @@ export const WSManager = {
             authorName: data.authorName,
           });
         } else if (data.type === "chat_reaction") {
-          store.set(chatReactionsAtom, (current) => {
-            const perMessage = current[data.messageId] ?? {};
-            const nextCount = (perMessage[data.emoji] ?? 0) + 1;
-            return {
-              ...current,
-              [data.messageId]: {
-                ...perMessage,
-                [data.emoji]: nextCount,
-              },
-            };
-          });
+          const reactor = data.from;
+          if (!reactor || reactor !== store.get(userAtom)?.id) {
+            store.set(chatReactionsAtom, (current) => {
+              const perMessage = current[data.messageId] ?? {};
+              const nextCount = (perMessage[data.emoji] ?? 0) + 1;
+              return {
+                ...current,
+                [data.messageId]: {
+                  ...perMessage,
+                  [data.emoji]: nextCount,
+                },
+              };
+            });
+          }
         } else if (data.type === "media-state" && data.from) {
           const peers = new Map(store.get(peersAtom));
           const peer = peers.get(data.from);
@@ -448,14 +460,27 @@ export const WSManager = {
             active: true,
             startedAt: data.startedAt ?? Date.now(),
             uploading: false,
+            sessionId: data.sessionId ?? null,
           });
           store.set(recordingUploadsAtom, new Map());
+          if (!recordingNoticeShown) {
+            const me = store.get(userAtom)?.id;
+            const participants = store.get(participantsAtom);
+            const role = participants.find((p) => p.userId === me)?.role;
+            if (role && role !== "host") {
+              toast.info("This meeting is being recorded by the host.", {
+                duration: 6000,
+              });
+            }
+            recordingNoticeShown = true;
+          }
         } else if (data.type === "recording_stop") {
-          store.set(recordingAtom, {
+          store.set(recordingAtom, (prev) => ({
             active: false,
             startedAt: null,
             uploading: true,
-          });
+            sessionId: data.sessionId ?? prev.sessionId,
+          }));
         } else if (data.type === "recording_upload_progress") {
           store.set(recordingUploadsAtom, (current) => {
             const next = new Map(current);
@@ -557,6 +582,7 @@ export const WSManager = {
 
   disconnect() {
     intentionalDisconnect = true;
+    recordingNoticeShown = false;
     // Clean up all pending subscriptions
     _pendingRoomSubs.forEach((unsub) => unsub());
     _pendingRoomSubs.clear();
