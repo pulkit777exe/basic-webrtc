@@ -249,6 +249,17 @@ export const api = {
     });
   },
 
+  /** Room JWT in Authorization — used by Whisper caption chunks */
+  async transcribeRoomAudio(roomId: string, blob: Blob, roomToken: string) {
+    const form = new FormData();
+    form.append("file", blob, "chunk.webm");
+    return request<{ text: string }>(`/api/rooms/${roomId}/transcribe`, {
+      method: "POST",
+      body: form,
+      token: roomToken,
+    });
+  },
+
   async getRoomMessages(roomId: string, token?: string) {
     const url = token
       ? `/api/rooms/${roomId}/messages?token=${encodeURIComponent(token)}`

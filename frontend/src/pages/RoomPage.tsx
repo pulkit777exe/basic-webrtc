@@ -31,6 +31,10 @@ import {
 } from "@/store/atoms";
 import { store } from "@/store";
 import { WSManager } from "@/lib/ws-manager";
+import {
+  startBrowserSpeechCaptions,
+  startWhisperChunkCaptions,
+} from "@/lib/live-captions";
 import { RTCManager } from "@/lib/rtc-manager";
 import { MediaManager } from "@/lib/media-manager";
 import { RoomVideoGrid } from "@/components/room/RoomVideoGrid";
@@ -65,24 +69,6 @@ function formatElapsed(seconds: number): string {
     .padStart(2, "0");
   return `${mins}:${secs}`;
 }
-
-type SpeechRecognitionResultEventLike = {
-  resultIndex: number;
-  results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
-};
-
-type SpeechRecognitionLike = {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onresult: ((event: SpeechRecognitionResultEventLike) => void) | null;
-  onerror: ((event: { error: string }) => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-};
-
-type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
 
 export function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -120,6 +106,7 @@ export function RoomPage() {
       roomId: string,
       participantId: string,
       roomToken: string,
+      sessionId: string,
       onProgress?: (progressPercent: number) => void,
     ) => Promise<void>;
   } | null>(null);
@@ -130,16 +117,7 @@ export function RoomPage() {
   const slateRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const controlBarRef = useRef<HTMLDivElement>(null);
-  const speechRecognitionRef = useRef<{
-    continuous: boolean;
-    interimResults: boolean;
-    lang: string;
-    onresult: ((event: SpeechRecognitionResultEventLike) => void) | null;
-    onerror: ((event: { error: string }) => void) | null;
-    onend: (() => void) | null;
-    start: () => void;
-    stop: () => void;
-  } | null>(null);
+  const captionsEnabledRef = useRef(captionsEnabled);
   const cleanedUpRef = useRef(false);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const { setTheme, resolvedTheme } = useTheme();
@@ -244,7 +222,12 @@ export function RoomPage() {
       MediaManager.stop();
       setPinnedParticipants(new Set());
       setRecordingUploads(new Map());
-      setRecording({ active: false, startedAt: null, uploading: false });
+      setRecording({
+        active: false,
+        startedAt: null,
+        uploading: false,
+        sessionId: null,
+      });
       setParticipants([]);
       setChat([]);
       setChatReactions({});
@@ -350,66 +333,81 @@ export function RoomPage() {
   }, [localMedia.audio, mutedByHost]);
 
   useEffect(() => {
-    if (!captionsEnabled) {
-      speechRecognitionRef.current?.stop();
-      speechRecognitionRef.current = null;
+    captionsEnabledRef.current = captionsEnabled;
+  }, [captionsEnabled]);
+
+  useEffect(() => {
+    if (!captionsEnabled || !roomId || !roomToken) {
       return;
     }
 
+    const forceWhisper =
+      import.meta.env.VITE_CAPTIONS_FORCE_WHISPER === "true";
     const speechWindow = window as unknown as {
-      SpeechRecognition?: SpeechRecognitionCtor;
-      webkitSpeechRecognition?: SpeechRecognitionCtor;
+      SpeechRecognition?: unknown;
+      webkitSpeechRecognition?: unknown;
     };
-    const SpeechRecognitionCtor =
-      speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+    const hasSpeechApi = !!(
+      speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition
+    );
 
-    if (!SpeechRecognitionCtor) {
-      toast.error("Live captions are not supported in this browser");
+    const sendCaption = (text: string) => {
+      const t = text.trim();
+      if (!t) return;
+      WSManager.send({ type: "caption", text: t, timestamp: Date.now() });
+    };
+
+    let stop: (() => void) | undefined;
+
+    if (!forceWhisper && hasSpeechApi) {
+      stop =
+        startBrowserSpeechCaptions({
+          shouldRun: () => captionsEnabledRef.current,
+          onFinalText: sendCaption,
+          onMicDenied: () => {
+            toast.error(
+              "Allow the microphone for live captions, or disable captions.",
+            );
+            setCaptionsEnabled(false);
+          },
+        }) ?? undefined;
+    }
+
+    if (!stop && localMedia.stream?.getAudioTracks().length) {
+      stop =
+        startWhisperChunkCaptions({
+          stream: localMedia.stream,
+          roomId,
+          roomToken,
+          shouldRun: () => captionsEnabledRef.current,
+          onFinalText: sendCaption,
+        }) ?? undefined;
+    }
+
+    if (!stop) {
+      const hasAudio = Boolean(localMedia.stream?.getAudioTracks().length);
+      const willRetryWhenMicReady =
+        !hasAudio && (forceWhisper || !hasSpeechApi);
+      if (willRetryWhenMicReady) {
+        return;
+      }
+      toast.error(
+        "Live captions need Chrome/Safari speech recognition, or a mic plus OPENAI_API_KEY on the server.",
+      );
       setCaptionsEnabled(false);
       return;
     }
 
-    const recognition: SpeechRecognitionLike = new SpeechRecognitionCtor();
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.lang = "en-US";
-    recognition.onresult = (event: SpeechRecognitionResultEventLike) => {
-      let transcript = "";
-      for (
-        let index = event.resultIndex;
-        index < event.results.length;
-        index++
-      ) {
-        const result = event.results[index];
-        if (result.isFinal) {
-          transcript += `${result[0].transcript} `;
-        }
-      }
-      const text = transcript.trim();
-      if (!text) return;
-      WSManager.send({ type: "caption", text, timestamp: Date.now() });
-    };
-    recognition.onerror = () => {};
-    recognition.onend = () => {
-      if (captionsEnabled) {
-        try {
-          recognition.start();
-        } catch {
-          // Ignore restart race conditions from some browsers.
-        }
-      }
-    };
-    recognition.start();
-    speechRecognitionRef.current = recognition;
-
     return () => {
-      recognition.onend = null;
-      recognition.stop();
-      if (speechRecognitionRef.current === recognition) {
-        speechRecognitionRef.current = null;
-      }
+      stop?.();
     };
-  }, [captionsEnabled, setCaptionsEnabled]);
+  }, [
+    captionsEnabled,
+    roomId,
+    roomToken,
+    localMedia.stream,
+    setCaptionsEnabled,
+  ]);
 
   useEffect(() => {
     if (!recording.active || !recording.startedAt) {
@@ -461,12 +459,18 @@ export function RoomPage() {
       recordingUploadInFlightRef.current
     )
       return;
-    if (!roomId || !roomToken || !user?.id || !recordingManagerRef.current)
+    if (
+      !roomId ||
+      !roomToken ||
+      !user?.id ||
+      !recording.sessionId ||
+      !recordingManagerRef.current
+    )
       return;
     recordingUploadInFlightRef.current = true;
     setRecording((current) => ({ ...current, uploading: true }));
     recordingManagerRef.current
-      .stopAndUpload(roomId, user.id, roomToken, (progressPercent) => {
+      .stopAndUpload(roomId, user.id, roomToken, recording.sessionId, (progressPercent) => {
         WSManager.send({
           type: "recording_upload_progress",
           participantId: user.id,
@@ -488,9 +492,20 @@ export function RoomPage() {
       .finally(() => {
         localRecordingRef.current = false;
         recordingUploadInFlightRef.current = false;
-        setRecording((current) => ({ ...current, uploading: false }));
+        setRecording((current) => ({
+          ...current,
+          uploading: false,
+          sessionId: null,
+        }));
       });
-  }, [recording.active, roomId, roomToken, setRecording, user?.id]);
+  }, [
+    recording.active,
+    recording.sessionId,
+    roomId,
+    roomToken,
+    setRecording,
+    user?.id,
+  ]);
 
   useGSAP(
     () => {

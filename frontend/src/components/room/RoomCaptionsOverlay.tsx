@@ -5,7 +5,9 @@ export function RoomCaptionsOverlay() {
   const captionsEnabled = useAtomValue(captionsEnabledAtom);
   const captions = useAtomValue(captionsAtom);
 
-  if (!captionsEnabled) return null;
+  // Incoming WS captions should display even if the user only toggled captions off
+  // after others started captioning; toggle controls local speech recognition only.
+  if (!captionsEnabled && captions.length === 0) return null;
 
   return (
     <div className="pointer-events-none fixed bottom-24 left-1/2 z-30 w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 sm:bottom-28">

@@ -7,14 +7,7 @@ import {
   waitingRoomPositionAtom,
 } from "@/store/atoms";
 import { Button } from "@/components/ui/button";
-
-function getWsUrl(): string {
-  const env =
-    (import.meta.env.VITE_WS_URL as string | undefined) ||
-    (import.meta.env.VITE_API_URL as string | undefined) ||
-    "http://localhost:4000";
-  return env.replace(/^http/, "ws");
-}
+import { getWsUrl } from "@/lib/ws-manager";
 
 type WaitingSignal =
   | {
@@ -115,7 +108,7 @@ export function WaitingRoomLobby({
 
   // Waiting WebSocket
   useEffect(() => {
-    const url = `${getWsUrl().replace(/\/$/, "")}/ws?token=${encodeURIComponent(waitingToken)}`;
+    const url = `${getWsUrl()}?token=${encodeURIComponent(waitingToken)}`;
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
@@ -136,7 +129,9 @@ export function WaitingRoomLobby({
         if (data.type === "participant_admitted") {
           if (statusIntervalRef.current)
             clearInterval(statusIntervalRef.current);
-          handleAdmitted(data.roomToken);
+          if (typeof data.roomToken === "string" && data.roomToken.length > 0) {
+            handleAdmitted(data.roomToken);
+          }
         } else if (data.type === "participant_rejected") {
           if (statusIntervalRef.current)
             clearInterval(statusIntervalRef.current);
