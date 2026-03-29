@@ -410,14 +410,6 @@ export class WebSocketHandler {
     data: Buffer,
   ): Promise<void> {
     try {
-      // Per-room message rate limiting
-      const count = await redis.incr(`ratelimit:room:${ws.roomId}:messages`);
-      await redis.expire(`ratelimit:room:${ws.roomId}:messages`, 1);
-      if (count > 50) {
-        this.send(ws, { type: "rate_limited" });
-        return;
-      }
-
       const raw = JSON.parse(data.toString());
       if (!isSignal(raw)) {
         this.sendError(ws, "Invalid message");
@@ -426,6 +418,28 @@ export class WebSocketHandler {
       const signal = raw as Signal;
       const userId = ws.userId!;
       const roomId = ws.roomId!;
+
+      // Rate-limit only low-volume messages. ICE + audio-activity + media-state
+      // easily exceed 50/s/room and were starving chat/captions.
+      const exemptFromRoomBurstLimit = new Set<string>([
+        "offer",
+        "answer",
+        "ice",
+        "ping",
+        "pong",
+        "media-state",
+        "audio-activity",
+        "recording_upload_progress",
+        "active_speaker",
+      ]);
+      if (!exemptFromRoomBurstLimit.has(signal.type)) {
+        const count = await redis.incr(`ratelimit:room:${roomId}:messages`);
+        await redis.expire(`ratelimit:room:${roomId}:messages`, 1);
+        if (count > 80) {
+          this.send(ws, { type: "rate_limited" });
+          return;
+        }
+      }
 
       // Check if user is kicked on every message
       if (await isKicked(roomId, userId)) {
@@ -453,19 +467,23 @@ export class WebSocketHandler {
           String(signal.content ?? "").slice(0, 2000),
         );
         if (!content.trim()) return;
-        const payload = {
-          type: "chat",
-          content,
-          timestamp: signal.timestamp ?? Date.now(),
-          from: userId,
-          roomId,
-        };
-        setImmediate(() => {
-          db.insert(messages)
+        try {
+          const [row] = await db
+            .insert(messages)
             .values({ roomId, userId, content, type: "text" })
-            .catch((e) => console.error("[WS] Chat persist", e));
-        });
-        this.publish(roomId, payload);
+            .returning({ id: messages.id });
+          this.publish(roomId, {
+            type: "chat",
+            id: row.id,
+            content,
+            timestamp: signal.timestamp ?? Date.now(),
+            from: userId,
+            roomId,
+          });
+        } catch (e) {
+          console.error("[WS] Chat insert", e);
+          this.sendError(ws, "Failed to send message");
+        }
         return;
       }
 
@@ -665,10 +683,10 @@ export class WebSocketHandler {
               eq(roomParticipants.userId, signal.targetId),
             ),
           );
-        await publishSignal(roomId, {
-          type: "role_changed",
+        this.publish(roomId, {
+          type: "admin_promote",
           targetId: signal.targetId,
-          role: "co-host",
+          roomId,
         });
         this.send(ws, { type: "ack", action: "promote" });
         return;
@@ -721,16 +739,31 @@ export class WebSocketHandler {
         return;
       }
 
-      if (
-        signal.type === "recording_start" ||
-        signal.type === "recording_stop"
-      ) {
+      if (signal.type === "recording_start") {
         const role = await getPeerRole(roomId, userId);
         if (role !== "host") {
           this.sendError(ws, "Unauthorized");
           return;
         }
-        this.publish(roomId, { ...signal, from: userId, roomId });
+        const sessionId = await this.startRoomRecording(roomId, userId);
+        if (sessionId === null) {
+          this.sendError(ws, "Already recording");
+          return;
+        }
+        return;
+      }
+
+      if (signal.type === "recording_stop") {
+        const role = await getPeerRole(roomId, userId);
+        if (role !== "host") {
+          this.sendError(ws, "Unauthorized");
+          return;
+        }
+        const stopped = await this.stopRoomRecording(roomId);
+        if (!stopped) {
+          this.sendError(ws, "Not recording");
+          return;
+        }
         return;
       }
 
@@ -782,39 +815,11 @@ export class WebSocketHandler {
             this.sendError(ws, "Unauthorized");
             return;
           }
-          // Check current recording state; reject if status isn't 'idle' or 'done'
-          const currentState = await getRecordingState(roomId);
-          if (currentState && currentState.status === "recording") {
+          const sessionId = await this.startRoomRecording(roomId, userId);
+          if (sessionId === null) {
             this.sendError(ws, "Already recording");
             return;
           }
-          // Generate sessionId: nanoid(16)
-          const sessionId = nanoid(16);
-          // Set recording state in Redis:
-          const participantCount = await getRoomPeerCount(roomId);
-          await setRecordingState(roomId, {
-            status: "recording",
-            startedAt: new Date().toISOString(),
-            startedBy: userId,
-            participantCount,
-            uploadedTracks: [],
-            failedTracks: [],
-            sessionId,
-          });
-          // Insert row into recording_sessions PostgreSQL table
-          await db.insert(recordingSessions).values({
-            roomId,
-            sessionId,
-            startedBy: userId,
-            startedAt: new Date(),
-            participantCount,
-          });
-          // publishSignal(roomId, { type: 'recording_started', sessionId, startedAt })
-          await publishSignal(roomId, {
-            type: "recording_start",
-            sessionId,
-            startedAt: Date.now(),
-          });
           return;
         }
         if (action === "stop-recording") {
@@ -823,22 +828,11 @@ export class WebSocketHandler {
             this.sendError(ws, "Unauthorized");
             return;
           }
-          // Check state is 'recording'; reject otherwise
-          const currentState = await getRecordingState(roomId);
-          if (!currentState || currentState.status !== "recording") {
+          const stopped = await this.stopRoomRecording(roomId);
+          if (!stopped) {
             this.sendError(ws, "Not recording");
             return;
           }
-          // Update Redis state: { status: 'uploading' }
-          await setRecordingState(roomId, {
-            ...currentState,
-            status: "uploading",
-          });
-          // publishSignal(roomId, { type: 'recording_stopped', sessionId })
-          await publishSignal(roomId, {
-            type: "recording_stop",
-            sessionId: currentState.sessionId,
-          });
           return;
         }
         if (action === "mute-all") {
@@ -1012,6 +1006,72 @@ export class WebSocketHandler {
     if (!userId || !roomId) return;
     logger.info("WS waiting disconnect", { roomId, userId });
     this.removeFromWaitingMap(roomId, userId);
+  }
+
+  /** Returns session id, or null if already recording */
+  private async startRoomRecording(
+    roomId: string,
+    userId: string,
+  ): Promise<string | null> {
+    const currentState = await getRecordingState(roomId);
+    if (currentState && currentState.status === "recording") {
+      return null;
+    }
+    const sessionId = nanoid(16);
+    const participantCount = await getRoomPeerCount(roomId);
+    await setRecordingState(roomId, {
+      status: "recording",
+      startedAt: new Date().toISOString(),
+      startedBy: userId,
+      participantCount,
+      uploadedTracks: [],
+      failedTracks: [],
+      sessionId,
+    });
+    await db.insert(recordingSessions).values({
+      roomId,
+      sessionId,
+      startedBy: userId,
+      startedAt: new Date(),
+      participantCount,
+    });
+    await publishSignal(roomId, {
+      type: "recording_start",
+      sessionId,
+      startedAt: Date.now(),
+    });
+    this.publish(roomId, {
+      type: "recording_start",
+      sessionId,
+      startedAt: Date.now(),
+      roomId,
+    });
+    return sessionId;
+  }
+
+  private async stopRoomRecording(roomId: string): Promise<boolean> {
+    const currentState = await getRecordingState(roomId);
+    if (!currentState || currentState.status !== "recording") {
+      return false;
+    }
+    const sessionId = currentState.sessionId;
+    if (!sessionId) {
+      return false;
+    }
+    await setRecordingState(roomId, {
+      ...currentState,
+      status: "uploading",
+    });
+    await publishSignal(roomId, {
+      type: "recording_stop",
+      sessionId,
+    });
+    this.publish(roomId, {
+      type: "recording_stop",
+      sessionId,
+      roomId,
+    });
+    return true;
   }
 
   private send(ws: WebSocket, msg: object): void {

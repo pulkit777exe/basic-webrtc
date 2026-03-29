@@ -6,6 +6,7 @@ import { db } from '../db';
 import { recordingSessions, recordingTracks } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { authenticateToken } from '../middleware/auth';
+import { requireVerifiedEmail } from '../middleware/verified-email';
 import { verifyRoomToken } from '../utils/jwt';
 import { validateId, validateRoomId } from '../utils/validation';
 import { redis } from '../config/redis';
@@ -17,30 +18,25 @@ const RECORDINGS_DIR = process.env.RECORDINGS_DIR || 'recordings';
 
 const router = Router();
 
-// Configure multer for file uploads
+// Chunk uploads use query params + raw body (see RecordingManager); multipart fields are not always present when body is octet-stream.
+// Multipart field "chunk" + body fields (FormData from client)
 const upload = multer({
   limits: { fileSize: 500 * 1024 * 1024 }, // 500MB limit
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => {
-      const { roomId, sessionId, participantId } = req.body;
-      const dir = path.join(RECORDINGS_DIR, roomId, sessionId, participantId);
-      fs.mkdirSync(dir, { recursive: true });
-      cb(null, dir);
-    },
-    filename: (req, file, cb) => {
-      const { chunkIndex } = req.body;
-      cb(null, `chunk_${chunkIndex}`);
-    },
-  }),
+  storage: multer.memoryStorage(),
 });
 
-// POST /api/recordings/chunk
+// POST /api/recordings/chunk — authenticated only via room token (see handler); session JWT is not used
 router.post(
   '/chunk',
-  authenticateToken,
   upload.single('chunk'),
   async (req: Request, res: Response): Promise<void> => {
-    const { roomId, participantId, chunkIndex, totalChunks, sessionId } = req.body;
+    const q = req.query as Record<string, string | undefined>;
+    const body = req.body as Record<string, string | undefined>;
+    const roomId = (q.roomId ?? body.roomId)?.trim();
+    const participantId = (q.participantId ?? body.participantId)?.trim();
+    const sessionId = (q.sessionId ?? body.sessionId)?.trim();
+    const chunkIndex = q.chunkIndex ?? body.chunkIndex;
+    const totalChunks = q.totalChunks ?? body.totalChunks;
     let lockAcquired = false;
 
     try {
@@ -74,8 +70,14 @@ router.post(
         return;
       }
       const decoded = verifyRoomToken(token);
-      if (!decoded || decoded.roomId !== roomId) {
+      if (!decoded || decoded.roomId !== roomId || decoded.userId !== participantId) {
         res.status(403).json({ error: 'Invalid room token', code: 'INVALID_TOKEN' });
+        return;
+      }
+
+      const file = req.file;
+      if (!file?.buffer?.length) {
+        res.status(400).json({ error: 'Missing chunk file', code: 'MISSING_CHUNK' });
         return;
       }
 
@@ -87,6 +89,10 @@ router.post(
         return;
       }
       lockAcquired = true;
+
+      const participantDir = path.join(RECORDINGS_DIR, roomId, sessionId, participantId);
+      await fs.promises.mkdir(participantDir, { recursive: true });
+      await fs.promises.writeFile(path.join(participantDir, `chunk_${chunkIndexNum}`), file.buffer);
 
       // Use Redis-based chunk counter to track all chunks received
       const chunkCountKey = `upload:chunks:${roomId}:${participantId}:${sessionId}`;
@@ -224,7 +230,7 @@ router.post(
     } catch (error) {
       console.error('[Recording Chunk Error]', error);
       // --- FIX: always release lock in catch to avoid deadlock ---
-      if (lockAcquired) {
+      if (lockAcquired && roomId && participantId) {
         const lockKey = `upload:lock:${roomId}:${participantId}`;
         await redis.del(lockKey).catch(() => {});
       }
@@ -237,6 +243,7 @@ router.post(
 router.get(
   '/:sessionId/download',
   authenticateToken,
+  requireVerifiedEmail,
   async (req: Request<{ sessionId: string }>, res: Response): Promise<void> => {
     try {
       const { sessionId } = req.params;
@@ -361,6 +368,7 @@ router.get(
 router.get(
   '/:id/status',
   authenticateToken,
+  requireVerifiedEmail,
   async (req: Request<{ id: string }>, res: Response): Promise<void> => {
     try {
       const { id: roomId } = req.params;

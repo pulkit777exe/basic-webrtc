@@ -22,7 +22,7 @@ export type Signal =
   | { type: "ice"; to: string; candidate: RTCIceCandidateInit }
   | { type: "join"; roomId: string; user: PublicUser }
   | { type: "leave"; userId: string }
-  | { type: "chat"; content: string; timestamp: number }
+  | { type: "chat"; content: string; timestamp: number; id?: string }
   | { type: "chat_pin"; messageId: string; text: string; authorName: string }
   | { type: "chat_reaction"; messageId: string; emoji: string }
   | { type: "admin"; action: AdminAction; targetUserId?: string }
@@ -35,8 +35,8 @@ export type Signal =
   | { type: "admin_lock"; locked: boolean }
   | { type: "admin_pin_message"; id: string; text: string; authorName: string }
   | { type: "room_locked"; locked: boolean }
-  | { type: "recording_start"; startedAt: number }
-  | { type: "recording_stop" }
+  | { type: "recording_start"; startedAt: number; sessionId?: string }
+  | { type: "recording_stop"; sessionId?: string }
   | {
       type: "recording_upload_progress";
       participantId: string;
