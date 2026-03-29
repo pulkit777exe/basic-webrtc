@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
-import { useAtomValue } from 'jotai';
+import { useAtomValue, useSetAtom } from 'jotai';
 import { canManageAtom, chatAtom, chatReactionsAtom, pinnedChatMessageAtom, reactionsEnabledAtom } from '@/store/atoms';
 import { WSManager } from '@/lib/ws-manager';
 import { Button } from '@/components/ui/button';
@@ -49,6 +49,7 @@ export function RoomChatSidebar({ onClose }: { onClose: () => void }) {
   const messages = useAtomValue(chatAtom);
   const pinnedMessage = useAtomValue(pinnedChatMessageAtom);
   const chatReactions = useAtomValue(chatReactionsAtom);
+  const setChatReactions = useSetAtom(chatReactionsAtom);
   const reactionsEnabled = useAtomValue(reactionsEnabledAtom);
   const canManage = useAtomValue(canManageAtom);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
@@ -146,7 +147,17 @@ export function RoomChatSidebar({ onClose }: { onClose: () => void }) {
                             variant="ghost"
                             size="icon-sm"
                             className="h-6 w-6 rounded-full text-sm"
-                            onClick={() => WSManager.send({ type: 'chat_reaction', messageId: m.id, emoji })}
+                            onClick={() => {
+                              setChatReactions((current) => {
+                                const perMessage = current[m.id] ?? {};
+                                const nextCount = (perMessage[emoji] ?? 0) + 1;
+                                return {
+                                  ...current,
+                                  [m.id]: { ...perMessage, [emoji]: nextCount },
+                                };
+                              });
+                              WSManager.send({ type: 'chat_reaction', messageId: m.id, emoji });
+                            }}
                             title={`React with ${emoji}`}
                           >
                             {emoji}

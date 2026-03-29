@@ -3,7 +3,7 @@ import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-do
 import { useSetAtom } from 'jotai';
 import HCaptcha from '@hcaptcha/react-hcaptcha';
 import { userAtom } from '@/store/atoms';
-import { api, API_BASE_URL, ApiError } from '@/lib/api';
+import { api, API_BASE_URL, ApiError, getAccessToken } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
@@ -43,10 +43,39 @@ export function LoginPage() {
   const [lockoutUntil, setLockoutUntil] = useState<string | null>(null);
 
   const setUser = useSetAtom(userAtom);
+
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/dashboard';
+
+  useEffect(() => {
+    let cancelled = false;
+    async function resumeIfSessionValid() {
+      try {
+        const hasToken = getAccessToken();
+        if (!hasToken) {
+          const data = await api.refresh();
+          if (data?.user && !cancelled) {
+            setUser(data.user);
+            navigate(from, { replace: true });
+          }
+          return;
+        }
+        const data = await api.getMe();
+        if (data?.user && !cancelled) {
+          setUser(data.user);
+          navigate(from, { replace: true });
+        }
+      } catch {
+        // No valid session — stay on login
+      }
+    }
+    void resumeIfSessionValid();
+    return () => {
+      cancelled = true;
+    };
+  }, [from, navigate, setUser]);
   const captchaSiteKey = import.meta.env.VITE_HCAPTCHA_SITE_KEY || '';
   const banner = (location.state as { banner?: string } | null)?.banner;
   const oauthError = searchParams.get('oauthError');

@@ -19,7 +19,7 @@ interface RoomInfo {
   createdAt: string;
 }
 
-type JoinStep = "validating" | "joining" | "success" | "error";
+type JoinStep = "loading_invite" | "needs_passcode" | "joining" | "success" | "error";
 
 const ERROR_MESSAGES: Record<string, string> = {
   ROOM_FULL: "This room is currently full",
@@ -34,7 +34,7 @@ export function JoinByInvitePage() {
   const setRoomToken = useSetAtom(roomTokenAtom);
   const user = useAtomValue(userAtom);
 
-  const [step, setStep] = useState<JoinStep>("validating");
+  const [step, setStep] = useState<JoinStep>("loading_invite");
   const [error, setError] = useState<string | null>(null);
   const [roomData, setRoomData] = useState<{ room: RoomInfo } | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -96,8 +96,8 @@ export function JoinByInvitePage() {
             throw joinErr;
           }
         } else {
-          // Has passcode - show confirmation card
-          setStep("validating");
+          // Has passcode — leave loading spinner and show passcode card
+          setStep("needs_passcode");
         }
       } catch {
         setError("This invite link has expired or is invalid");
@@ -160,8 +160,8 @@ export function JoinByInvitePage() {
   }
 
   // Loading state with cycling messages
-  if (step === "validating" || step === "joining") {
-    const message = step === "validating" ? "Validating invite link…" : "Joining room…";
+  if (step === "loading_invite" || step === "joining") {
+    const message = step === "loading_invite" ? "Validating invite link…" : "Joining room…";
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--meet-bg)">
         <div className="flex flex-col items-center gap-4">
