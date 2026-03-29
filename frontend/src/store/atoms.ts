@@ -119,6 +119,8 @@ export const localMediaAtom = atom<LocalMedia>({
   screen: false,
 });
 export const chatAtom = atom<Message[]>([]);
+/** True when there are chat messages not yet "seen" (sidebar was closed). Cleared when opening chat. */
+export const chatUnreadAtom = atom<boolean>(false);
 export const participantsAtom = atom<Participant[]>([]);
 export const uiAtom = atom<UIState>({
   chatOpen: false,

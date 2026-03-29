@@ -210,6 +210,7 @@ export const MediaManager = {
       const newStream = new MediaStream(finalTracks);
 
       if (!latest.screen) RTCManager.replaceTrack('video', nextTrack);
+      RTCManager.setLocalMediaStreamRef(newStream);
       store.set(localMediaAtom, { ...latest, stream: newStream, video: true });
     } catch (error) {
       console.error('[MediaManager] Unable to enable camera', error);

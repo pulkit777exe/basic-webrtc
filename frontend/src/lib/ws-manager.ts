@@ -4,6 +4,7 @@ import {
   captionsAtom,
   chatAtom,
   chatReactionsAtom,
+  chatUnreadAtom,
   localMediaAtom,
   mutedByHostAtom,
   pinnedChatMessageAtom,
@@ -370,6 +371,10 @@ export const WSManager = {
               timestamp: data.timestamp ?? Date.now(),
             },
           ]);
+          const me = store.get(userAtom)?.id;
+          if (fromId && me && fromId !== me && !store.get(uiAtom).chatOpen) {
+            store.set(chatUnreadAtom, true);
+          }
         } else if (data.type === "chat_pin") {
           store.set(pinnedChatMessageAtom, {
             messageId: data.messageId,
@@ -402,6 +407,7 @@ export const WSManager = {
               screen: data.screen,
             });
             store.set(peersAtom, peers);
+            RTCManager.syncIncomingMedia(data.from);
           }
         } else if (data.type === "audio-activity" && data.from) {
           store.set(speakingPeersAtom, (current) => {

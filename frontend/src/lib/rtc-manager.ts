@@ -241,7 +241,18 @@ export const RTCManager = {
 
   replaceTrack(kind: 'audio' | 'video' | string, track: MediaStreamTrack | null) {
     peerConnections.forEach((connection) => {
-      const sender = connection.getSenders().find((candidate) => candidate.track?.kind === kind);
+      let sender = connection.getSenders().find((s) => s.track?.kind === kind);
+      // After replaceTrack(null) the slot still exists but sender.track is null — find must not rely on track.kind
+      if (!sender && kind === 'video') {
+        const idle = connection.getSenders().filter((s) => !s.track);
+        if (idle.length === 1) sender = idle[0];
+        else if (idle.length > 1) {
+          const firstAudioIdx = connection.getSenders().findIndex((s) => s.track?.kind === 'audio');
+          sender =
+            connection.getSenders().find((s, i) => !s.track && i !== firstAudioIdx) ??
+            idle[idle.length - 1];
+        }
+      }
       if (sender) {
         sender.replaceTrack(track).catch(() => {});
         return;
@@ -250,5 +261,39 @@ export const RTCManager = {
         connection.addTrack(track, localStream);
       }
     });
+  },
+
+  /** Rebuild remote MediaStream from RTP receivers (replaceTrack does not fire ontrack). */
+  syncIncomingMedia(remoteUserId: string) {
+    const connection = peerConnections.get(remoteUserId);
+    if (!connection) return;
+    const tracks = connection
+      .getReceivers()
+      .map((r) => r.track)
+      .filter(
+        (t): t is MediaStreamTrack =>
+          t != null && t.readyState !== 'ended',
+      );
+    const peers = new Map(store.get(peersAtom));
+    const peer = peers.get(remoteUserId);
+    if (!peer) return;
+    const merged = new MediaStream();
+    const seen = new Set<string>();
+    for (const t of tracks) {
+      if (seen.has(t.id)) continue;
+      seen.add(t.id);
+      try {
+        merged.addTrack(t);
+      } catch {
+        /* duplicate */
+      }
+    }
+    peers.set(remoteUserId, { ...peer, stream: merged });
+    store.set(peersAtom, peers);
+  },
+
+  /** Keep reference for addTrack fallback without re-attaching on every toggle */
+  setLocalMediaStreamRef(stream: MediaStream | null) {
+    localStream = stream;
   },
 };

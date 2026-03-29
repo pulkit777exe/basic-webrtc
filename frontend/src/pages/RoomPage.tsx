@@ -8,6 +8,7 @@ import {
   audioOutputDeviceIdAtom,
   chatAtom,
   chatReactionsAtom,
+  chatUnreadAtom,
   captionsAtom,
   captionsEnabledAtom,
   isHostAtom,
@@ -93,9 +94,11 @@ export function RoomPage() {
   const [ui, setUi] = useAtom(uiAtom);
   const [roomLocked, setRoomLocked] = useAtom(roomLockedAtom);
   const waitingParticipants = useAtomValue(waitingRoomParticipantsAtom);
+  const chatUnread = useAtomValue(chatUnreadAtom);
   const participants = useAtomValue(participantsAtom);
   const setParticipants = useSetAtom(participantsAtom);
   const setChat = useSetAtom(chatAtom);
+  const setChatUnread = useSetAtom(chatUnreadAtom);
   const setChatReactions = useSetAtom(chatReactionsAtom);
   const setPinnedChatMessage = useSetAtom(pinnedChatMessageAtom);
   const setCaptions = useSetAtom(captionsAtom);
@@ -178,6 +181,7 @@ export function RoomPage() {
       ]);
     });
     setChat([]);
+    setChatUnread(false);
     setChatReactions({});
     setPinnedChatMessage(null);
     setCaptions([]);
@@ -230,6 +234,7 @@ export function RoomPage() {
       });
       setParticipants([]);
       setChat([]);
+      setChatUnread(false);
       setChatReactions({});
       setPinnedChatMessage(null);
       setCaptions([]);
@@ -244,6 +249,7 @@ export function RoomPage() {
     navigate,
     setCaptions,
     setChat,
+    setChatUnread,
     setChatReactions,
     setParticipants,
     setPinnedChatMessage,
@@ -638,17 +644,28 @@ export function RoomPage() {
             <Button
               variant="ghost"
               size="icon-sm"
-              className={`rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${ui.chatOpen ? "bg-(--room-elevated)" : ""}`}
-              onClick={() =>
+              className={`relative rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${ui.chatOpen ? "bg-(--room-elevated)" : ""}`}
+              onClick={() => {
+                const opening = !ui.chatOpen;
                 setUi({
                   ...ui,
-                  chatOpen: !ui.chatOpen,
+                  chatOpen: opening,
                   participantsOpen: false,
                   waitingRoomOpen: false,
-                })
-              }
+                });
+                if (opening) setChatUnread(false);
+              }}
             >
               <MessageSquare className="h-4 w-4" />
+              {chatUnread && !ui.chatOpen ? (
+                <span
+                  className="pointer-events-none absolute right-1 top-1 flex h-2 w-2"
+                  aria-hidden
+                >
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-60" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-sky-500 ring-2 ring-(--room-header)" />
+                </span>
+              ) : null}
             </Button>
             <Button
               variant="ghost"
@@ -719,6 +736,7 @@ export function RoomPage() {
         className="pointer-events-none fixed bottom-4 left-1/2 z-40 -translate-x-1/2 sm:bottom-6"
       >
         <RoomControlBar
+          chatHasUnread={chatUnread}
           chatOpen={ui.chatOpen}
           participantsOpen={ui.participantsOpen}
           layoutMode={layoutMode}
@@ -726,9 +744,11 @@ export function RoomPage() {
           isHost={isHost}
           isRecording={recording.active}
           captionsEnabled={captionsEnabled}
-          onToggleChat={() =>
-            setUi({ ...ui, chatOpen: !ui.chatOpen, participantsOpen: false })
-          }
+          onToggleChat={() => {
+            const opening = !ui.chatOpen;
+            setUi({ ...ui, chatOpen: opening, participantsOpen: false });
+            if (opening) setChatUnread(false);
+          }}
           onToggleParticipants={() =>
             setUi({
               ...ui,
@@ -747,7 +767,9 @@ export function RoomPage() {
       </div>
 
       {ui.chatOpen && (
-        <RoomChatSidebar onClose={() => setUi({ ...ui, chatOpen: false })} />
+        <RoomChatSidebar
+          onClose={() => setUi({ ...ui, chatOpen: false })}
+        />
       )}
       {ui.participantsOpen && (
         <RoomParticipantsPanel

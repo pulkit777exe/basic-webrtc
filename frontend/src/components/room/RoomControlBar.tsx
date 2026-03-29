@@ -50,7 +50,9 @@ export function RoomControlBar({
   onToggleCaptions,
   onToggleRecording,
   onLeave,
+  chatHasUnread = false,
 }: {
+  chatHasUnread?: boolean;
   chatOpen: boolean;
   participantsOpen: boolean;
   layoutMode: LayoutMode;
@@ -295,10 +297,19 @@ export function RoomControlBar({
             <Button
               variant={chatOpen ? 'secondary' : 'ghost'}
               size="icon"
-              className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${chatOpen ? 'bg-(--room-elevated)' : ''}`}
+              className={`relative h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${chatOpen ? 'bg-(--room-elevated)' : ''}`}
               onClick={onToggleChat}
             >
               <MessageSquare className="h-4 w-4" />
+              {chatHasUnread && !chatOpen ? (
+                <span
+                  className="pointer-events-none absolute right-1.5 top-1.5 flex h-2.5 w-2.5"
+                  aria-hidden
+                >
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-60" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-sky-500 ring-2 ring-(--room-header)" />
+                </span>
+              ) : null}
             </Button>
           </TooltipTrigger>
           <TooltipContent>Chat</TooltipContent>
