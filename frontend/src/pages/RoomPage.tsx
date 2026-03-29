@@ -34,6 +34,7 @@ import { store } from "@/store";
 import { WSManager } from "@/lib/ws-manager";
 import {
   startBrowserSpeechCaptions,
+  startDeepgramLiveCaptions,
   startWhisperChunkCaptions,
 } from "@/lib/live-captions";
 import { RTCManager } from "@/lib/rtc-manager";
@@ -85,6 +86,7 @@ export function RoomPage() {
   const localMedia = useAtomValue(localMediaAtom);
   const mutedByHost = useAtomValue(mutedByHostAtom);
   const [captionsEnabled, setCaptionsEnabled] = useAtom(captionsEnabledAtom);
+  const [deepgramLiveUnavailable, setDeepgramLiveUnavailable] = useState(false);
   const [recording, setRecording] = useAtom(recordingAtom);
   const [layoutMode, setLayoutMode] = useAtom(layoutModeAtom);
   const [selfViewMode, setSelfViewMode] = useAtom(selfViewModeAtom);
@@ -343,12 +345,20 @@ export function RoomPage() {
   }, [captionsEnabled]);
 
   useEffect(() => {
+    if (!captionsEnabled) {
+      setDeepgramLiveUnavailable(false);
+    }
+  }, [captionsEnabled]);
+
+  useEffect(() => {
     if (!captionsEnabled || !roomId || !roomToken) {
       return;
     }
 
     const forceWhisper =
       import.meta.env.VITE_CAPTIONS_FORCE_WHISPER === "true";
+    const preferDeepgramLive =
+      import.meta.env.VITE_DEEPGRAM_LIVE_CAPTIONS === "true";
     const speechWindow = window as unknown as {
       SpeechRecognition?: unknown;
       webkitSpeechRecognition?: unknown;
@@ -379,6 +389,21 @@ export function RoomPage() {
         }) ?? undefined;
     }
 
+    if (
+      !stop &&
+      preferDeepgramLive &&
+      !deepgramLiveUnavailable &&
+      localMedia.stream?.getAudioTracks().length
+    ) {
+      stop =
+        startDeepgramLiveCaptions({
+          stream: localMedia.stream,
+          roomToken,
+          shouldRun: () => captionsEnabledRef.current,
+          onUnavailable: () => setDeepgramLiveUnavailable(true),
+        }) ?? undefined;
+    }
+
     if (!stop && localMedia.stream?.getAudioTracks().length) {
       stop =
         startWhisperChunkCaptions({
@@ -398,7 +423,7 @@ export function RoomPage() {
         return;
       }
       toast.error(
-        "Live captions need Chrome/Safari speech recognition, or a mic plus OPENAI_API_KEY on the server.",
+        "Live captions need browser speech recognition, Deepgram live (set VITE_DEEPGRAM_LIVE_CAPTIONS and DEEPGRAM_API_KEY), or Whisper (OPENAI_API_KEY) with the mic on.",
       );
       setCaptionsEnabled(false);
       return;
@@ -409,6 +434,7 @@ export function RoomPage() {
     };
   }, [
     captionsEnabled,
+    deepgramLiveUnavailable,
     roomId,
     roomToken,
     localMedia.stream,

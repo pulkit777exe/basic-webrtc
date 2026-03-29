@@ -32,6 +32,16 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
 - URL: `VITE_WS_URL` or `VITE_API_URL` → `ws` scheme, path **`/ws`**.
 - **`intentionalDisconnect`**: avoids a “could not stay connected” toast when leaving on purpose.
 - Logs abnormal **`onclose`** / **`onerror`** for debugging misconfigured URLs or TLS.
+- **Server rate limit** ([`handler.ts`](backend/src/websocket/handler.ts)): ICE / audio-activity / media-state / ping / offers / answers **do not** count toward the per-room burst limit, so they cannot starve **chat** or **captions**.
+- **`admin_promote`**: must be **`this.publish`** with type **`admin_promote`** (not `publishSignal` / `role_changed`) so clients update `participantsAtom` / `canManageAtom`.
+
+### UI / video tile
+
+- **`VideoTile` is not `React.memo`**: remote tracks can be added to the **same** `MediaStream` object after the first frame; shallow memo skipped re-renders so `<video>` never re-bound. **`addtrack` / `removetrack`** listeners re-run `srcObject` + `play()`.
+
+### Captions
+
+- **`RoomCaptionsOverlay`**: Renders when **`captionsEnabled`** (local speech-to-text) **or** when there are **incoming** caption lines from WebSocket, so viewers see others’ captions without turning the mic-caption feature on.
 
 ### UI
 

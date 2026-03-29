@@ -3,11 +3,15 @@ import { createServer } from "http";
 import path from "path";
 import { randomUUID } from "crypto";
 import compression from "compression";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, type WebSocket } from "ws";
 import cors from "cors";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 import { WebSocketHandler } from "./websocket/handler";
+import {
+  attachLiveCaptionsBridge,
+  type LiveCaptionAuth,
+} from "./websocket/live-captions-bridge";
 import { verifyRoomToken } from "./utils/jwt";
 import authRoutes from "./routes/auth";
 import oauthRoutes from "./routes/oauth";
@@ -114,18 +118,42 @@ app.use(
 const server = createServer(app);
 
 const wss = new WebSocketServer({ noServer: true });
+const wssLive = new WebSocketServer({ noServer: true });
+attachLiveCaptionsBridge(wssLive);
 
 server.on("upgrade", (request, socket, head) => {
   const path = request.url?.split("?")[0];
-  if (path !== "/ws") {
-    socket.destroy();
-    return;
-  }
   const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
   const token =
     url.searchParams.get("token") ??
     request.headers.authorization?.replace(/^Bearer\s+/i, "");
   const payload = token ? verifyRoomToken(token) : null;
+
+  if (path === "/ws/live-captions") {
+    if (!payload) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    if (payload.waiting === true) {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    wssLive.handleUpgrade(request, socket, head, (ws) => {
+      (ws as WebSocket & { liveCaptionAuth?: LiveCaptionAuth }).liveCaptionAuth = {
+        userId: payload.userId,
+        roomId: payload.roomId,
+      };
+      wssLive.emit("connection", ws);
+    });
+    return;
+  }
+
+  if (path !== "/ws") {
+    socket.destroy();
+    return;
+  }
   if (!payload) {
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
     socket.destroy();
@@ -155,26 +183,31 @@ function gracefulShutdown(signal: string) {
   wss.clients.forEach((ws) => {
     ws.close(1001, "Server shutting down");
   });
+  wssLive.clients.forEach((ws) => {
+    ws.close(1001, "Server shutting down");
+  });
 
   wss.close(() => {
-    server.close((err) => {
-      if (err) {
-        logger.error("HTTP server close error", { err: String(err) });
-      }
-      void (async () => {
-        try {
-          await redis.quit();
-          await redisSub.quit();
-          await closeDatabase();
-          logger.info("Graceful shutdown complete");
-          process.exit(0);
-        } catch (e) {
-          logger.error("Graceful shutdown cleanup failed", {
-            err: String(e),
-          });
-          process.exit(1);
+    wssLive.close(() => {
+      server.close((err) => {
+        if (err) {
+          logger.error("HTTP server close error", { err: String(err) });
         }
-      })();
+        void (async () => {
+          try {
+            await redis.quit();
+            await redisSub.quit();
+            await closeDatabase();
+            logger.info("Graceful shutdown complete");
+            process.exit(0);
+          } catch (e) {
+            logger.error("Graceful shutdown cleanup failed", {
+              err: String(e),
+            });
+            process.exit(1);
+          }
+        })();
+      });
     });
   });
 }
@@ -185,6 +218,7 @@ process.once("SIGINT", () => gracefulShutdown("SIGINT"));
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`WebSocket server ready at ws://localhost:${PORT}/ws`);
+  console.log(`Live captions (Deepgram) at ws://localhost:${PORT}/ws/live-captions`);
   startCleanupJob(); // Start stale room cleanup job
   startRecordingWorker(); // Start recording merge worker
   startExportWorker(); // Start account export worker

@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import crypto from "crypto";
+import multer from "multer";
 import { db } from "../db";
 import {
   rooms,
@@ -11,7 +12,7 @@ import {
 import { authenticate, authenticateToken, optionalAuthenticate } from "../middleware/auth";
 import { generateRoomId } from "../utils/validation";
 import { generateRoomToken, generateWaitingToken } from "../utils/jwt";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import bcrypt from "bcrypt";
 import {
   setRoomMeta,
@@ -39,8 +40,58 @@ import { apiLimiter } from "../lib/rate-limiters";
 import { verifyAccessToken } from "../utils/jwt";
 import { globalLimiter } from "../lib/rate-limiters";
 
+async function resolveCanonicalRoomId(raw: string): Promise<string | null> {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const [exact] = await db
+    .select({ id: rooms.id })
+    .from(rooms)
+    .where(eq(rooms.id, trimmed))
+    .limit(1);
+  if (exact) return exact.id;
+  const [folded] = await db
+    .select({ id: rooms.id })
+    .from(rooms)
+    .where(sql`lower(${rooms.id}) = lower(${trimmed})`)
+    .limit(1);
+  return folded?.id ?? null;
+}
+
 const router = Router();
 const SALT_ROUNDS = 10;
+
+const captionTranscribeUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 4 * 1024 * 1024 },
+});
+
+router.param("id", async (req, res, next, raw: string) => {
+  try {
+    const canonical = await resolveCanonicalRoomId(raw);
+    if (!canonical) {
+      res.status(404).json({ error: "Room not found", code: "ROOM_NOT_FOUND" });
+      return;
+    }
+    req.params.id = canonical;
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.param("roomId", async (req, res, next, raw: string) => {
+  try {
+    const canonical = await resolveCanonicalRoomId(raw);
+    if (!canonical) {
+      res.status(404).json({ error: "Room not found", code: "ROOM_NOT_FOUND" });
+      return;
+    }
+    req.params.roomId = canonical;
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Create room
 
@@ -922,6 +973,114 @@ router.get(
       });
     } catch (error) {
       console.error("[Join By Invite Error]", error);
+      res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" });
+    }
+  },
+);
+
+// Live captions (optional): OpenAI Whisper — requires OPENAI_API_KEY; client uses room token
+router.post(
+  "/:id/transcribe",
+  apiLimiter,
+  captionTranscribeUpload.single("file"),
+  async (req: Request<{ id: string }>, res: Response): Promise<void> => {
+    const roomId = req.params.id;
+    const token = req.headers.authorization?.split(" ")[1];
+    const decoded = token ? verifyRoomToken(token) : null;
+    if (!decoded || decoded.roomId !== roomId) {
+      res.status(403).json({ error: "Invalid room token", code: "INVALID_TOKEN" });
+      return;
+    }
+
+    const file = req.file;
+    if (!file?.buffer?.length) {
+      res.status(400).json({ error: "Missing audio file", code: "MISSING_FILE" });
+      return;
+    }
+
+    const openaiKey = process.env.OPENAI_API_KEY?.trim();
+    const deepgramKey = process.env.DEEPGRAM_API_KEY?.trim();
+    const explicit = process.env.CAPTION_TRANSCRIBE_PROVIDER?.trim().toLowerCase();
+    const provider =
+      explicit === "openai" || explicit === "deepgram"
+        ? explicit
+        : openaiKey
+          ? "openai"
+          : deepgramKey
+            ? "deepgram"
+            : "";
+
+    if (!provider || (provider === "openai" && !openaiKey) || (provider === "deepgram" && !deepgramKey)) {
+      if (!openaiKey && !deepgramKey) {
+        res.status(503).json({
+          error:
+            "Caption transcription is not configured. Set OPENAI_API_KEY and/or DEEPGRAM_API_KEY and optional CAPTION_TRANSCRIBE_PROVIDER=openai|deepgram",
+          code: "TRANSCRIBE_DISABLED",
+        });
+        return;
+      }
+      res.status(503).json({
+        error: "Caption transcription provider misconfigured",
+        code: "TRANSCRIBE_DISABLED",
+      });
+      return;
+    }
+
+    try {
+      let text = "";
+
+      if (provider === "deepgram" && deepgramKey) {
+        const upstream = await fetch(
+          "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true",
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Token ${deepgramKey}`,
+              "Content-Type": file.mimetype || "audio/webm",
+            },
+            body: new Uint8Array(file.buffer),
+          },
+        );
+        if (!upstream.ok) {
+          const errText = await upstream.text();
+          console.error("[transcribe deepgram]", upstream.status, errText);
+          res.status(502).json({ error: "Transcription failed", code: "TRANSCRIBE_FAILED" });
+          return;
+        }
+        const json = (await upstream.json()) as {
+          results?: { channels?: Array<{ alternatives?: Array<{ transcript?: string }> }> };
+        };
+        text =
+          json.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim() ?? "";
+      } else if (openaiKey) {
+        const form = new FormData();
+        form.append("model", "whisper-1");
+        form.append(
+          "file",
+          new Blob([file.buffer], { type: file.mimetype || "audio/webm" }),
+          "chunk.webm",
+        );
+
+        const upstream = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${openaiKey}` },
+          body: form,
+        });
+
+        if (!upstream.ok) {
+          const errText = await upstream.text();
+          console.error("[transcribe openai]", upstream.status, errText);
+          res.status(502).json({ error: "Transcription failed", code: "TRANSCRIBE_FAILED" });
+          return;
+        }
+
+        const json = (await upstream.json()) as { text?: string };
+        text = (json.text ?? "").trim();
+      }
+
+      res.json({ text });
+    } catch (error) {
+      console.error("[transcribe]", error);
       res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" });
     }
   },
