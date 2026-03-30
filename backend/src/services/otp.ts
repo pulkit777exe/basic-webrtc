@@ -68,4 +68,3 @@ export async function verifyOtp(email: string, code: string): Promise<boolean> {
   await db.update(otpCodes).set({ verified: true }).where(eq(otpCodes.id, latestOtp.id));
   return true;
 }
-

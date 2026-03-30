@@ -24,11 +24,13 @@ export function generateTwoFactorSecret(): string {
 }
 
 export function formatManualEntryKey(secret: string): string {
-  return secret
-    .replace(/\s+/g, '')
-    .toUpperCase()
-    .match(/.{1,4}/g)
-    ?.join(' ') ?? secret.toUpperCase();
+  return (
+    secret
+      .replace(/\s+/g, '')
+      .toUpperCase()
+      .match(/.{1,4}/g)
+      ?.join(' ') ?? secret.toUpperCase()
+  );
 }
 
 export function buildOtpUri(email: string, appName: string, secret: string): string {

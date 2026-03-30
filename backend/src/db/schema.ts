@@ -41,7 +41,9 @@ export const users = pgTable('users', {
 
 export const rooms = pgTable('rooms', {
   id: varchar('id', { length: 10 }).primaryKey(),
-  hostId: uuid('host_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  hostId: uuid('host_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
   title: varchar('title', { length: 255 }).notNull().default('Meeting'),
   isLocked: boolean('is_locked').notNull().default(false),
   passcodeHash: varchar('passcode_hash', { length: 255 }),
@@ -57,7 +59,9 @@ export const roomParticipants = pgTable('room_participants', {
   roomId: varchar('room_id', { length: 10 })
     .notNull()
     .references(() => rooms.id, { onDelete: 'cascade' }),
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
   role: roomRoleEnum('role').notNull(),
   joinedAt: timestamp('joined_at').notNull().defaultNow(),
   leftAt: timestamp('left_at'),
@@ -68,7 +72,9 @@ export const messages = pgTable('messages', {
   roomId: varchar('room_id', { length: 10 })
     .notNull()
     .references(() => rooms.id, { onDelete: 'cascade' }),
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
   content: text('content').notNull(),
   type: messageTypeEnum('type').notNull().default('text'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
@@ -111,8 +117,6 @@ export const recordingTracks = pgTable('recording_tracks', {
   errorMessage: text('error_message'),
   updatedAt: timestamp('updated_at').defaultNow(),
 });
-
-
 
 export const otpCodes = pgTable('otp_codes', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -192,8 +196,14 @@ export const loginEvents = pgTable(
     createdAt: timestamp('created_at').notNull().defaultNow(),
   },
   (table) => ({
-    userCreatedAtIdx: index('login_events_user_created_at_idx').on(table.userId, desc(table.createdAt)),
-    userSuspiciousIdx: index('login_events_user_suspicious_idx').on(table.userId, table.isSuspicious),
+    userCreatedAtIdx: index('login_events_user_created_at_idx').on(
+      table.userId,
+      desc(table.createdAt),
+    ),
+    userSuspiciousIdx: index('login_events_user_suspicious_idx').on(
+      table.userId,
+      table.isSuspicious,
+    ),
   }),
 );
 
@@ -212,7 +222,10 @@ export const passwordResetTokens = pgTable(
   },
   (table) => ({
     tokenHashIdx: index('password_reset_tokens_token_hash_idx').on(table.tokenHash),
-    userCreatedAtIdx: index('password_reset_tokens_user_created_at_idx').on(table.userId, desc(table.createdAt)),
+    userCreatedAtIdx: index('password_reset_tokens_user_created_at_idx').on(
+      table.userId,
+      desc(table.createdAt),
+    ),
   }),
 );
 

@@ -23,12 +23,7 @@ export function startCleanupJob(): void {
     const staleRooms = await db
       .select()
       .from(rooms)
-      .where(
-        and(
-          eq(rooms.status, 'active'),
-          lt(rooms.updatedAt, staleThreshold)
-        )
-      );
+      .where(and(eq(rooms.status, 'active'), lt(rooms.updatedAt, staleThreshold)));
 
     logger.info(`Found ${staleRooms.length} stale rooms to check`);
 

@@ -77,7 +77,11 @@ passport.use(
             })
             .where(eq(users.id, targetUser.id));
 
-          const [linkedUser] = await db.select().from(users).where(eq(users.id, targetUser.id)).limit(1);
+          const [linkedUser] = await db
+            .select()
+            .from(users)
+            .where(eq(users.id, targetUser.id))
+            .limit(1);
           return done(null, linkedUser, { linkedViaState: true });
         }
 

@@ -11,7 +11,7 @@ export class RoomManager {
       hostId,
       participants: new Map(),
       pendingRequests: new Map(),
-      createdAt: Date.now()
+      createdAt: Date.now(),
     };
     this.rooms.set(roomId, room);
     console.log(`[RoomManager] Created room: ${roomId}, type: ${type}`);
@@ -25,7 +25,7 @@ export class RoomManager {
   addParticipant(roomId: string, participant: Participant): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return false;
-    
+
     if (room.participants.size >= this.MAX_PARTICIPANTS) {
       console.log(`[RoomManager] Room ${roomId} is full`);
       return false;
@@ -33,7 +33,9 @@ export class RoomManager {
 
     // Check if participant already exists - update instead of adding duplicate
     if (room.participants.has(participant.id)) {
-      console.log(`[RoomManager] Participant ${participant.username} already in room ${roomId}, updating WebSocket`);
+      console.log(
+        `[RoomManager] Participant ${participant.username} already in room ${roomId}, updating WebSocket`,
+      );
       room.participants.set(participant.id, participant);
       return true;
     }

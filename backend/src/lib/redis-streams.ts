@@ -12,7 +12,15 @@ function streamKey(roomId: string): string {
 // Publish a signal to a room's stream
 export async function publishSignal(roomId: string, signal: object): Promise<string> {
   const key = streamKey(roomId);
-  const result = await redis.xadd(key, 'MAXLEN', '~', DEFAULT_MAX_STREAM_LENGTH, '*', 'payload', JSON.stringify(signal));
+  const result = await redis.xadd(
+    key,
+    'MAXLEN',
+    '~',
+    DEFAULT_MAX_STREAM_LENGTH,
+    '*',
+    'payload',
+    JSON.stringify(signal),
+  );
   if (!result) {
     throw new Error('Failed to publish signal');
   }
@@ -23,7 +31,7 @@ export async function publishSignal(roomId: string, signal: object): Promise<str
 export async function readSignals(
   roomId: string,
   lastSeenId: string,
-  count: number = 100
+  count: number = 100,
 ): Promise<Array<{ id: string; payload: object }>> {
   const key = streamKey(roomId);
   const rangeStart = lastSeenId === '0' ? '-' : lastSeenId === '$' ? '$' : `${lastSeenId}+`;
@@ -40,7 +48,10 @@ export async function readSignals(
 }
 
 // Trim stream to avoid unbounded growth
-export async function trimStream(roomId: string, maxLen: number = DEFAULT_MAX_STREAM_LENGTH): Promise<void> {
+export async function trimStream(
+  roomId: string,
+  maxLen: number = DEFAULT_MAX_STREAM_LENGTH,
+): Promise<void> {
   const key = streamKey(roomId);
   await redis.xtrim(key, 'MAXLEN', '~', maxLen);
 }
@@ -55,7 +66,7 @@ export function startStreamPoller(
   roomId: string,
   lastSeenId: string,
   onSignal: (signal: { id: string; payload: object }) => void,
-  onError: (error: Error) => void
+  onError: (error: Error) => void,
 ): () => void {
   let isRunning = true;
   let currentPollingInterval = DEFAULT_POLLING_INTERVAL;

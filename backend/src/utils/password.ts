@@ -23,6 +23,6 @@ export function validatePassword(password: string): { valid: boolean; errors: st
 
   return {
     valid: errors.length === 0,
-    errors
+    errors,
   };
 }

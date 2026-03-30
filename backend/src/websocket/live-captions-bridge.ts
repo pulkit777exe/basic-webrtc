@@ -1,10 +1,10 @@
-import type { WebSocket } from "ws";
-import { WebSocketServer } from "ws";
-import { DeepgramClient } from "@deepgram/sdk";
-import { redis } from "../config/redis";
-import { logger } from "../lib/logger";
-import { getPeerRole, roomSignalChannel } from "../lib/redis-rooms";
-import { validateRoomId } from "../utils/validation";
+import type { WebSocket } from 'ws';
+import { WebSocketServer } from 'ws';
+import { DeepgramClient } from '@deepgram/sdk';
+import { redis } from '../config/redis';
+import { logger } from '../lib/logger';
+import { getPeerRole, roomSignalChannel } from '../lib/redis-rooms';
+import { validateRoomId } from '../utils/validation';
 
 export interface LiveCaptionAuth {
   userId: string;
@@ -13,25 +13,19 @@ export interface LiveCaptionAuth {
 
 type LiveCaptionWs = WebSocket & { liveCaptionAuth?: LiveCaptionAuth };
 
-function publishCaption(
-  roomId: string,
-  userId: string,
-  text: string,
-): void {
+function publishCaption(roomId: string, userId: string, text: string): void {
   void redis
     .publish(
       roomSignalChannel(roomId),
       JSON.stringify({
-        type: "caption",
+        type: 'caption',
         text,
         timestamp: Date.now(),
         from: userId,
         roomId,
       }),
     )
-    .catch((e) =>
-      logger.error("Live caption publish failed", { err: String(e) }),
-    );
+    .catch((e) => logger.error('Live caption publish failed', { err: String(e) }));
 }
 
 /**
@@ -39,35 +33,35 @@ function publishCaption(
  * (streaming / nova-3) and broadcasts phrase finals to the room via Redis.
  */
 export function attachLiveCaptionsBridge(wss: WebSocketServer): void {
-  wss.on("connection", (ws: WebSocket) => {
+  wss.on('connection', (ws: WebSocket) => {
     const ext = ws as LiveCaptionWs;
     const auth = ext.liveCaptionAuth;
     if (!auth?.userId || !auth?.roomId) {
-      ws.close(4001, "unauthorized");
+      ws.close(4001, 'unauthorized');
       return;
     }
 
     const { userId, roomId } = auth;
 
     if (!validateRoomId(roomId)) {
-      ws.close(4001, "invalid room");
+      ws.close(4001, 'invalid room');
       return;
     }
 
     const apiKey = process.env.DEEPGRAM_API_KEY?.trim();
     if (!apiKey) {
-      ws.close(4402, "deepgram not configured");
+      ws.close(4402, 'deepgram not configured');
       return;
     }
 
-    const model = process.env.DEEPGRAM_LIVE_MODEL?.trim() || "nova-3";
-    const language = process.env.DEEPGRAM_LIVE_LANGUAGE?.trim() || "en";
+    const model = process.env.DEEPGRAM_LIVE_MODEL?.trim() || 'nova-3';
+    const language = process.env.DEEPGRAM_LIVE_LANGUAGE?.trim() || 'en';
 
     void (async () => {
       try {
         const role = await getPeerRole(roomId, userId);
         if (!role) {
-          ws.close(4003, "not in room");
+          ws.close(4003, 'not in room');
           return;
         }
 
@@ -78,23 +72,23 @@ export function attachLiveCaptionsBridge(wss: WebSocketServer): void {
           interim_results: true,
           smart_format: true,
           punctuate: true,
-          encoding: "linear16",
+          encoding: 'linear16',
           sample_rate: 16000,
           channels: 1,
           endpointing: 250,
           Authorization: `Token ${apiKey}`,
         });
 
-        dgSocket.on("message", (data) => {
-          if (data.type !== "Results") return;
+        dgSocket.on('message', (data) => {
+          if (data.type !== 'Results') return;
           const transcript = data.channel?.alternatives?.[0]?.transcript?.trim();
           if (!transcript) return;
           if (!data.is_final && !data.speech_final) return;
           publishCaption(roomId, userId, transcript.slice(0, 2000));
         });
 
-        dgSocket.on("error", (err) => {
-          logger.error("Deepgram live socket error", { err: String(err) });
+        dgSocket.on('error', (err) => {
+          logger.error('Deepgram live socket error', { err: String(err) });
         });
 
         dgSocket.connect();
@@ -102,7 +96,7 @@ export function attachLiveCaptionsBridge(wss: WebSocketServer): void {
 
         const keepAlive = setInterval(() => {
           try {
-            dgSocket.sendKeepAlive({ type: "KeepAlive" });
+            dgSocket.sendKeepAlive({ type: 'KeepAlive' });
           } catch {
             /* closed */
           }
@@ -121,8 +115,8 @@ export function attachLiveCaptionsBridge(wss: WebSocketServer): void {
           }
         };
 
-        ws.on("message", onClientMessage);
-        ws.on("close", () => {
+        ws.on('message', onClientMessage);
+        ws.on('close', () => {
           clearInterval(keepAlive);
           try {
             dgSocket.close();
@@ -130,7 +124,7 @@ export function attachLiveCaptionsBridge(wss: WebSocketServer): void {
             /* */
           }
         });
-        ws.on("error", () => {
+        ws.on('error', () => {
           clearInterval(keepAlive);
           try {
             dgSocket.close();
@@ -139,13 +133,13 @@ export function attachLiveCaptionsBridge(wss: WebSocketServer): void {
           }
         });
       } catch (e) {
-        logger.error("Live captions bridge failed", {
+        logger.error('Live captions bridge failed', {
           roomId,
           userId,
           err: String(e),
         });
         try {
-          ws.close(1011, "bridge error");
+          ws.close(1011, 'bridge error');
         } catch {
           /* */
         }

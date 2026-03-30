@@ -25,7 +25,8 @@ export function createRedisStore(): Store {
       }
       const [, incrResult] = results[0];
       const [, ttlResult] = results[1];
-      const totalHits = typeof incrResult === 'number' ? incrResult : parseInt(String(incrResult), 10);
+      const totalHits =
+        typeof incrResult === 'number' ? incrResult : parseInt(String(incrResult), 10);
       const ttl = typeof ttlResult === 'number' ? ttlResult : parseInt(String(ttlResult), 10);
       if (ttl === -1) {
         await redis.pexpire(k, windowMs);

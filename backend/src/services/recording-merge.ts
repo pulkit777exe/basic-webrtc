@@ -13,14 +13,16 @@ try {
     execSync('which ffmpeg');
   }
 } catch (error) {
-  console.error('FFmpeg not found. Please install FFmpeg and ensure it is in PATH or set FFMPEG_PATH environment variable.');
+  console.error(
+    'FFmpeg not found. Please install FFmpeg and ensure it is in PATH or set FFMPEG_PATH environment variable.',
+  );
   throw new Error('FFmpeg is required for recording merge functionality');
 }
 
 export interface TrackInfo {
   participantId: string;
-  path: string;           // local path to assembled .webm file
-  startOffset: number;    // ms since recording started; used for sync padding
+  path: string; // local path to assembled .webm file
+  startOffset: number; // ms since recording started; used for sync padding
 }
 
 // Helper to build grid filter based on track count
@@ -34,13 +36,17 @@ function buildGridFilter(count: number): { video: string | null; audio: string |
   // Determine grid dimensions
   let cols, rows;
   if (cappedCount === 2) {
-    cols = 2; rows = 1;
+    cols = 2;
+    rows = 1;
   } else if (cappedCount <= 4) {
-    cols = 2; rows = 2;
+    cols = 2;
+    rows = 2;
   } else if (cappedCount <= 9) {
-    cols = 3; rows = 3;
+    cols = 3;
+    rows = 3;
   } else {
-    cols = 4; rows = 4;
+    cols = 4;
+    rows = 4;
   }
 
   // Build xstack layout string
@@ -85,7 +91,7 @@ function concatenateVideos(file1: string, file2: string, outputPath: string): Pr
   return new Promise((resolve, reject) => {
     const listPath = path.join(path.dirname(outputPath), 'concat.txt');
     fs.writeFileSync(listPath, `file '${file1}'\nfile '${file2}'`);
-    
+
     ffmpeg()
       .input(listPath)
       .inputFormat('concat')
@@ -105,13 +111,13 @@ function concatenateVideos(file1: string, file2: string, outputPath: string): Pr
 export async function mergeRecordings(
   roomId: string,
   sessionId: string,
-  tracks: TrackInfo[]
+  tracks: TrackInfo[],
 ): Promise<string> {
   // Validate track paths to prevent FFmpeg command injection
   const RECORDINGS_DIR = process.env.RECORDINGS_DIR || 'recordings';
   const expectedDir = path.join(RECORDINGS_DIR, roomId, sessionId);
   const expectedDirResolved = path.resolve(expectedDir);
-  
+
   for (const track of tracks) {
     const trackPathResolved = path.resolve(track.path);
     if (!trackPathResolved.startsWith(expectedDirResolved)) {
@@ -128,12 +134,12 @@ export async function mergeRecordings(
     if (track.startOffset > 0) {
       const paddingPath = path.join(outputDir, `padding_${track.participantId}.webm`);
       const paddedPath = path.join(outputDir, `padded_${track.participantId}.webm`);
-      
+
       await createSilentVideo(track.startOffset, paddingPath);
       await concatenateVideos(paddingPath, track.path, paddedPath);
-      
+
       processedTracks.push({ ...track, path: paddedPath });
-      
+
       // Clean up temporary files
       fs.unlinkSync(paddingPath);
     } else {
@@ -146,7 +152,7 @@ export async function mergeRecordings(
     let command = ffmpeg();
 
     // Add inputs - use file protocols and ensure paths are properly escaped
-    processedTracks.forEach(track => {
+    processedTracks.forEach((track) => {
       // Use Node.js's built-in URL encoding to safely pass paths to FFmpeg
       const safePath = new URL(`file://${path.resolve(track.path)}`).href;
       command = command.input(safePath);
@@ -174,7 +180,7 @@ export async function mergeRecordings(
       .outputOptions([`-b:a ${ffmpegAudioBitrate}`, '-movflags +faststart'])
       .on('end', () => {
         // Clean up temporary padded files
-        processedTracks.forEach(track => {
+        processedTracks.forEach((track) => {
           if (track.path.includes('padded_')) {
             fs.unlinkSync(track.path);
           }
@@ -184,7 +190,7 @@ export async function mergeRecordings(
       .on('error', (err) => {
         console.error('FFmpeg merge error:', err);
         // Cleanup temporary files on error
-        processedTracks.forEach(track => {
+        processedTracks.forEach((track) => {
           if (track.path.includes('padded_')) {
             try {
               fs.unlinkSync(track.path);

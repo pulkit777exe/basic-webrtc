@@ -179,9 +179,7 @@ function renderOtpTemplate(data: OtpTemplateData): { subject: string; html: stri
   };
 }
 
-function renderEmailVerificationTemplate(
-  data: OtpTemplateData,
-): { subject: string; html: string } {
+function renderEmailVerificationTemplate(data: OtpTemplateData): { subject: string; html: string } {
   const otpDisplay =
     data.code.length === 6
       ? `${escapeHtml(data.code.slice(0, 3))} ${escapeHtml(data.code.slice(3))}`
@@ -204,9 +202,10 @@ function renderEmailVerificationTemplate(
   };
 }
 
-function renderPasswordResetTemplate(
-  data: PasswordResetTemplateData,
-): { subject: string; html: string } {
+function renderPasswordResetTemplate(data: PasswordResetTemplateData): {
+  subject: string;
+  html: string;
+} {
   const closeToExpiry = data.expiresInMinutes <= 15;
   return {
     subject: 'Reset your password',
@@ -237,9 +236,10 @@ function renderPasswordResetTemplate(
   };
 }
 
-function renderPasswordResetSuccessTemplate(
-  data: PasswordResetSuccessTemplateData,
-): { subject: string; html: string } {
+function renderPasswordResetSuccessTemplate(data: PasswordResetSuccessTemplateData): {
+  subject: string;
+  html: string;
+} {
   return {
     subject: 'Your password was changed',
     html: `
@@ -264,9 +264,10 @@ function renderPasswordResetSuccessTemplate(
   };
 }
 
-function renderBackupCodeSecurityAlertTemplate(
-  data: BackupCodeSecurityAlertTemplateData,
-): { subject: string; html: string } {
+function renderBackupCodeSecurityAlertTemplate(data: BackupCodeSecurityAlertTemplateData): {
+  subject: string;
+  html: string;
+} {
   return {
     subject: 'Security alert: backup code used to access your account',
     html: `
@@ -287,9 +288,10 @@ function renderBackupCodeSecurityAlertTemplate(
   };
 }
 
-function renderAccountLockoutAlertTemplate(
-  data: AccountLockoutAlertTemplateData,
-): { subject: string; html: string } {
+function renderAccountLockoutAlertTemplate(data: AccountLockoutAlertTemplateData): {
+  subject: string;
+  html: string;
+} {
   return {
     subject: 'Your account was temporarily locked',
     html: `
@@ -311,9 +313,10 @@ function renderAccountLockoutAlertTemplate(
   };
 }
 
-function renderAccountLockoutClearedTemplate(
-  data: AccountLockoutClearedTemplateData,
-): { subject: string; html: string } {
+function renderAccountLockoutClearedTemplate(data: AccountLockoutClearedTemplateData): {
+  subject: string;
+  html: string;
+} {
   return {
     subject: 'Sign-in after account lock detected',
     html: `
@@ -330,9 +333,10 @@ function renderAccountLockoutClearedTemplate(
   };
 }
 
-function renderTwoFactorEnabledTemplate(
-  data: TwoFactorEnabledTemplateData,
-): { subject: string; html: string } {
+function renderTwoFactorEnabledTemplate(data: TwoFactorEnabledTemplateData): {
+  subject: string;
+  html: string;
+} {
   return {
     subject: 'Two-factor authentication enabled',
     html: `
@@ -345,9 +349,10 @@ function renderTwoFactorEnabledTemplate(
   };
 }
 
-function renderTwoFactorDisabledTemplate(
-  data: TwoFactorDisabledTemplateData,
-): { subject: string; html: string } {
+function renderTwoFactorDisabledTemplate(data: TwoFactorDisabledTemplateData): {
+  subject: string;
+  html: string;
+} {
   return {
     subject: 'Two-factor authentication disabled',
     html: `
@@ -363,9 +368,10 @@ function renderTwoFactorDisabledTemplate(
   };
 }
 
-function renderSuspiciousLoginTemplate(
-  data: SuspiciousLoginTemplateData,
-): { subject: string; html: string } {
+function renderSuspiciousLoginTemplate(data: SuspiciousLoginTemplateData): {
+  subject: string;
+  html: string;
+} {
   const reasons = data.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join('');
   return {
     subject: '⚠️ New sign-in to your account',
@@ -397,9 +403,10 @@ function renderSuspiciousLoginTemplate(
   };
 }
 
-function renderProfilePasswordChangedTemplate(
-  data: ProfilePasswordChangedTemplateData,
-): { subject: string; html: string } {
+function renderProfilePasswordChangedTemplate(data: ProfilePasswordChangedTemplateData): {
+  subject: string;
+  html: string;
+} {
   return {
     subject: 'Your password was changed',
     html: `
@@ -412,7 +419,10 @@ function renderProfilePasswordChangedTemplate(
   };
 }
 
-function renderGoogleLinkedTemplate(data: GoogleLinkedTemplateData): { subject: string; html: string } {
+function renderGoogleLinkedTemplate(data: GoogleLinkedTemplateData): {
+  subject: string;
+  html: string;
+} {
   return {
     subject: 'Google account linked',
     html: `
@@ -425,7 +435,10 @@ function renderGoogleLinkedTemplate(data: GoogleLinkedTemplateData): { subject: 
   };
 }
 
-function renderGoogleUnlinkedTemplate(data: GoogleUnlinkedTemplateData): { subject: string; html: string } {
+function renderGoogleUnlinkedTemplate(data: GoogleUnlinkedTemplateData): {
+  subject: string;
+  html: string;
+} {
   return {
     subject: 'Google account unlinked',
     html: `
@@ -438,7 +451,10 @@ function renderGoogleUnlinkedTemplate(data: GoogleUnlinkedTemplateData): { subje
   };
 }
 
-function renderPasswordAddedTemplate(data: PasswordAddedTemplateData): { subject: string; html: string } {
+function renderPasswordAddedTemplate(data: PasswordAddedTemplateData): {
+  subject: string;
+  html: string;
+} {
   return {
     subject: 'Password added to your account',
     html: `
@@ -451,9 +467,10 @@ function renderPasswordAddedTemplate(data: PasswordAddedTemplateData): { subject
   };
 }
 
-function renderDataExportStartedTemplate(
-  data: DataExportStartedTemplateData,
-): { subject: string; html: string } {
+function renderDataExportStartedTemplate(data: DataExportStartedTemplateData): {
+  subject: string;
+  html: string;
+} {
   return {
     subject: 'Your data export is being prepared',
     html: `
@@ -466,7 +483,10 @@ function renderDataExportStartedTemplate(
   };
 }
 
-function renderDataExportReadyTemplate(data: DataExportReadyTemplateData): { subject: string; html: string } {
+function renderDataExportReadyTemplate(data: DataExportReadyTemplateData): {
+  subject: string;
+  html: string;
+} {
   return {
     subject: 'Your data export is ready',
     html: `
@@ -484,9 +504,10 @@ function renderDataExportReadyTemplate(data: DataExportReadyTemplateData): { sub
   };
 }
 
-function renderAccountDeletionScheduledTemplate(
-  data: AccountDeletionScheduledTemplateData,
-): { subject: string; html: string } {
+function renderAccountDeletionScheduledTemplate(data: AccountDeletionScheduledTemplateData): {
+  subject: string;
+  html: string;
+} {
   return {
     subject: 'Account deletion scheduled',
     html: `
@@ -500,9 +521,10 @@ function renderAccountDeletionScheduledTemplate(
   };
 }
 
-function renderAccountDeletionCancelledTemplate(
-  data: AccountDeletionCancelledTemplateData,
-): { subject: string; html: string } {
+function renderAccountDeletionCancelledTemplate(data: AccountDeletionCancelledTemplateData): {
+  subject: string;
+  html: string;
+} {
   return {
     subject: 'Account deletion cancelled',
     html: `

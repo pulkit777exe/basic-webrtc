@@ -36,7 +36,12 @@ import {
   revokeSessionById,
   revokeSessionByTokenHash,
 } from '../services/session.js';
-import { passwordResetLimiter, loginLimiter, otpLimiter, strictLimiter } from '../lib/rate-limiters.js';
+import {
+  passwordResetLimiter,
+  loginLimiter,
+  otpLimiter,
+  strictLimiter,
+} from '../lib/rate-limiters.js';
 import { decrypt, encrypt } from '../lib/encryption.js';
 import { analyzeLogin } from '../services/login-analyzer.js';
 import {
@@ -94,7 +99,10 @@ function normalizeEmail(email: string): string {
 }
 
 function sanitizeProfileName(name: string): string {
-  return name.replace(/<[^>]*>/g, '').trim().replace(/\s+/g, ' ');
+  return name
+    .replace(/<[^>]*>/g, '')
+    .trim()
+    .replace(/\s+/g, ' ');
 }
 
 function hashResetToken(token: string): string {
@@ -187,12 +195,7 @@ async function createAndQueuePasswordResetEmail(input: {
   await db
     .update(passwordResetTokens)
     .set({ usedAt: now })
-    .where(
-      and(
-        eq(passwordResetTokens.userId, input.userId),
-        isNull(passwordResetTokens.usedAt),
-      ),
-    );
+    .where(and(eq(passwordResetTokens.userId, input.userId), isNull(passwordResetTokens.usedAt)));
 
   await db.insert(passwordResetTokens).values({
     userId: input.userId,
@@ -348,10 +351,7 @@ async function generateBackupCodesForUser(
       })),
     );
 
-    await tx
-      .update(users)
-      .set({ backupCodesGeneratedAt: generatedAt })
-      .where(eq(users.id, userId));
+    await tx.update(users).set({ backupCodesGeneratedAt: generatedAt }).where(eq(users.id, userId));
   });
 
   return {
@@ -360,20 +360,11 @@ async function generateBackupCodesForUser(
   };
 }
 
-async function markAccountLockInRedis(
-  userId: string,
-  lockedUntil: Date,
-): Promise<void> {
-  const remainingSeconds = Math.max(
-    1,
-    Math.ceil((lockedUntil.getTime() - Date.now()) / 1000),
-  );
-  await redis.set(
-    accountLockRedisKey(userId),
-    lockedUntil.toISOString(),
-    'EX',
-    remainingSeconds,
-  );
+async function markAccountLockInRedis(userId: string, lockedUntil: Date): Promise<void> {
+  const remainingSeconds = Math.max(1, Math.ceil((lockedUntil.getTime() - Date.now()) / 1000));
+  await redis.set(accountLockRedisKey(userId), lockedUntil.toISOString(), {
+    ex: remainingSeconds,
+  });
 }
 
 async function clearAccountLockState(userId: string): Promise<void> {
@@ -385,7 +376,7 @@ async function getActiveLockFromRedis(userId: string): Promise<Date | null> {
   if (!lockedUntil) {
     return null;
   }
-  const parsed = new Date(lockedUntil);
+  const parsed = new Date(String(lockedUntil));
   if (Number.isNaN(parsed.getTime()) || parsed.getTime() <= Date.now()) {
     await clearAccountLockState(userId);
     return null;
@@ -409,8 +400,14 @@ async function completeSuccessfulLogin(input: {
   reasons: string[];
 }> {
   const { req, user } = input;
-  const accessToken = generateAccessToken({ userId: user.id, email: user.email });
-  const refreshToken = generateRefreshToken({ userId: user.id, email: user.email });
+  const accessToken = generateAccessToken({
+    userId: user.id,
+    email: user.email,
+  });
+  const refreshToken = generateRefreshToken({
+    userId: user.id,
+    email: user.email,
+  });
   const ipAddress = getClientIp(req) ?? 'unknown';
   const parsedAgent = parseUserAgent(req.headers['user-agent']);
 
@@ -426,12 +423,9 @@ async function completeSuccessfulLogin(input: {
   });
 
   const requiresSuspiciousVerification = analysis.riskScore >= 80;
-  const sessionResult = await createSessionForAccessToken(
-    user.id,
-    accessToken,
-    req,
-    { suspiciousVerifiedAt: requiresSuspiciousVerification ? null : new Date() },
-  );
+  const sessionResult = await createSessionForAccessToken(user.id, accessToken, req, {
+    suspiciousVerifiedAt: requiresSuspiciousVerification ? null : new Date(),
+  });
   if (!requiresSuspiciousVerification) {
     await setRefreshSession(user.id, hashToken(refreshToken));
     input.res.cookie('refreshToken', refreshToken, cookieOptions);
@@ -655,278 +649,304 @@ router.patch('/profile', authenticateToken, async (req: Request, res: Response):
   }
 });
 
-router.post(
+router.post('/profile/avatar', authenticateToken, (req: Request, res: Response): void => {
+  avatarUpload.single('avatar')(req, res, async (uploadError: unknown) => {
+    try {
+      if (uploadError) {
+        if (uploadError instanceof multer.MulterError && uploadError.code === 'LIMIT_FILE_SIZE') {
+          res.status(400).json({ error: 'FILE_TOO_LARGE' });
+          return;
+        }
+        const message = uploadError instanceof Error ? uploadError.message : 'INVALID_FILE';
+        res.status(400).json({ error: message });
+        return;
+      }
+
+      const file = req.file;
+      if (!file) {
+        res.status(400).json({ error: 'AVATAR_FILE_REQUIRED' });
+        return;
+      }
+
+      const metadata = await sharp(file.buffer).metadata();
+      const allowedFormats = new Set(['jpeg', 'png', 'webp']);
+      if (!metadata.format || !allowedFormats.has(metadata.format)) {
+        res.status(400).json({ error: 'INVALID_IMAGE_CONTENT' });
+        return;
+      }
+
+      const processedBuffer = await sharp(file.buffer)
+        .resize(400, 400, { fit: 'cover', position: 'centre' })
+        .webp({ quality: 85 })
+        .toBuffer();
+
+      const userId = req.user!.id;
+      const [user] = await db
+        .select({
+          avatarUrl: users.avatarUrl,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+      await fs.mkdir(AVATAR_UPLOAD_DIR, { recursive: true });
+      const fileName = `avatar-${userId}-${Date.now()}.webp`;
+      const filePath = path.join(AVATAR_UPLOAD_DIR, fileName);
+      await fs.writeFile(filePath, processedBuffer);
+      const avatarUrl = `/uploads/avatars/${fileName}`;
+
+      if (isLocalAvatarPath(user?.avatarUrl)) {
+        const previousPath = path.resolve(user.avatarUrl.replace(/^\//, ''));
+        if (previousPath !== filePath) {
+          await fs.unlink(previousPath).catch(() => undefined);
+        }
+      }
+
+      await db.update(users).set({ avatarUrl }).where(eq(users.id, userId));
+      res.status(200).json({ avatarUrl });
+    } catch (error) {
+      console.error('[Upload Avatar Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+});
+
+router.delete(
   '/profile/avatar',
   authenticateToken,
-  (req: Request, res: Response): void => {
-    avatarUpload.single('avatar')(req, res, async (uploadError: unknown) => {
-      try {
-        if (uploadError) {
-          if (uploadError instanceof multer.MulterError && uploadError.code === 'LIMIT_FILE_SIZE') {
-            res.status(400).json({ error: 'FILE_TOO_LARGE' });
-            return;
-          }
-          const message = uploadError instanceof Error ? uploadError.message : 'INVALID_FILE';
-          res.status(400).json({ error: message });
-          return;
-        }
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const [user] = await db
+        .select({
+          avatarUrl: users.avatarUrl,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
 
-        const file = req.file;
-        if (!file) {
-          res.status(400).json({ error: 'AVATAR_FILE_REQUIRED' });
-          return;
-        }
-
-        const metadata = await sharp(file.buffer).metadata();
-        const allowedFormats = new Set(['jpeg', 'png', 'webp']);
-        if (!metadata.format || !allowedFormats.has(metadata.format)) {
-          res.status(400).json({ error: 'INVALID_IMAGE_CONTENT' });
-          return;
-        }
-
-        const processedBuffer = await sharp(file.buffer)
-          .resize(400, 400, { fit: 'cover', position: 'centre' })
-          .webp({ quality: 85 })
-          .toBuffer();
-
-        const userId = req.user!.id;
-        const [user] = await db
-          .select({
-            avatarUrl: users.avatarUrl,
-          })
-          .from(users)
-          .where(eq(users.id, userId))
-          .limit(1);
-
-        await fs.mkdir(AVATAR_UPLOAD_DIR, { recursive: true });
-        const fileName = `avatar-${userId}-${Date.now()}.webp`;
-        const filePath = path.join(AVATAR_UPLOAD_DIR, fileName);
-        await fs.writeFile(filePath, processedBuffer);
-        const avatarUrl = `/uploads/avatars/${fileName}`;
-
-        if (isLocalAvatarPath(user?.avatarUrl)) {
-          const previousPath = path.resolve(user.avatarUrl.replace(/^\//, ''));
-          if (previousPath !== filePath) {
-            await fs.unlink(previousPath).catch(() => undefined);
-          }
-        }
-
-        await db.update(users).set({ avatarUrl }).where(eq(users.id, userId));
-        res.status(200).json({ avatarUrl });
-      } catch (error) {
-        console.error('[Upload Avatar Error]', error);
-        res.status(500).json({ error: 'Internal server error' });
+      if (isLocalAvatarPath(user?.avatarUrl)) {
+        const avatarPath = path.resolve(user.avatarUrl.replace(/^\//, ''));
+        await fs.unlink(avatarPath).catch(() => undefined);
       }
-    });
+
+      await db.update(users).set({ avatarUrl: null }).where(eq(users.id, userId));
+      res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('[Delete Avatar Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
   },
 );
 
-router.delete('/profile/avatar', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const [user] = await db
-      .select({
-        avatarUrl: users.avatarUrl,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-
-    if (isLocalAvatarPath(user?.avatarUrl)) {
-      const avatarPath = path.resolve(user.avatarUrl.replace(/^\//, ''));
-      await fs.unlink(avatarPath).catch(() => undefined);
-    }
-
-    await db.update(users).set({ avatarUrl: null }).where(eq(users.id, userId));
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('[Delete Avatar Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.patch('/profile/password', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const currentPassword =
-      typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
-    const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
-
-    if (!currentPassword || !newPassword) {
-      res.status(400).json({ error: 'CURRENT_AND_NEW_PASSWORD_REQUIRED' });
-      return;
-    }
-
-    const [user] = await db
-      .select({
-        id: users.id,
-        email: users.email,
-        name: users.name,
-        passwordHash: users.passwordHash,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-
-    if (!user || !user.passwordHash) {
-      res.status(400).json({ error: 'PASSWORD_AUTH_NOT_AVAILABLE' });
-      return;
-    }
-
-    const validCurrentPassword = await bcrypt.compare(currentPassword, user.passwordHash);
-    if (!validCurrentPassword) {
-      res.status(401).json({ error: 'INVALID_CURRENT_PASSWORD' });
-      return;
-    }
-
-    if (currentPassword === newPassword) {
-      res.status(400).json({ error: 'NEW_PASSWORD_MUST_BE_DIFFERENT' });
-      return;
-    }
-
-    const passwordValidation = validatePassword(newPassword);
-    if (!passwordValidation.valid) {
-      res.status(400).json({ error: 'WEAK_PASSWORD', requirements: passwordValidation.errors });
-      return;
-    }
-
-    const passwordHash = await bcrypt.hash(newPassword, 12);
-    await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
-    await revokeAllSessionsForUser(userId, req.authTokenHash ?? null);
-
+router.patch(
+  '/profile/password',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
     try {
-      await queueEmail({
-        to: user.email,
-        template: 'profile_password_changed',
-        data: {
-          userName: user.name,
-        },
+      const userId = req.user!.id;
+      const currentPassword =
+        typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
+      const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+
+      if (!currentPassword || !newPassword) {
+        res.status(400).json({ error: 'CURRENT_AND_NEW_PASSWORD_REQUIRED' });
+        return;
+      }
+
+      const [user] = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          name: users.name,
+          passwordHash: users.passwordHash,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+      if (!user || !user.passwordHash) {
+        res.status(400).json({ error: 'PASSWORD_AUTH_NOT_AVAILABLE' });
+        return;
+      }
+
+      const validCurrentPassword = await bcrypt.compare(currentPassword, user.passwordHash);
+      if (!validCurrentPassword) {
+        res.status(401).json({ error: 'INVALID_CURRENT_PASSWORD' });
+        return;
+      }
+
+      if (currentPassword === newPassword) {
+        res.status(400).json({ error: 'NEW_PASSWORD_MUST_BE_DIFFERENT' });
+        return;
+      }
+
+      const passwordValidation = validatePassword(newPassword);
+      if (!passwordValidation.valid) {
+        res.status(400).json({
+          error: 'WEAK_PASSWORD',
+          requirements: passwordValidation.errors,
+        });
+        return;
+      }
+
+      const passwordHash = await bcrypt.hash(newPassword, 12);
+      await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+      await revokeAllSessionsForUser(userId, req.authTokenHash ?? null);
+
+      try {
+        await queueEmail({
+          to: user.email,
+          template: 'profile_password_changed',
+          data: {
+            userName: user.name,
+          },
+        });
+      } catch (emailError) {
+        console.error('[Profile Password Changed Email Error]', emailError);
+      }
+
+      res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('[Change Password Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
+
+router.patch(
+  '/profile/email',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const newEmail =
+        typeof req.body?.newEmail === 'string' ? normalizeEmail(req.body.newEmail) : '';
+      const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+      if (!newEmail || !password || !isValidEmailFormat(newEmail)) {
+        res.status(400).json({ error: 'INVALID_INPUT' });
+        return;
+      }
+
+      const [user] = await db
+        .select({
+          email: users.email,
+          passwordHash: users.passwordHash,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+      if (!user || !user.passwordHash) {
+        res.status(401).json({ error: 'INVALID_PASSWORD' });
+        return;
+      }
+
+      const passwordMatches = await bcrypt.compare(password, user.passwordHash);
+      if (!passwordMatches) {
+        res.status(401).json({ error: 'INVALID_PASSWORD' });
+        return;
+      }
+
+      if (normalizeEmail(user.email) === newEmail) {
+        res.status(400).json({ error: 'EMAIL_UNCHANGED' });
+        return;
+      }
+
+      const [existing] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(sql`lower(${users.email}) = ${newEmail}`)
+        .limit(1);
+      if (existing) {
+        res.status(409).json({ error: 'EMAIL_EXISTS' });
+        return;
+      }
+
+      await db.update(users).set({ emailVerified: false }).where(eq(users.id, userId));
+      await redis.set(`email:pending:${userId}`, newEmail, { ex: 3600 });
+      await createAndSendOtp(newEmail);
+
+      res.status(200).json({ message: 'Verify your new email to confirm the change' });
+    } catch (error) {
+      console.error('[Change Email Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
+
+router.get(
+  '/profile/email/pending',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const pendingEmail = await redis.get(`email:pending:${req.user!.id}`);
+      res.status(200).json({ pendingEmail });
+    } catch (error) {
+      console.error('[Pending Email Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
+
+router.post(
+  '/profile/email/verify',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const otp = typeof req.body?.otp === 'string' ? req.body.otp.trim() : '';
+      if (!/^\d{6}$/.test(otp)) {
+        res.status(400).json({ error: 'INVALID_OR_EXPIRED_CODE' });
+        return;
+      }
+
+      const pendingEmail = await redis.get(`email:pending:${userId}`);
+      if (!pendingEmail) {
+        res.status(400).json({ error: 'NO_PENDING_EMAIL_CHANGE' });
+        return;
+      }
+
+      const verified = await verifyOtp(String(pendingEmail), otp);
+      if (!verified) {
+        res.status(400).json({ error: 'INVALID_OR_EXPIRED_CODE' });
+        return;
+      }
+
+      await db
+        .update(users)
+        .set({
+          email: String(pendingEmail),
+          emailVerified: true,
+        })
+        .where(eq(users.id, userId));
+      await redis.del(`email:pending:${userId}`);
+
+      res.status(200).json({ success: true, email: pendingEmail });
+    } catch (error) {
+      console.error('[Verify Changed Email Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
+
+router.get(
+  '/link-google',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const stateToken = randomBytes(16).toString('hex');
+      await redis.set(`oauth:link-state:${stateToken}`, req.user!.id, {
+        ex: OAUTH_LINK_STATE_WINDOW_SECONDS,
       });
-    } catch (emailError) {
-      console.error('[Profile Password Changed Email Error]', emailError);
+      res.redirect(`/api/oauth/google?state=${encodeURIComponent(`link:${stateToken}`)}`);
+    } catch (error) {
+      console.error('[Initiate Google Link Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
-
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('[Change Password Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.patch('/profile/email', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const newEmail = typeof req.body?.newEmail === 'string' ? normalizeEmail(req.body.newEmail) : '';
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-
-    if (!newEmail || !password || !isValidEmailFormat(newEmail)) {
-      res.status(400).json({ error: 'INVALID_INPUT' });
-      return;
-    }
-
-    const [user] = await db
-      .select({
-        email: users.email,
-        passwordHash: users.passwordHash,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-
-    if (!user || !user.passwordHash) {
-      res.status(401).json({ error: 'INVALID_PASSWORD' });
-      return;
-    }
-
-    const passwordMatches = await bcrypt.compare(password, user.passwordHash);
-    if (!passwordMatches) {
-      res.status(401).json({ error: 'INVALID_PASSWORD' });
-      return;
-    }
-
-    if (normalizeEmail(user.email) === newEmail) {
-      res.status(400).json({ error: 'EMAIL_UNCHANGED' });
-      return;
-    }
-
-    const [existing] = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(sql`lower(${users.email}) = ${newEmail}`)
-      .limit(1);
-    if (existing) {
-      res.status(409).json({ error: 'EMAIL_EXISTS' });
-      return;
-    }
-
-    await db.update(users).set({ emailVerified: false }).where(eq(users.id, userId));
-    await redis.set(`email:pending:${userId}`, newEmail, 'EX', 3600);
-    await createAndSendOtp(newEmail);
-
-    res.status(200).json({ message: 'Verify your new email to confirm the change' });
-  } catch (error) {
-    console.error('[Change Email Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.get('/profile/email/pending', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const pendingEmail = await redis.get(`email:pending:${req.user!.id}`);
-    res.status(200).json({ pendingEmail });
-  } catch (error) {
-    console.error('[Pending Email Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.post('/profile/email/verify', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const otp = typeof req.body?.otp === 'string' ? req.body.otp.trim() : '';
-    if (!/^\d{6}$/.test(otp)) {
-      res.status(400).json({ error: 'INVALID_OR_EXPIRED_CODE' });
-      return;
-    }
-
-    const pendingEmail = await redis.get(`email:pending:${userId}`);
-    if (!pendingEmail) {
-      res.status(400).json({ error: 'NO_PENDING_EMAIL_CHANGE' });
-      return;
-    }
-
-    const verified = await verifyOtp(pendingEmail, otp);
-    if (!verified) {
-      res.status(400).json({ error: 'INVALID_OR_EXPIRED_CODE' });
-      return;
-    }
-
-    await db
-      .update(users)
-      .set({
-        email: pendingEmail,
-        emailVerified: true,
-      })
-      .where(eq(users.id, userId));
-    await redis.del(`email:pending:${userId}`);
-
-    res.status(200).json({ success: true, email: pendingEmail });
-  } catch (error) {
-    console.error('[Verify Changed Email Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.get('/link-google', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const stateToken = randomBytes(16).toString('hex');
-    await redis.set(`oauth:link-state:${stateToken}`, req.user!.id, 'EX', OAUTH_LINK_STATE_WINDOW_SECONDS);
-    res.redirect(`/api/oauth/google?state=${encodeURIComponent(`link:${stateToken}`)}`);
-  } catch (error) {
-    console.error('[Initiate Google Link Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+  },
+);
 
 router.get('/link-google/pending', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -942,7 +962,7 @@ router.get('/link-google/pending', async (req: Request, res: Response): Promise<
       return;
     }
 
-    const payload = JSON.parse(payloadRaw) as {
+    const payload = JSON.parse(String(payloadRaw)) as {
       googleEmail: string;
       name: string;
       avatar?: string | null;
@@ -993,7 +1013,7 @@ router.post('/link-google/confirm', async (req: Request, res: Response): Promise
       return;
     }
 
-    const payload = JSON.parse(payloadRaw) as {
+    const payload = JSON.parse(String(payloadRaw)) as {
       googleId: string;
       googleEmail: string;
       name: string;
@@ -1040,8 +1060,14 @@ router.post('/link-google/confirm', async (req: Request, res: Response): Promise
       .where(eq(users.id, existingUser.id));
     await redis.del(`oauth:pending:${linkToken}`);
 
-    const accessToken = generateAccessToken({ userId: existingUser.id, email: existingUser.email });
-    const refreshToken = generateRefreshToken({ userId: existingUser.id, email: existingUser.email });
+    const accessToken = generateAccessToken({
+      userId: existingUser.id,
+      email: existingUser.email,
+    });
+    const refreshToken = generateRefreshToken({
+      userId: existingUser.id,
+      email: existingUser.email,
+    });
     await attachAuthSession(req, res, existingUser.id, accessToken, refreshToken);
 
     try {
@@ -1074,129 +1100,140 @@ router.post('/link-google/confirm', async (req: Request, res: Response): Promise
   }
 });
 
-router.delete('/unlink-google', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    if (!password) {
-      res.status(400).json({ error: 'PASSWORD_REQUIRED' });
-      return;
-    }
-
-    const [user] = await db
-      .select({
-        email: users.email,
-        name: users.name,
-        passwordHash: users.passwordHash,
-        googleId: users.googleId,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-    if (!user) {
-      res.status(404).json({ error: 'USER_NOT_FOUND' });
-      return;
-    }
-    if (!user.passwordHash) {
-      res.status(400).json({
-        error: 'NO_PASSWORD_SET',
-        message: 'Set a password before unlinking Google',
-      });
-      return;
-    }
-    if (!user.googleId) {
-      res.status(400).json({ error: 'GOOGLE_NOT_LINKED' });
-      return;
-    }
-
-    const passwordValid = await bcrypt.compare(password, user.passwordHash);
-    if (!passwordValid) {
-      res.status(401).json({ error: 'INVALID_PASSWORD' });
-      return;
-    }
-
-    await db
-      .update(users)
-      .set({
-        googleId: null,
-        googleLinkedAt: null,
-        googleEmail: null,
-      })
-      .where(eq(users.id, userId));
-
+router.delete(
+  '/unlink-google',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
     try {
-      await queueEmail({
-        to: user.email,
-        template: 'google_unlinked',
-        data: {
-          userName: user.name,
-        },
-      });
-    } catch (emailError) {
-      console.error('[Google Unlinked Email Error]', emailError);
+      const userId = req.user!.id;
+      const password = typeof req.body?.password === 'string' ? req.body.password : '';
+      if (!password) {
+        res.status(400).json({ error: 'PASSWORD_REQUIRED' });
+        return;
+      }
+
+      const [user] = await db
+        .select({
+          email: users.email,
+          name: users.name,
+          passwordHash: users.passwordHash,
+          googleId: users.googleId,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      if (!user) {
+        res.status(404).json({ error: 'USER_NOT_FOUND' });
+        return;
+      }
+      if (!user.passwordHash) {
+        res.status(400).json({
+          error: 'NO_PASSWORD_SET',
+          message: 'Set a password before unlinking Google',
+        });
+        return;
+      }
+      if (!user.googleId) {
+        res.status(400).json({ error: 'GOOGLE_NOT_LINKED' });
+        return;
+      }
+
+      const passwordValid = await bcrypt.compare(password, user.passwordHash);
+      if (!passwordValid) {
+        res.status(401).json({ error: 'INVALID_PASSWORD' });
+        return;
+      }
+
+      await db
+        .update(users)
+        .set({
+          googleId: null,
+          googleLinkedAt: null,
+          googleEmail: null,
+        })
+        .where(eq(users.id, userId));
+
+      try {
+        await queueEmail({
+          to: user.email,
+          template: 'google_unlinked',
+          data: {
+            userName: user.name,
+          },
+        });
+      } catch (emailError) {
+        console.error('[Google Unlinked Email Error]', emailError);
+      }
+
+      res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('[Unlink Google Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
+  },
+);
 
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('[Unlink Google Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.post('/set-password', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
-    if (!newPassword) {
-      res.status(400).json({ error: 'PASSWORD_REQUIRED' });
-      return;
-    }
-
-    const [user] = await db
-      .select({
-        email: users.email,
-        name: users.name,
-        passwordHash: users.passwordHash,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-    if (!user) {
-      res.status(404).json({ error: 'USER_NOT_FOUND' });
-      return;
-    }
-    if (user.passwordHash) {
-      res.status(400).json({ error: 'PASSWORD_ALREADY_SET' });
-      return;
-    }
-
-    const passwordValidation = validatePassword(newPassword);
-    if (!passwordValidation.valid) {
-      res.status(400).json({ error: 'WEAK_PASSWORD', requirements: passwordValidation.errors });
-      return;
-    }
-
-    const passwordHash = await bcrypt.hash(newPassword, 12);
-    await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
-
+router.post(
+  '/set-password',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
     try {
-      await queueEmail({
-        to: user.email,
-        template: 'password_added',
-        data: {
-          userName: user.name,
-        },
-      });
-    } catch (emailError) {
-      console.error('[Password Added Email Error]', emailError);
-    }
+      const userId = req.user!.id;
+      const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+      if (!newPassword) {
+        res.status(400).json({ error: 'PASSWORD_REQUIRED' });
+        return;
+      }
 
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('[Set Password Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+      const [user] = await db
+        .select({
+          email: users.email,
+          name: users.name,
+          passwordHash: users.passwordHash,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      if (!user) {
+        res.status(404).json({ error: 'USER_NOT_FOUND' });
+        return;
+      }
+      if (user.passwordHash) {
+        res.status(400).json({ error: 'PASSWORD_ALREADY_SET' });
+        return;
+      }
+
+      const passwordValidation = validatePassword(newPassword);
+      if (!passwordValidation.valid) {
+        res.status(400).json({
+          error: 'WEAK_PASSWORD',
+          requirements: passwordValidation.errors,
+        });
+        return;
+      }
+
+      const passwordHash = await bcrypt.hash(newPassword, 12);
+      await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+
+      try {
+        await queueEmail({
+          to: user.email,
+          template: 'password_added',
+          data: {
+            userName: user.name,
+          },
+        });
+      } catch (emailError) {
+        console.error('[Password Added Email Error]', emailError);
+      }
+
+      res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('[Set Password Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
 
 router.post('/signup', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -1308,7 +1345,7 @@ router.post('/verify-email', otpLimiter, async (req: Request, res: Response): Pr
     }
 
     const attemptsKey = `ratelimit:otp:${emailInput}`;
-    const existingAttempts = Number(await redis.get(attemptsKey) || 0);
+    const existingAttempts = Number((await redis.get(attemptsKey)) || 0);
     if (existingAttempts >= OTP_ATTEMPT_MAX) {
       const retryAfter = Math.max(0, await redis.ttl(attemptsKey));
       res.status(429).json({ error: 'TOO_MANY_ATTEMPTS', retryAfter });
@@ -1349,7 +1386,10 @@ router.post('/verify-email', otpLimiter, async (req: Request, res: Response): Pr
 
     await db.transaction(async (tx) => {
       await tx.update(otpCodes).set({ verified: true }).where(eq(otpCodes.id, latestOtp.id));
-      await tx.update(users).set({ emailVerified: true }).where(sql`lower(${users.email}) = ${emailInput}`);
+      await tx
+        .update(users)
+        .set({ emailVerified: true })
+        .where(sql`lower(${users.email}) = ${emailInput}`);
     });
     await redis.del(attemptsKey);
 
@@ -1388,54 +1428,54 @@ router.post('/verify-email', otpLimiter, async (req: Request, res: Response): Pr
   }
 });
 
-
-router.post('/forgot-password', passwordResetLimiter, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const emailInput =
-      typeof req.body?.email === 'string' ? normalizeEmail(req.body.email) : '';
-    if (!emailInput) {
-      res.status(200).json({ message: FORGOT_PASSWORD_SUCCESS_MESSAGE });
-      return;
-    }
-
-    const rateLimitKey = `ratelimit:forgot:${emailInput}`;
-    const requestCount = await redis.incr(rateLimitKey);
-    if (requestCount === 1) {
-      await redis.expire(rateLimitKey, FORGOT_PASSWORD_RATE_LIMIT_WINDOW_SECONDS);
-    }
-    const isRateLimited = requestCount > FORGOT_PASSWORD_MAX_REQUESTS_PER_WINDOW;
-
-    const [user] = await db
-      .select({
-        id: users.id,
-        name: users.name,
-        email: users.email,
-      })
-      .from(users)
-      .where(sql`lower(${users.email}) = ${emailInput}`)
-      .limit(1);
-
-    if (user && !isRateLimited) {
-      try {
-        await createAndQueuePasswordResetEmail({
-          userId: user.id,
-          userName: user.name,
-          deliveryEmail: user.email,
-          req,
-        });
-      } catch (emailError) {
-        console.error('[Forgot Password Email Error]', emailError);
+router.post(
+  '/forgot-password',
+  passwordResetLimiter,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const emailInput = typeof req.body?.email === 'string' ? normalizeEmail(req.body.email) : '';
+      if (!emailInput) {
+        res.status(200).json({ message: FORGOT_PASSWORD_SUCCESS_MESSAGE });
+        return;
       }
-    }
 
-    res
-      .status(isRateLimited ? 429 : 200)
-      .json({ message: FORGOT_PASSWORD_SUCCESS_MESSAGE });
-  } catch (error) {
-    console.error('[Forgot Password Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+      const rateLimitKey = `ratelimit:forgot:${emailInput}`;
+      const requestCount = await redis.incr(rateLimitKey);
+      if (requestCount === 1) {
+        await redis.expire(rateLimitKey, FORGOT_PASSWORD_RATE_LIMIT_WINDOW_SECONDS);
+      }
+      const isRateLimited = requestCount > FORGOT_PASSWORD_MAX_REQUESTS_PER_WINDOW;
+
+      const [user] = await db
+        .select({
+          id: users.id,
+          name: users.name,
+          email: users.email,
+        })
+        .from(users)
+        .where(sql`lower(${users.email}) = ${emailInput}`)
+        .limit(1);
+
+      if (user && !isRateLimited) {
+        try {
+          await createAndQueuePasswordResetEmail({
+            userId: user.id,
+            userName: user.name,
+            deliveryEmail: user.email,
+            req,
+          });
+        } catch (emailError) {
+          console.error('[Forgot Password Email Error]', emailError);
+        }
+      }
+
+      res.status(isRateLimited ? 429 : 200).json({ message: FORGOT_PASSWORD_SUCCESS_MESSAGE });
+    } catch (error) {
+      console.error('[Forgot Password Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
 
 router.get('/reset-password/validate', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -1479,8 +1519,7 @@ router.get('/reset-password/validate', async (req: Request, res: Response): Prom
 router.post('/reset-password', async (req: Request, res: Response): Promise<void> => {
   try {
     const token = typeof req.body?.token === 'string' ? req.body.token : '';
-    const newPassword =
-      typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+    const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
 
     if (!token) {
       res.status(400).json({ error: 'INVALID_OR_EXPIRED_TOKEN' });
@@ -1741,12 +1780,9 @@ router.post('/login', loginLimiter, async (req: Request, res: Response): Promise
         userId: user.id,
         email: user.email,
       });
-      await redis.set(
-        twoFactorPendingLoginKey(hashToken(pendingToken)),
-        user.id,
-        'EX',
-        TWO_FACTOR_PENDING_LOGIN_WINDOW_SECONDS,
-      );
+      await redis.set(twoFactorPendingLoginKey(hashToken(pendingToken)), user.id, {
+        ex: TWO_FACTOR_PENDING_LOGIN_WINDOW_SECONDS,
+      });
       res.status(200).json({
         requires2FA: true,
         pendingToken,
@@ -1902,389 +1938,430 @@ router.post(
   },
 );
 
-router.post('/sessions/revoke-all', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const exceptCurrent = parseBoolean(req.body?.exceptCurrent);
-    const currentTokenHash = req.authTokenHash ?? null;
-    const revokedCount = await revokeAllSessionsForUser(
-      userId,
-      exceptCurrent ? currentTokenHash : null,
-    );
-
-    if (!exceptCurrent) {
-      await deleteRefreshSession(userId);
-      res.clearCookie('refreshToken');
-    }
-
-    res.status(200).json({ revokedCount });
-  } catch (error) {
-    console.error('[Sessions Revoke All Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.get('/backup-codes/status', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const [user] = await db
-      .select({
-        backupCodesGeneratedAt: users.backupCodesGeneratedAt,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-
-    const [remaining] = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(backupCodes)
-      .where(and(eq(backupCodes.userId, userId), isNull(backupCodes.usedAt)));
-
-    res.status(200).json({
-      remaining: Number(remaining?.count ?? 0),
-      backupCodesGeneratedAt: user?.backupCodesGeneratedAt ?? null,
-    });
-  } catch (error) {
-    console.error('[Backup Codes Status Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.post('/backup-codes/generate', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    const [user] = await db
-      .select({
-        id: users.id,
-        passwordHash: users.passwordHash,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-
-    if (!user) {
-      res.status(404).json({ error: 'USER_NOT_FOUND' });
-      return;
-    }
-
-    if (user.passwordHash) {
-      if (!password) {
-        res.status(400).json({ error: 'PASSWORD_REQUIRED' });
-        return;
-      }
-      const isValidPassword = await bcrypt.compare(password, user.passwordHash);
-      if (!isValidPassword) {
-        res.status(401).json({ error: 'INVALID_PASSWORD' });
-        return;
-      }
-    }
-
-    const result = await generateBackupCodesForUser(userId);
-
-    res.status(200).json({
-      codes: result.formattedCodes,
-      generatedAt: result.generatedAt.toISOString(),
-    });
-  } catch (error) {
-    console.error('[Generate Backup Codes Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.post('/recover/backup-code', strictLimiter, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const emailInput = typeof req.body?.email === 'string' ? normalizeEmail(req.body.email) : '';
-    const backupCodeInput =
-      typeof req.body?.backupCode === 'string' ? normalizeBackupCode(req.body.backupCode) : '';
-    const ipAddress = getClientIp(req) ?? 'unknown';
-    const userAgent = req.headers['user-agent'] ?? 'Unknown';
-
-    const rateLimit = await applyRateLimit(
-      `ratelimit:recover:backup:${ipAddress}`,
-      BACKUP_CODE_RECOVERY_MAX_ATTEMPTS,
-      BACKUP_CODE_RECOVERY_WINDOW_SECONDS,
-    );
-    if (rateLimit.limited) {
-      res.status(429).json({ error: 'TOO_MANY_ATTEMPTS', retryAfter: rateLimit.retryAfter });
-      return;
-    }
-
-    if (!emailInput || backupCodeInput.length !== 10) {
-      res.status(400).json({ error: 'INVALID' });
-      return;
-    }
-
-    const [user] = await db
-      .select({
-        id: users.id,
-        name: users.name,
-        email: users.email,
-        avatarUrl: users.avatarUrl,
-        emailVerified: users.emailVerified,
-      })
-      .from(users)
-      .where(sql`lower(${users.email}) = ${emailInput}`)
-      .limit(1);
-
-    if (!user || !user.emailVerified) {
-      res.status(400).json({ error: 'INVALID' });
-      return;
-    }
-
-    const incomingHash = createHash('sha256').update(backupCodeInput).digest('hex');
-    const [matchedCode] = await db
-      .select({
-        id: backupCodes.id,
-      })
-      .from(backupCodes)
-      .where(
-        and(
-          eq(backupCodes.userId, user.id),
-          eq(backupCodes.codeHash, incomingHash),
-          isNull(backupCodes.usedAt),
-        ),
-      )
-      .limit(1);
-
-    if (!matchedCode) {
-      res.status(400).json({ error: 'INVALID' });
-      return;
-    }
-
-    await db
-      .update(backupCodes)
-      .set({ usedAt: new Date() })
-      .where(eq(backupCodes.id, matchedCode.id));
-
-    const [remaining] = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(backupCodes)
-      .where(and(eq(backupCodes.userId, user.id), isNull(backupCodes.usedAt)));
-    const codesRemaining = Number(remaining?.count ?? 0);
-
-    const accessToken = generateAccessToken({ userId: user.id, email: user.email });
-    const refreshToken = generateRefreshToken({ userId: user.id, email: user.email });
-    await attachAuthSession(req, res, user.id, accessToken, refreshToken);
-
+router.post(
+  '/sessions/revoke-all',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
     try {
-      await queueEmail({
-        to: user.email,
-        template: 'backup_code_security_alert',
-        data: {
-          userName: user.name,
-          timestamp: new Date().toISOString(),
-          ipAddress: ipAddress || undefined,
-          userAgent: String(userAgent),
-        },
+      const userId = req.user!.id;
+      const exceptCurrent = parseBoolean(req.body?.exceptCurrent);
+      const currentTokenHash = req.authTokenHash ?? null;
+      const revokedCount = await revokeAllSessionsForUser(
+        userId,
+        exceptCurrent ? currentTokenHash : null,
+      );
+
+      if (!exceptCurrent) {
+        await deleteRefreshSession(userId);
+        res.clearCookie('refreshToken');
+      }
+
+      res.status(200).json({ revokedCount });
+    } catch (error) {
+      console.error('[Sessions Revoke All Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
+
+router.get(
+  '/backup-codes/status',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const [user] = await db
+        .select({
+          backupCodesGeneratedAt: users.backupCodesGeneratedAt,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+      const [remaining] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(backupCodes)
+        .where(and(eq(backupCodes.userId, userId), isNull(backupCodes.usedAt)));
+
+      res.status(200).json({
+        remaining: Number(remaining?.count ?? 0),
+        backupCodesGeneratedAt: user?.backupCodesGeneratedAt ?? null,
       });
-    } catch (emailError) {
-      console.error('[Backup Code Alert Email Error]', emailError);
+    } catch (error) {
+      console.error('[Backup Codes Status Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
+  },
+);
 
-    res.status(200).json({
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        avatarUrl: user.avatarUrl,
-        emailVerified: user.emailVerified,
-      },
-      accessToken,
-      codesRemaining,
-      ...(codesRemaining < 3 ? { warning: 'LOW_BACKUP_CODES' } : {}),
-    });
-  } catch (error) {
-    console.error('[Backup Code Recovery Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+router.post(
+  '/backup-codes/generate',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const password = typeof req.body?.password === 'string' ? req.body.password : '';
+      const [user] = await db
+        .select({
+          id: users.id,
+          passwordHash: users.passwordHash,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
 
-router.post('/recovery-email/add', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const recoveryEmail =
-      typeof req.body?.recoveryEmail === 'string' ? normalizeEmail(req.body.recoveryEmail) : '';
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-
-    if (!recoveryEmail || !isValidEmailFormat(recoveryEmail)) {
-      res.status(400).json({ error: 'INVALID_RECOVERY_EMAIL' });
-      return;
-    }
-
-    const [user] = await db
-      .select({
-        id: users.id,
-        email: users.email,
-        passwordHash: users.passwordHash,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-
-    if (!user) {
-      res.status(404).json({ error: 'USER_NOT_FOUND' });
-      return;
-    }
-
-    if (recoveryEmail === normalizeEmail(user.email)) {
-      res.status(400).json({ error: 'RECOVERY_EMAIL_MATCHES_PRIMARY' });
-      return;
-    }
-
-    if (user.passwordHash) {
-      if (!password) {
-        res.status(400).json({ error: 'PASSWORD_REQUIRED' });
+      if (!user) {
+        res.status(404).json({ error: 'USER_NOT_FOUND' });
         return;
       }
-      const passwordMatches = await bcrypt.compare(password, user.passwordHash);
-      if (!passwordMatches) {
-        res.status(401).json({ error: 'INVALID_PASSWORD' });
+
+      if (user.passwordHash) {
+        if (!password) {
+          res.status(400).json({ error: 'PASSWORD_REQUIRED' });
+          return;
+        }
+        const isValidPassword = await bcrypt.compare(password, user.passwordHash);
+        if (!isValidPassword) {
+          res.status(401).json({ error: 'INVALID_PASSWORD' });
+          return;
+        }
+      }
+
+      const result = await generateBackupCodesForUser(userId);
+
+      res.status(200).json({
+        codes: result.formattedCodes,
+        generatedAt: result.generatedAt.toISOString(),
+      });
+    } catch (error) {
+      console.error('[Generate Backup Codes Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
+
+router.post(
+  '/recover/backup-code',
+  strictLimiter,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const emailInput = typeof req.body?.email === 'string' ? normalizeEmail(req.body.email) : '';
+      const backupCodeInput =
+        typeof req.body?.backupCode === 'string' ? normalizeBackupCode(req.body.backupCode) : '';
+      const ipAddress = getClientIp(req) ?? 'unknown';
+      const userAgent = req.headers['user-agent'] ?? 'Unknown';
+
+      const rateLimit = await applyRateLimit(
+        `ratelimit:recover:backup:${ipAddress}`,
+        BACKUP_CODE_RECOVERY_MAX_ATTEMPTS,
+        BACKUP_CODE_RECOVERY_WINDOW_SECONDS,
+      );
+      if (rateLimit.limited) {
+        res.status(429).json({
+          error: 'TOO_MANY_ATTEMPTS',
+          retryAfter: rateLimit.retryAfter,
+        });
         return;
       }
-    }
 
-    const [conflict] = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(
-        and(
-          ne(users.id, userId),
-          or(
-            sql`lower(${users.email}) = ${recoveryEmail}`,
-            sql`lower(${users.recoveryEmail}) = ${recoveryEmail}`,
+      if (!emailInput || backupCodeInput.length !== 10) {
+        res.status(400).json({ error: 'INVALID' });
+        return;
+      }
+
+      const [user] = await db
+        .select({
+          id: users.id,
+          name: users.name,
+          email: users.email,
+          avatarUrl: users.avatarUrl,
+          emailVerified: users.emailVerified,
+        })
+        .from(users)
+        .where(sql`lower(${users.email}) = ${emailInput}`)
+        .limit(1);
+
+      if (!user || !user.emailVerified) {
+        res.status(400).json({ error: 'INVALID' });
+        return;
+      }
+
+      const incomingHash = createHash('sha256').update(backupCodeInput).digest('hex');
+      const [matchedCode] = await db
+        .select({
+          id: backupCodes.id,
+        })
+        .from(backupCodes)
+        .where(
+          and(
+            eq(backupCodes.userId, user.id),
+            eq(backupCodes.codeHash, incomingHash),
+            isNull(backupCodes.usedAt),
           ),
-        ),
-      )
-      .limit(1);
+        )
+        .limit(1);
 
-    if (conflict) {
-      res.status(409).json({ error: 'RECOVERY_EMAIL_IN_USE' });
-      return;
-    }
+      if (!matchedCode) {
+        res.status(400).json({ error: 'INVALID' });
+        return;
+      }
 
-    await db
-      .update(users)
-      .set({
-        recoveryEmail,
-        recoveryEmailVerified: false,
-      })
-      .where(eq(users.id, userId));
-    await createAndSendOtp(recoveryEmail);
+      await db
+        .update(backupCodes)
+        .set({ usedAt: new Date() })
+        .where(eq(backupCodes.id, matchedCode.id));
 
-    res.status(200).json({ message: 'Verification sent to recovery email' });
-  } catch (error) {
-    console.error('[Add Recovery Email Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+      const [remaining] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(backupCodes)
+        .where(and(eq(backupCodes.userId, user.id), isNull(backupCodes.usedAt)));
+      const codesRemaining = Number(remaining?.count ?? 0);
 
-router.post('/recovery-email/resend', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const [user] = await db
-      .select({
-        recoveryEmail: users.recoveryEmail,
-        recoveryEmailVerified: users.recoveryEmailVerified,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-
-    if (!user?.recoveryEmail || user.recoveryEmailVerified) {
-      res.status(200).json({ message: 'Verification sent to recovery email' });
-      return;
-    }
-
-    const rateLimit = await applyRateLimit(
-      `ratelimit:recovery-email-resend:${user.recoveryEmail}`,
-      RECOVERY_EMAIL_RESEND_MAX,
-      RECOVERY_EMAIL_RESEND_WINDOW_SECONDS,
-    );
-    if (rateLimit.limited) {
-      res.status(429).json({ error: 'TOO_MANY_ATTEMPTS', retryAfter: rateLimit.retryAfter });
-      return;
-    }
-
-    await createAndSendOtp(user.recoveryEmail);
-    res.status(200).json({ message: 'Verification sent to recovery email' });
-  } catch (error) {
-    console.error('[Resend Recovery Email Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.post('/recovery-email/verify', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const otp = typeof req.body?.otp === 'string' ? req.body.otp.trim() : '';
-    if (!/^\d{6}$/.test(otp)) {
-      res.status(400).json({ error: 'INVALID_OR_EXPIRED_CODE' });
-      return;
-    }
-
-    const [user] = await db
-      .select({
-        recoveryEmail: users.recoveryEmail,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-
-    if (!user?.recoveryEmail) {
-      res.status(400).json({ error: 'RECOVERY_EMAIL_NOT_SET' });
-      return;
-    }
-
-    const verifyAttemptsKey = `ratelimit:recovery-email-verify:${userId}`;
-    const verifyRateLimit = await applyRateLimit(
-      verifyAttemptsKey,
-      RECOVERY_EMAIL_VERIFY_MAX_ATTEMPTS,
-      RECOVERY_EMAIL_VERIFY_WINDOW_SECONDS,
-    );
-    if (verifyRateLimit.limited) {
-      res.status(429).json({
-        error: 'TOO_MANY_ATTEMPTS',
-        retryAfter: verifyRateLimit.retryAfter,
+      const accessToken = generateAccessToken({
+        userId: user.id,
+        email: user.email,
       });
-      return;
+      const refreshToken = generateRefreshToken({
+        userId: user.id,
+        email: user.email,
+      });
+      await attachAuthSession(req, res, user.id, accessToken, refreshToken);
+
+      try {
+        await queueEmail({
+          to: user.email,
+          template: 'backup_code_security_alert',
+          data: {
+            userName: user.name,
+            timestamp: new Date().toISOString(),
+            ipAddress: ipAddress || undefined,
+            userAgent: String(userAgent),
+          },
+        });
+      } catch (emailError) {
+        console.error('[Backup Code Alert Email Error]', emailError);
+      }
+
+      res.status(200).json({
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          avatarUrl: user.avatarUrl,
+          emailVerified: user.emailVerified,
+        },
+        accessToken,
+        codesRemaining,
+        ...(codesRemaining < 3 ? { warning: 'LOW_BACKUP_CODES' } : {}),
+      });
+    } catch (error) {
+      console.error('[Backup Code Recovery Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
+  },
+);
 
-    const isValidOtp = await verifyOtp(user.recoveryEmail, otp);
-    if (!isValidOtp) {
-      res.status(400).json({ error: 'INVALID_OR_EXPIRED_CODE' });
-      return;
+router.post(
+  '/recovery-email/add',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const recoveryEmail =
+        typeof req.body?.recoveryEmail === 'string' ? normalizeEmail(req.body.recoveryEmail) : '';
+      const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+      if (!recoveryEmail || !isValidEmailFormat(recoveryEmail)) {
+        res.status(400).json({ error: 'INVALID_RECOVERY_EMAIL' });
+        return;
+      }
+
+      const [user] = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          passwordHash: users.passwordHash,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+      if (!user) {
+        res.status(404).json({ error: 'USER_NOT_FOUND' });
+        return;
+      }
+
+      if (recoveryEmail === normalizeEmail(user.email)) {
+        res.status(400).json({ error: 'RECOVERY_EMAIL_MATCHES_PRIMARY' });
+        return;
+      }
+
+      if (user.passwordHash) {
+        if (!password) {
+          res.status(400).json({ error: 'PASSWORD_REQUIRED' });
+          return;
+        }
+        const passwordMatches = await bcrypt.compare(password, user.passwordHash);
+        if (!passwordMatches) {
+          res.status(401).json({ error: 'INVALID_PASSWORD' });
+          return;
+        }
+      }
+
+      const [conflict] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(
+          and(
+            ne(users.id, userId),
+            or(
+              sql`lower(${users.email}) = ${recoveryEmail}`,
+              sql`lower(${users.recoveryEmail}) = ${recoveryEmail}`,
+            ),
+          ),
+        )
+        .limit(1);
+
+      if (conflict) {
+        res.status(409).json({ error: 'RECOVERY_EMAIL_IN_USE' });
+        return;
+      }
+
+      await db
+        .update(users)
+        .set({
+          recoveryEmail,
+          recoveryEmailVerified: false,
+        })
+        .where(eq(users.id, userId));
+      await createAndSendOtp(recoveryEmail);
+
+      res.status(200).json({ message: 'Verification sent to recovery email' });
+    } catch (error) {
+      console.error('[Add Recovery Email Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
+  },
+);
 
-    await db
-      .update(users)
-      .set({ recoveryEmailVerified: true })
-      .where(eq(users.id, userId));
-    await redis.del(verifyAttemptsKey);
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('[Verify Recovery Email Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+router.post(
+  '/recovery-email/resend',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const [user] = await db
+        .select({
+          recoveryEmail: users.recoveryEmail,
+          recoveryEmailVerified: users.recoveryEmailVerified,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
 
-router.delete('/recovery-email', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    await db
-      .update(users)
-      .set({
-        recoveryEmail: null,
-        recoveryEmailVerified: false,
-      })
-      .where(eq(users.id, userId));
+      if (!user?.recoveryEmail || user.recoveryEmailVerified) {
+        res.status(200).json({ message: 'Verification sent to recovery email' });
+        return;
+      }
 
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('[Remove Recovery Email Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+      const rateLimit = await applyRateLimit(
+        `ratelimit:recovery-email-resend:${user.recoveryEmail}`,
+        RECOVERY_EMAIL_RESEND_MAX,
+        RECOVERY_EMAIL_RESEND_WINDOW_SECONDS,
+      );
+      if (rateLimit.limited) {
+        res.status(429).json({
+          error: 'TOO_MANY_ATTEMPTS',
+          retryAfter: rateLimit.retryAfter,
+        });
+        return;
+      }
+
+      await createAndSendOtp(user.recoveryEmail);
+      res.status(200).json({ message: 'Verification sent to recovery email' });
+    } catch (error) {
+      console.error('[Resend Recovery Email Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
+
+router.post(
+  '/recovery-email/verify',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const otp = typeof req.body?.otp === 'string' ? req.body.otp.trim() : '';
+      if (!/^\d{6}$/.test(otp)) {
+        res.status(400).json({ error: 'INVALID_OR_EXPIRED_CODE' });
+        return;
+      }
+
+      const [user] = await db
+        .select({
+          recoveryEmail: users.recoveryEmail,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+      if (!user?.recoveryEmail) {
+        res.status(400).json({ error: 'RECOVERY_EMAIL_NOT_SET' });
+        return;
+      }
+
+      const verifyAttemptsKey = `ratelimit:recovery-email-verify:${userId}`;
+      const verifyRateLimit = await applyRateLimit(
+        verifyAttemptsKey,
+        RECOVERY_EMAIL_VERIFY_MAX_ATTEMPTS,
+        RECOVERY_EMAIL_VERIFY_WINDOW_SECONDS,
+      );
+      if (verifyRateLimit.limited) {
+        res.status(429).json({
+          error: 'TOO_MANY_ATTEMPTS',
+          retryAfter: verifyRateLimit.retryAfter,
+        });
+        return;
+      }
+
+      const isValidOtp = await verifyOtp(user.recoveryEmail, otp);
+      if (!isValidOtp) {
+        res.status(400).json({ error: 'INVALID_OR_EXPIRED_CODE' });
+        return;
+      }
+
+      await db.update(users).set({ recoveryEmailVerified: true }).where(eq(users.id, userId));
+      await redis.del(verifyAttemptsKey);
+      res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('[Verify Recovery Email Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
+
+router.delete(
+  '/recovery-email',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      await db
+        .update(users)
+        .set({
+          recoveryEmail: null,
+          recoveryEmailVerified: false,
+        })
+        .where(eq(users.id, userId));
+
+      res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('[Remove Recovery Email Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
 
 router.post('/recover/recovery-email', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -2382,12 +2459,9 @@ router.post('/2fa/setup', authenticateToken, async (req: Request, res: Response)
     }
 
     const secret = generateTwoFactorSecret();
-    await redis.set(
-      twoFactorPendingSetupKey(userId),
-      secret,
-      'EX',
-      getTwoFactorSetupTtlSeconds(),
-    );
+    await redis.set(twoFactorPendingSetupKey(userId), secret, {
+      ex: getTwoFactorSetupTtlSeconds(),
+    });
 
     const otpUri = buildOtpUri(user.email, APP_NAME, secret);
     const qrCode = await buildQrCodeDataUrl(otpUri);
@@ -2401,151 +2475,159 @@ router.post('/2fa/setup', authenticateToken, async (req: Request, res: Response)
   }
 });
 
-router.post('/2fa/verify-setup', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const totp = typeof req.body?.totp === 'string' ? req.body.totp.trim() : '';
-    if (!/^\d{6}$/.test(totp)) {
-      res.status(400).json({ error: 'INVALID_CODE' });
-      return;
+router.post(
+  '/2fa/verify-setup',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const totp = typeof req.body?.totp === 'string' ? req.body.totp.trim() : '';
+      if (!/^\d{6}$/.test(totp)) {
+        res.status(400).json({ error: 'INVALID_CODE' });
+        return;
+      }
+
+      const setupKey = twoFactorPendingSetupKey(userId);
+      const secret = await redis.get(setupKey);
+      if (!secret) {
+        res.status(400).json({ error: 'SETUP_EXPIRED' });
+        return;
+      }
+
+      const isValid = verifyTotpToken(String(secret), totp);
+      if (!isValid) {
+        res.status(400).json({ error: 'INVALID_CODE' });
+        return;
+      }
+
+      const encryptedSecret = encrypt(String(secret));
+      const now = new Date();
+      await db
+        .update(users)
+        .set({
+          twoFactorEnabled: true,
+          twoFactorSecret: encryptedSecret,
+          twoFactorEnabledAt: now,
+        })
+        .where(eq(users.id, userId));
+      await redis.del(setupKey);
+
+      const backupCodesResult = await generateBackupCodesForUser(userId);
+      const [user] = await db
+        .select({
+          email: users.email,
+          name: users.name,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      if (user) {
+        try {
+          await queueEmail({
+            to: user.email,
+            template: 'two_factor_enabled',
+            data: {
+              userName: user.name,
+              timestamp: now.toISOString(),
+            },
+          });
+        } catch (emailError) {
+          console.error('[2FA Enabled Email Error]', emailError);
+        }
+      }
+
+      res.status(200).json({
+        success: true,
+        backupCodes: backupCodesResult.formattedCodes,
+      });
+    } catch (error) {
+      console.error('[2FA Verify Setup Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
+  },
+);
 
-    const setupKey = twoFactorPendingSetupKey(userId);
-    const secret = await redis.get(setupKey);
-    if (!secret) {
-      res.status(400).json({ error: 'SETUP_EXPIRED' });
-      return;
-    }
+router.post(
+  '/2fa/disable',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const password = typeof req.body?.password === 'string' ? req.body.password : '';
+      const totp = typeof req.body?.totp === 'string' ? req.body.totp.trim() : '';
+      if (!password || !/^\d{6}$/.test(totp)) {
+        res.status(400).json({ error: 'PASSWORD_AND_TOTP_REQUIRED' });
+        return;
+      }
 
-    const isValid = verifyTotpToken(secret, totp);
-    if (!isValid) {
-      res.status(400).json({ error: 'INVALID_CODE' });
-      return;
-    }
+      const [user] = await db
+        .select({
+          email: users.email,
+          name: users.name,
+          passwordHash: users.passwordHash,
+          twoFactorEnabled: users.twoFactorEnabled,
+          twoFactorSecret: users.twoFactorSecret,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      if (!user) {
+        res.status(404).json({ error: 'USER_NOT_FOUND' });
+        return;
+      }
+      if (!user.twoFactorEnabled || !user.twoFactorSecret) {
+        res.status(400).json({ error: '2FA_NOT_ENABLED' });
+        return;
+      }
+      if (!user.passwordHash) {
+        res.status(400).json({ error: 'PASSWORD_REQUIRED' });
+        return;
+      }
 
-    const encryptedSecret = encrypt(secret);
-    const now = new Date();
-    await db
-      .update(users)
-      .set({
-        twoFactorEnabled: true,
-        twoFactorSecret: encryptedSecret,
-        twoFactorEnabledAt: now,
-      })
-      .where(eq(users.id, userId));
-    await redis.del(setupKey);
+      const passwordValid = await bcrypt.compare(password, user.passwordHash);
+      if (!passwordValid) {
+        res.status(401).json({ error: 'INVALID_PASSWORD' });
+        return;
+      }
 
-    const backupCodesResult = await generateBackupCodesForUser(userId);
-    const [user] = await db
-      .select({
-        email: users.email,
-        name: users.name,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-    if (user) {
+      const secret = decrypt(user.twoFactorSecret);
+      const totpValid = verifyTotpToken(secret, totp);
+      if (!totpValid) {
+        res.status(400).json({ error: 'INVALID_CODE' });
+        return;
+      }
+
+      await db
+        .update(users)
+        .set({
+          twoFactorEnabled: false,
+          twoFactorSecret: null,
+          twoFactorEnabledAt: null,
+        })
+        .where(eq(users.id, userId));
+      await revokeAllSessionsForUser(userId, req.authTokenHash ?? null);
+
       try {
         await queueEmail({
           to: user.email,
-          template: 'two_factor_enabled',
+          template: 'two_factor_disabled',
           data: {
             userName: user.name,
-            timestamp: now.toISOString(),
+            timestamp: new Date().toISOString(),
+            ipAddress: getClientIp(req) ?? undefined,
           },
         });
       } catch (emailError) {
-        console.error('[2FA Enabled Email Error]', emailError);
+        console.error('[2FA Disabled Email Error]', emailError);
       }
-    }
 
-    res.status(200).json({
-      success: true,
-      backupCodes: backupCodesResult.formattedCodes,
-    });
-  } catch (error) {
-    console.error('[2FA Verify Setup Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.post('/2fa/disable', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    const totp = typeof req.body?.totp === 'string' ? req.body.totp.trim() : '';
-    if (!password || !/^\d{6}$/.test(totp)) {
-      res.status(400).json({ error: 'PASSWORD_AND_TOTP_REQUIRED' });
-      return;
+      res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('[2FA Disable Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
-
-    const [user] = await db
-      .select({
-        email: users.email,
-        name: users.name,
-        passwordHash: users.passwordHash,
-        twoFactorEnabled: users.twoFactorEnabled,
-        twoFactorSecret: users.twoFactorSecret,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-    if (!user) {
-      res.status(404).json({ error: 'USER_NOT_FOUND' });
-      return;
-    }
-    if (!user.twoFactorEnabled || !user.twoFactorSecret) {
-      res.status(400).json({ error: '2FA_NOT_ENABLED' });
-      return;
-    }
-    if (!user.passwordHash) {
-      res.status(400).json({ error: 'PASSWORD_REQUIRED' });
-      return;
-    }
-
-    const passwordValid = await bcrypt.compare(password, user.passwordHash);
-    if (!passwordValid) {
-      res.status(401).json({ error: 'INVALID_PASSWORD' });
-      return;
-    }
-
-    const secret = decrypt(user.twoFactorSecret);
-    const totpValid = verifyTotpToken(secret, totp);
-    if (!totpValid) {
-      res.status(400).json({ error: 'INVALID_CODE' });
-      return;
-    }
-
-    await db
-      .update(users)
-      .set({
-        twoFactorEnabled: false,
-        twoFactorSecret: null,
-        twoFactorEnabledAt: null,
-      })
-      .where(eq(users.id, userId));
-    await revokeAllSessionsForUser(userId, req.authTokenHash ?? null);
-
-    try {
-      await queueEmail({
-        to: user.email,
-        template: 'two_factor_disabled',
-        data: {
-          userName: user.name,
-          timestamp: new Date().toISOString(),
-          ipAddress: getClientIp(req) ?? undefined,
-        },
-      });
-    } catch (emailError) {
-      console.error('[2FA Disabled Email Error]', emailError);
-    }
-
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('[2FA Disable Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+  },
+);
 
 router.post('/2fa/validate', strictLimiter, async (req: Request, res: Response): Promise<void> => {
   try {
@@ -2618,8 +2700,8 @@ router.post('/2fa/validate', strictLimiter, async (req: Request, res: Response):
       }
 
       const replayKey = twoFactorUsedCodeKey(user.id, totp);
-      const replaySet = await redis.set(replayKey, '1', 'EX', 60, 'NX');
-      if (replaySet !== 'OK') {
+      const replaySet = await redis.set(replayKey, '1', { ex: 60, nx: true });
+      if (!replaySet) {
         res.status(400).json({ error: 'CODE_ALREADY_USED' });
         return;
       }
@@ -2679,9 +2761,7 @@ router.post('/2fa/validate', strictLimiter, async (req: Request, res: Response):
         requiresSuspiciousLoginVerification: true,
         reasons: loginResult.reasons,
         accessToken: loginResult.accessToken,
-        ...(backupCodesRemaining !== null
-          ? { backupCodesRemaining }
-          : {}),
+        ...(backupCodesRemaining !== null ? { backupCodesRemaining } : {}),
       });
       return;
     }
@@ -2689,9 +2769,7 @@ router.post('/2fa/validate', strictLimiter, async (req: Request, res: Response):
     res.status(200).json({
       user: mapUserForAuthResponse(user),
       accessToken: loginResult.accessToken,
-      ...(backupCodesRemaining !== null
-        ? { backupCodesRemaining }
-        : {}),
+      ...(backupCodesRemaining !== null ? { backupCodesRemaining } : {}),
     });
   } catch (error) {
     console.error('[2FA Validate Error]', error);
@@ -2699,144 +2777,150 @@ router.post('/2fa/validate', strictLimiter, async (req: Request, res: Response):
   }
 });
 
-router.post('/verify-suspicious-login', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    if (!req.authTokenHash || !req.user) {
-      res.status(401).json({ error: 'UNAUTHORIZED' });
-      return;
-    }
+router.post(
+  '/verify-suspicious-login',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      if (!req.authTokenHash || !req.user) {
+        res.status(401).json({ error: 'UNAUTHORIZED' });
+        return;
+      }
 
-    if (!req.restrictedSession) {
-      res.status(200).json({ success: true });
-      return;
-    }
+      if (!req.restrictedSession) {
+        res.status(200).json({ success: true });
+        return;
+      }
 
-    const method = typeof req.body?.method === 'string' ? req.body.method : '';
-    const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
-    const userId = req.user.id;
-    const [user] = await db
-      .select({
-        id: users.id,
-        email: users.email,
-        twoFactorEnabled: users.twoFactorEnabled,
-        twoFactorSecret: users.twoFactorSecret,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-    if (!user) {
-      res.status(404).json({ error: 'USER_NOT_FOUND' });
-      return;
-    }
-
-    if (method === 'email_otp') {
-      if (!code) {
-        await createAndSendOtp(user.email);
-        res.status(200).json({ status: 'OTP_SENT' });
-        return;
-      }
-      const verified = await verifyOtp(user.email, code);
-      if (!verified) {
-        res.status(400).json({ error: 'INVALID_CODE' });
-        return;
-      }
-    } else if (method === 'totp') {
-      if (!user.twoFactorEnabled || !user.twoFactorSecret) {
-        res.status(400).json({ error: '2FA_NOT_ENABLED' });
-        return;
-      }
-      const secret = decrypt(user.twoFactorSecret);
-      const valid = verifyTotpToken(secret, code);
-      if (!valid) {
-        res.status(400).json({ error: 'INVALID_CODE' });
-        return;
-      }
-    } else if (method === 'backup_code') {
-      const normalizedCode = normalizeBackupCode(code);
-      const incomingHash = createHash('sha256').update(normalizedCode).digest('hex');
-      const [matchedCode] = await db
-        .select({ id: backupCodes.id })
-        .from(backupCodes)
-        .where(
-          and(
-            eq(backupCodes.userId, user.id),
-            eq(backupCodes.codeHash, incomingHash),
-            isNull(backupCodes.usedAt),
-          ),
-        )
+      const method = typeof req.body?.method === 'string' ? req.body.method : '';
+      const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+      const userId = req.user.id;
+      const [user] = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          twoFactorEnabled: users.twoFactorEnabled,
+          twoFactorSecret: users.twoFactorSecret,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
         .limit(1);
-      if (!matchedCode) {
-        res.status(400).json({ error: 'INVALID_CODE' });
+      if (!user) {
+        res.status(404).json({ error: 'USER_NOT_FOUND' });
         return;
       }
-      await db
-        .update(backupCodes)
-        .set({ usedAt: new Date() })
-        .where(eq(backupCodes.id, matchedCode.id));
-    } else {
-      res.status(400).json({ error: 'INVALID_METHOD' });
-      return;
+
+      if (method === 'email_otp') {
+        if (!code) {
+          await createAndSendOtp(user.email);
+          res.status(200).json({ status: 'OTP_SENT' });
+          return;
+        }
+        const verified = await verifyOtp(user.email, code);
+        if (!verified) {
+          res.status(400).json({ error: 'INVALID_CODE' });
+          return;
+        }
+      } else if (method === 'totp') {
+        if (!user.twoFactorEnabled || !user.twoFactorSecret) {
+          res.status(400).json({ error: '2FA_NOT_ENABLED' });
+          return;
+        }
+        const secret = decrypt(user.twoFactorSecret);
+        const valid = verifyTotpToken(secret, code);
+        if (!valid) {
+          res.status(400).json({ error: 'INVALID_CODE' });
+          return;
+        }
+      } else if (method === 'backup_code') {
+        const normalizedCode = normalizeBackupCode(code);
+        const incomingHash = createHash('sha256').update(normalizedCode).digest('hex');
+        const [matchedCode] = await db
+          .select({ id: backupCodes.id })
+          .from(backupCodes)
+          .where(
+            and(
+              eq(backupCodes.userId, user.id),
+              eq(backupCodes.codeHash, incomingHash),
+              isNull(backupCodes.usedAt),
+            ),
+          )
+          .limit(1);
+        if (!matchedCode) {
+          res.status(400).json({ error: 'INVALID_CODE' });
+          return;
+        }
+        await db
+          .update(backupCodes)
+          .set({ usedAt: new Date() })
+          .where(eq(backupCodes.id, matchedCode.id));
+      } else {
+        res.status(400).json({ error: 'INVALID_METHOD' });
+        return;
+      }
+
+      await markSessionSuspiciousVerified(req.authTokenHash);
+      const refreshToken = generateRefreshToken({
+        userId: user.id,
+        email: user.email,
+      });
+      await setRefreshSession(user.id, hashToken(refreshToken));
+      res.cookie('refreshToken', refreshToken, cookieOptions);
+      res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('[Verify Suspicious Login Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
+  },
+);
 
-    await markSessionSuspiciousVerified(req.authTokenHash);
-    const refreshToken = generateRefreshToken({
-      userId: user.id,
-      email: user.email,
-    });
-    await setRefreshSession(user.id, hashToken(refreshToken));
-    res.cookie('refreshToken', refreshToken, cookieOptions);
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('[Verify Suspicious Login Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+router.get(
+  '/login-events',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const offsetRaw = typeof req.query.offset === 'string' ? Number(req.query.offset) : 0;
+      const offset = Number.isFinite(offsetRaw) ? Math.max(0, offsetRaw) : 0;
+      const limit = 20;
 
-router.get('/login-events', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const offsetRaw = typeof req.query.offset === 'string' ? Number(req.query.offset) : 0;
-    const offset = Number.isFinite(offsetRaw) ? Math.max(0, offsetRaw) : 0;
-    const limit = 20;
+      const events = await db
+        .select({
+          id: loginEvents.id,
+          sessionId: loginEvents.sessionId,
+          ipAddress: loginEvents.ipAddress,
+          country: loginEvents.country,
+          city: loginEvents.city,
+          browser: loginEvents.browser,
+          os: loginEvents.os,
+          deviceType: loginEvents.deviceType,
+          isSuspicious: loginEvents.isSuspicious,
+          suspiciousReasons: loginEvents.suspiciousReasons,
+          confirmedAt: loginEvents.confirmedAt,
+          createdAt: loginEvents.createdAt,
+        })
+        .from(loginEvents)
+        .where(eq(loginEvents.userId, userId))
+        .orderBy(desc(loginEvents.createdAt))
+        .limit(limit + 1)
+        .offset(offset);
 
-    const events = await db
-      .select({
-        id: loginEvents.id,
-        sessionId: loginEvents.sessionId,
-        ipAddress: loginEvents.ipAddress,
-        country: loginEvents.country,
-        city: loginEvents.city,
-        browser: loginEvents.browser,
-        os: loginEvents.os,
-        deviceType: loginEvents.deviceType,
-        isSuspicious: loginEvents.isSuspicious,
-        suspiciousReasons: loginEvents.suspiciousReasons,
-        confirmedAt: loginEvents.confirmedAt,
-        createdAt: loginEvents.createdAt,
-      })
-      .from(loginEvents)
-      .where(eq(loginEvents.userId, userId))
-      .orderBy(desc(loginEvents.createdAt))
-      .limit(limit + 1)
-      .offset(offset);
-
-    const hasMore = events.length > limit;
-    const payload = hasMore ? events.slice(0, limit) : events;
-    res.status(200).json({
-      events: payload.map((event) => ({
-        ...event,
-        ipAddress: maskIpAddress(event.ipAddress),
-        suspiciousReasons: Array.isArray(event.suspiciousReasons)
-          ? event.suspiciousReasons
-          : [],
-      })),
-      nextOffset: hasMore ? offset + limit : null,
-    });
-  } catch (error) {
-    console.error('[Login Events Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+      const hasMore = events.length > limit;
+      const payload = hasMore ? events.slice(0, limit) : events;
+      res.status(200).json({
+        events: payload.map((event) => ({
+          ...event,
+          ipAddress: maskIpAddress(event.ipAddress),
+          suspiciousReasons: Array.isArray(event.suspiciousReasons) ? event.suspiciousReasons : [],
+        })),
+        nextOffset: hasMore ? offset + limit : null,
+      });
+    } catch (error) {
+      console.error('[Login Events Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
 
 router.post(
   '/login-events/:eventId/confirm',

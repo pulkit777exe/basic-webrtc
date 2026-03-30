@@ -72,10 +72,7 @@ export function startDeletionWorker() {
       const now = new Date();
 
       await db.transaction(async (tx) => {
-        await tx
-          .update(messages)
-          .set({ userId: deletedUserId })
-          .where(eq(messages.userId, userId));
+        await tx.update(messages).set({ userId: deletedUserId }).where(eq(messages.userId, userId));
 
         await tx
           .update(recordingTracks)

@@ -8,11 +8,7 @@ import { Router, Request, Response } from 'express';
 import { redis } from '../config/redis';
 import { authenticateToken } from '../middleware/auth';
 import { db } from '../db';
-import {
-  deletionRequests,
-  rooms,
-  users,
-} from '../db/schema';
+import { deletionRequests, rooms, users } from '../db/schema';
 import { exportQueue, deletionQueue } from '../jobs/account-jobs';
 import { invalidateAllSessionsForUser } from '../services/session';
 import { queueEmail } from '../services/email';
@@ -26,17 +22,23 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-async function verifyPassword(userId: string, password: string): Promise<{ valid: boolean; user?: {
-  id: string;
-  email: string;
-  name: string;
-  passwordHash: string | null;
-  emailVerified: boolean;
-  avatarUrl: string | null;
-  googleId: string | null;
-  googleEmail: string | null;
-  deletedAt: Date | null;
-} }> {
+async function verifyPassword(
+  userId: string,
+  password: string,
+): Promise<{
+  valid: boolean;
+  user?: {
+    id: string;
+    email: string;
+    name: string;
+    passwordHash: string | null;
+    emailVerified: boolean;
+    avatarUrl: string | null;
+    googleId: string | null;
+    googleEmail: string | null;
+    deletedAt: Date | null;
+  };
+}> {
   const [user] = await db
     .select({
       id: users.id,
@@ -111,26 +113,30 @@ router.post('/export', authenticateToken, async (req: Request, res: Response): P
       },
     });
 
-    res.status(200).json({ message: 'Export started. You\'ll get an email when it\'s ready.' });
+    res.status(200).json({ message: "Export started. You'll get an email when it's ready." });
   } catch (error) {
     console.error('[Account Export Error]', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-router.get('/export/status', authenticateToken, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const userId = req.user!.id;
-    const ttl = await redis.ttl(`export:ratelimit:${userId}`);
-    res.status(200).json({
-      canRequest: ttl <= 0,
-      retryAfter: ttl > 0 ? ttl : 0,
-    });
-  } catch (error) {
-    console.error('[Account Export Status Error]', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+router.get(
+  '/export/status',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user!.id;
+      const ttl = await redis.ttl(`export:ratelimit:${userId}`);
+      res.status(200).json({
+        canRequest: ttl <= 0,
+        retryAfter: ttl > 0 ? ttl : 0,
+      });
+    } catch (error) {
+      console.error('[Account Export Status Error]', error);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  },
+);
 
 router.get('/export/download', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -182,8 +188,7 @@ router.post('/delete', authenticateToken, async (req: Request, res: Response): P
   try {
     const userId = req.user!.id;
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    const confirmation =
-      typeof req.body?.confirmation === 'string' ? req.body.confirmation : '';
+    const confirmation = typeof req.body?.confirmation === 'string' ? req.body.confirmation : '';
 
     if (confirmation !== ACCOUNT_DELETE_CONFIRMATION) {
       res.status(400).json({ error: 'INVALID_CONFIRMATION' });

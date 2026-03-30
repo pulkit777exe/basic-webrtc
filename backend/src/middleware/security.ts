@@ -16,6 +16,6 @@ export function setupSecurity(app: Express) {
         },
       },
       crossOriginEmbedderPolicy: false,
-    })
+    }),
   );
 }

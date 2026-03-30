@@ -1,19 +1,13 @@
-import { Router, Request, Response } from "express";
-import crypto from "crypto";
-import multer from "multer";
-import { db } from "../db";
-import {
-  rooms,
-  users,
-  roomParticipants,
-  roomSettings,
-  messages,
-} from "../db/schema";
-import { authenticate, authenticateToken, optionalAuthenticate } from "../middleware/auth";
-import { generateRoomId } from "../utils/validation";
-import { generateRoomToken, generateWaitingToken } from "../utils/jwt";
-import { eq, and, desc, sql } from "drizzle-orm";
-import bcrypt from "bcrypt";
+import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
+import multer from 'multer';
+import { db } from '../db';
+import { rooms, users, roomParticipants, roomSettings, messages } from '../db/schema';
+import { authenticate, authenticateToken, optionalAuthenticate } from '../middleware/auth';
+import { generateRoomId } from '../utils/validation';
+import { generateRoomToken, generateWaitingToken } from '../utils/jwt';
+import { eq, and, desc, sql } from 'drizzle-orm';
+import bcrypt from 'bcrypt';
 import {
   setRoomMeta,
   getRoomMeta,
@@ -33,12 +27,12 @@ import {
   isForceMuted,
   getActiveSpeaker,
   type WaitingParticipant,
-} from "../lib/redis-rooms";
-import { redis } from "../config/redis";
-import { verifyRoomToken } from "../utils/jwt";
-import { apiLimiter } from "../lib/rate-limiters";
-import { verifyAccessToken } from "../utils/jwt";
-import { globalLimiter } from "../lib/rate-limiters";
+} from '../lib/redis-rooms';
+import { redis } from '../config/redis';
+import { verifyRoomToken } from '../utils/jwt';
+import { apiLimiter } from '../lib/rate-limiters';
+import { verifyAccessToken } from '../utils/jwt';
+import { globalLimiter } from '../lib/rate-limiters';
 
 async function resolveCanonicalRoomId(raw: string): Promise<string | null> {
   const trimmed = raw.trim();
@@ -65,11 +59,11 @@ const captionTranscribeUpload = multer({
   limits: { fileSize: 4 * 1024 * 1024 },
 });
 
-router.param("id", async (req, res, next, raw: string) => {
+router.param('id', async (req, res, next, raw: string) => {
   try {
     const canonical = await resolveCanonicalRoomId(raw);
     if (!canonical) {
-      res.status(404).json({ error: "Room not found", code: "ROOM_NOT_FOUND" });
+      res.status(404).json({ error: 'Room not found', code: 'ROOM_NOT_FOUND' });
       return;
     }
     req.params.id = canonical;
@@ -79,11 +73,11 @@ router.param("id", async (req, res, next, raw: string) => {
   }
 });
 
-router.param("roomId", async (req, res, next, raw: string) => {
+router.param('roomId', async (req, res, next, raw: string) => {
   try {
     const canonical = await resolveCanonicalRoomId(raw);
     if (!canonical) {
-      res.status(404).json({ error: "Room not found", code: "ROOM_NOT_FOUND" });
+      res.status(404).json({ error: 'Room not found', code: 'ROOM_NOT_FOUND' });
       return;
     }
     req.params.roomId = canonical;
@@ -95,37 +89,29 @@ router.param("roomId", async (req, res, next, raw: string) => {
 
 // Create room
 
-router.post(
-  "/",
-  authenticateToken,
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const userId = req.user!.id;
-      const {
-        title = "Meeting",
-        isLocked = false,
-        passcode,
-        maxParticipants = 50,
-        waitingRoomEnabled = false,
-        muteOnJoin = false,
-      } = req.body;
+router.post('/', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+    const {
+      title = 'Meeting',
+      isLocked = false,
+      passcode,
+      maxParticipants = 50,
+      waitingRoomEnabled = false,
+      muteOnJoin = false,
+    } = req.body;
 
-      const roomId = generateRoomId();
-      const normalizedTitle = String(title).slice(0, 255) || "Meeting";
-      const normalizedLocked = Boolean(isLocked);
-      const normalizedMaxParticipants = Math.min(
-        100,
-        Math.max(1, Number(maxParticipants) || 50),
-      );
-      const normalizedMuteOnJoin = Boolean(muteOnJoin);
-      const normalizedWaitingRoomEnabled = Boolean(waitingRoomEnabled);
-      const passcodeHash = passcode
-        ? await bcrypt.hash(String(passcode), SALT_ROUNDS)
-        : null;
+    const roomId = generateRoomId();
+    const normalizedTitle = String(title).slice(0, 255) || 'Meeting';
+    const normalizedLocked = Boolean(isLocked);
+    const normalizedMaxParticipants = Math.min(100, Math.max(1, Number(maxParticipants) || 50));
+    const normalizedMuteOnJoin = Boolean(muteOnJoin);
+    const normalizedWaitingRoomEnabled = Boolean(waitingRoomEnabled);
+    const passcodeHash = passcode ? await bcrypt.hash(String(passcode), SALT_ROUNDS) : null;
 
-      const [createdRoom] = await db
-        .insert(rooms)
-        .values({
+    const [createdRoom] = await db
+      .insert(rooms)
+      .values({
         id: roomId,
         hostId: userId,
         title: normalizedTitle,
@@ -133,125 +119,112 @@ router.post(
         passcodeHash,
         maxParticipants: normalizedMaxParticipants,
       })
-        .returning({
-          id: rooms.id,
-          hostId: rooms.hostId,
-          title: rooms.title,
-          isLocked: rooms.isLocked,
-          maxParticipants: rooms.maxParticipants,
-          createdAt: rooms.createdAt,
-        });
+      .returning({
+        id: rooms.id,
+        hostId: rooms.hostId,
+        title: rooms.title,
+        isLocked: rooms.isLocked,
+        maxParticipants: rooms.maxParticipants,
+        createdAt: rooms.createdAt,
+      });
 
-      await db.insert(roomSettings).values({
-        roomId,
+    await db.insert(roomSettings).values({
+      roomId,
+      allowScreenShare: true,
+      allowChat: true,
+      muteOnJoin: normalizedMuteOnJoin,
+      waitingRoomEnabled: normalizedWaitingRoomEnabled,
+    });
+
+    await db.insert(roomParticipants).values({
+      roomId,
+      userId,
+      role: 'host',
+    });
+
+    await setRoomMeta(roomId, {
+      hostId: userId,
+      title: normalizedTitle,
+      isLocked: normalizedLocked,
+      maxParticipants: normalizedMaxParticipants,
+      reactionsEnabled: true,
+      settings: JSON.stringify({
         allowScreenShare: true,
         allowChat: true,
         muteOnJoin: normalizedMuteOnJoin,
         waitingRoomEnabled: normalizedWaitingRoomEnabled,
-      });
+      }),
+    });
 
-      await db.insert(roomParticipants).values({
-        roomId,
-        userId,
-        role: "host",
-      });
-
-      await setRoomMeta(roomId, {
-        hostId: userId,
-        title: normalizedTitle,
-        isLocked: normalizedLocked,
-        maxParticipants: normalizedMaxParticipants,
-        reactionsEnabled: true,
-        settings: JSON.stringify({
-          allowScreenShare: true,
-          allowChat: true,
-          muteOnJoin: normalizedMuteOnJoin,
-          waitingRoomEnabled: normalizedWaitingRoomEnabled,
-        }),
-      });
-
-      res.status(201).json({
-        room: {
-          id: createdRoom?.id ?? roomId,
-          hostId: createdRoom?.hostId ?? userId,
-          title: createdRoom?.title ?? normalizedTitle,
-          isLocked: createdRoom?.isLocked ?? normalizedLocked,
-          maxParticipants:
-            createdRoom?.maxParticipants ?? normalizedMaxParticipants,
-          createdAt:
-            createdRoom?.createdAt?.toISOString?.() ??
-            new Date().toISOString(),
-        },
-        hasPasscode: Boolean(passcode),
-      });
-    } catch (error) {
-      console.error("[Create Room Error]", error);
-      res
-        .status(500)
-        .json({ error: "Internal server error", code: "INTERNAL_ERROR" });
-    }
-  },
-);
+    res.status(201).json({
+      room: {
+        id: createdRoom?.id ?? roomId,
+        hostId: createdRoom?.hostId ?? userId,
+        title: createdRoom?.title ?? normalizedTitle,
+        isLocked: createdRoom?.isLocked ?? normalizedLocked,
+        maxParticipants: createdRoom?.maxParticipants ?? normalizedMaxParticipants,
+        createdAt: createdRoom?.createdAt?.toISOString?.() ?? new Date().toISOString(),
+      },
+      hasPasscode: Boolean(passcode),
+    });
+  } catch (error) {
+    console.error('[Create Room Error]', error);
+    res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
+  }
+});
 
 // Get room
 
-router.get(
-  "/:id",
-  async (req: Request<{ id: string }>, res: Response): Promise<void> => {
-    try {
-      const { id } = req.params;
+router.get('/:id', async (req: Request<{ id: string }>, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
 
-      const [room] = await db
-        .select({
-          id: rooms.id,
-          hostId: rooms.hostId,
-          title: rooms.title,
-          isLocked: rooms.isLocked,
-          maxParticipants: rooms.maxParticipants,
-          createdAt: rooms.createdAt,
-          endedAt: rooms.endedAt,
-          hostName: users.name,
-          hasPasscode: rooms.passcodeHash,
-        })
-        .from(rooms)
-        .leftJoin(users, eq(rooms.hostId, users.id))
-        .where(eq(rooms.id, id))
-        .limit(1);
+    const [room] = await db
+      .select({
+        id: rooms.id,
+        hostId: rooms.hostId,
+        title: rooms.title,
+        isLocked: rooms.isLocked,
+        maxParticipants: rooms.maxParticipants,
+        createdAt: rooms.createdAt,
+        endedAt: rooms.endedAt,
+        hostName: users.name,
+        hasPasscode: rooms.passcodeHash,
+      })
+      .from(rooms)
+      .leftJoin(users, eq(rooms.hostId, users.id))
+      .where(eq(rooms.id, id))
+      .limit(1);
 
-      if (!room) {
-        res
-          .status(404)
-          .json({ error: "Room not found", code: "ROOM_NOT_FOUND" });
-        return;
-      }
-
-      if (room.endedAt) {
-        res.status(404).json({ error: "Room has ended", code: "ROOM_ENDED" });
-        return;
-      }
-
-      const participantCount = await getRoomPeerCount(id);
-
-      res.json({
-        room: {
-          ...room,
-          participantCount,
-          hasPasscode: Boolean(room.hasPasscode),
-        },
-      });
-    } catch (error) {
-      console.error("[Get Room Error]", error);
-      res
-        .status(500)
-        .json({ error: "Internal server error", code: "INTERNAL_ERROR" });
+    if (!room) {
+      res.status(404).json({ error: 'Room not found', code: 'ROOM_NOT_FOUND' });
+      return;
     }
-  },
-);
+
+    if (room.endedAt) {
+      res.status(404).json({ error: 'Room has ended', code: 'ROOM_ENDED' });
+      return;
+    }
+
+    const participantCount = await getRoomPeerCount(id);
+
+    res.json({
+      room: {
+        ...room,
+        participantCount,
+        hasPasscode: Boolean(room.hasPasscode),
+      },
+    });
+  } catch (error) {
+    console.error('[Get Room Error]', error);
+    res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
+  }
+});
 
 // Delete room
 
 router.delete(
-  "/:id",
+  '/:id',
   authenticateToken,
   async (req: Request<{ id: string }>, res: Response): Promise<void> => {
     try {
@@ -265,28 +238,21 @@ router.delete(
         .limit(1);
 
       if (!room) {
-        res
-          .status(404)
-          .json({
-            error: "Room not found or unauthorized",
-            code: "ROOM_NOT_FOUND",
-          });
+        res.status(404).json({
+          error: 'Room not found or unauthorized',
+          code: 'ROOM_NOT_FOUND',
+        });
         return;
       }
 
-      await db
-        .update(rooms)
-        .set({ endedAt: new Date() })
-        .where(eq(rooms.id, id));
+      await db.update(rooms).set({ endedAt: new Date() }).where(eq(rooms.id, id));
       await redis.publish(roomEndedChannel(id), JSON.stringify({ roomId: id }));
       await clearRoomState(id);
 
       res.status(204).send();
     } catch (error) {
-      console.error("[Delete Room Error]", error);
-      res
-        .status(500)
-        .json({ error: "Internal server error", code: "INTERNAL_ERROR" });
+      console.error('[Delete Room Error]', error);
+      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
 );
@@ -294,7 +260,7 @@ router.delete(
 // Join room
 
 router.post(
-  "/:id/join",
+  '/:id/join',
   authenticateToken,
   async (
     req: Request<{ id: string }, unknown, { passcode?: string }>,
@@ -304,44 +270,34 @@ router.post(
       const { id } = req.params;
       const userId = req.user!.id;
       const { passcode } = req.body;
-      const ip = req.ip || "unknown";
+      const ip = req.ip || 'unknown';
 
       // 1. Fetch room from PostgreSQL
-      const [room] = await db
-        .select()
-        .from(rooms)
-        .where(eq(rooms.id, id))
-        .limit(1);
+      const [room] = await db.select().from(rooms).where(eq(rooms.id, id)).limit(1);
       if (!room) {
-        res
-          .status(404)
-          .json({ error: "Room not found", code: "ROOM_NOT_FOUND" });
+        res.status(404).json({ error: 'Room not found', code: 'ROOM_NOT_FOUND' });
         return;
       }
 
       // 2. Check room.endedAt
       if (room.endedAt) {
-        res.status(410).json({ error: "Room has ended", code: "ROOM_ENDED" });
+        res.status(410).json({ error: 'Room has ended', code: 'ROOM_ENDED' });
         return;
       }
 
       // 3. Check isRoomLocked (skip for the host)
       const locked = await isRoomLocked(id);
       if (locked && userId !== room.hostId) {
-        res
-          .status(423)
-          .json({ error: "Room is locked by the host", code: "ROOM_LOCKED" });
+        res.status(423).json({ error: 'Room is locked by the host', code: 'ROOM_LOCKED' });
         return;
       }
 
       // 4. Check isKicked
       if (await isKicked(id, userId)) {
-        res
-          .status(403)
-          .json({
-            error: "You have been kicked from this room",
-            code: "KICKED",
-          });
+        res.status(403).json({
+          error: 'You have been kicked from this room',
+          code: 'KICKED',
+        });
         return;
       }
 
@@ -353,33 +309,31 @@ router.post(
       const bypassKey = `invite:bypass:${userId}:${id}`;
       // Use GETDEL for atomic check-and-delete to prevent race conditions and ensure single-use
       const bypassValue = await redis.getdel(bypassKey);
-      const shouldBypass = userId === room.hostId || bypassValue === "1";
+      const shouldBypass = userId === room.hostId || bypassValue === '1';
 
       // Audit logging for bypass attempts
       if (shouldBypass) {
         console.info(
-          "[BYPASS GRANTED] userId=%s roomId=%s reason=%s ip=%s timestamp=%s",
+          '[BYPASS GRANTED] userId=%s roomId=%s reason=%s ip=%s timestamp=%s',
           userId,
           id,
-          userId === room.hostId ? "host" : "invite_token",
+          userId === room.hostId ? 'host' : 'invite_token',
           ip,
-          new Date().toISOString()
+          new Date().toISOString(),
         );
       } else {
         console.info(
-          "[BYPASS DENIED] userId=%s roomId=%s reason=key_not_found ip=%s timestamp=%s",
+          '[BYPASS DENIED] userId=%s roomId=%s reason=key_not_found ip=%s timestamp=%s',
           userId,
           id,
           ip,
-          new Date().toISOString()
+          new Date().toISOString(),
         );
       }
 
       if (room.passcodeHash && !shouldBypass) {
         if (!passcode) {
-          res
-            .status(401)
-            .json({ error: "Passcode required", code: "PASSCODE_REQUIRED" });
+          res.status(401).json({ error: 'Passcode required', code: 'PASSCODE_REQUIRED' });
           return;
         }
 
@@ -389,20 +343,16 @@ router.post(
           await redis.expire(attemptsKey, 300);
         }
         if (attempts > 5) {
-          res
-            .status(429)
-            .json({
-              error: "Too many failed attempts",
-              code: "TOO_MANY_ATTEMPTS",
-            });
+          res.status(429).json({
+            error: 'Too many failed attempts',
+            code: 'TOO_MANY_ATTEMPTS',
+          });
           return;
         }
 
         const valid = await bcrypt.compare(String(passcode), room.passcodeHash);
         if (!valid) {
-          res
-            .status(401)
-            .json({ error: "Invalid passcode", code: "INVALID_PASSCODE" });
+          res.status(401).json({ error: 'Invalid passcode', code: 'INVALID_PASSCODE' });
           return;
         }
 
@@ -433,7 +383,7 @@ router.post(
         const joinedAt = new Date().toISOString();
         const participant: WaitingParticipant = {
           id: userId,
-          name: waitingUser?.name ?? "Unknown",
+          name: waitingUser?.name ?? 'Unknown',
           avatarUrl: waitingUser?.avatarUrl ?? undefined,
           joinedAt,
         };
@@ -445,7 +395,7 @@ router.post(
         await redis.publish(
           roomSignalChannel(id),
           JSON.stringify({
-            type: "waiting_room_join",
+            type: 'waiting_room_join',
             participant,
             roomId: id,
           }),
@@ -453,64 +403,49 @@ router.post(
 
         // Generate a short-lived waiting token so the participant can open a WS connection
         const waitingToken = generateWaitingToken(userId, id);
-        res.status(202).json({ status: "waiting", position, waitingToken });
+        res.status(202).json({ status: 'waiting', position, waitingToken });
         return;
       }
 
       // 7. Capacity check
       const count = await getRoomPeerCount(id);
       if (count >= room.maxParticipants) {
-        res.status(429).json({ error: "Room is full", code: "ROOM_FULL" });
+        res.status(429).json({ error: 'Room is full', code: 'ROOM_FULL' });
         return;
       }
 
       // 8. Pre-register role in Redis so the WS getPeerRole check passes, then return token
-      const userRole = room.hostId === userId ? "host" : "participant";
+      const userRole = room.hostId === userId ? 'host' : 'participant';
       await addPeerToRoom(id, userId, userRole);
       const roomToken = generateRoomToken(userId, id);
-      res.json({ status: "joined", roomToken });
+      res.json({ status: 'joined', roomToken });
     } catch (error) {
-      console.error("[Join Room Error]", error);
-      res
-        .status(500)
-        .json({ error: "Internal server error", code: "INTERNAL_ERROR" });
+      console.error('[Join Room Error]', error);
+      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
 );
 
 // Room state
 
-router.get(
-  "/:id/state",
-  async (req: Request<{ id: string }>, res: Response): Promise<void> => {
-    try {
-      const { id } = req.params;
+router.get('/:id/state', async (req: Request<{ id: string }>, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
 
-      const [room] = await db
-        .select()
-        .from(rooms)
-        .where(eq(rooms.id, id))
-        .limit(1);
-      if (!room) {
-        res
-          .status(404)
-          .json({ error: "Room not found", code: "ROOM_NOT_FOUND" });
-        return;
-      }
+    const [room] = await db.select().from(rooms).where(eq(rooms.id, id)).limit(1);
+    if (!room) {
+      res.status(404).json({ error: 'Room not found', code: 'ROOM_NOT_FOUND' });
+      return;
+    }
 
-      const [settings] = await db
-        .select()
-        .from(roomSettings)
-        .where(eq(roomSettings.roomId, id))
-        .limit(1);
+    const [settings] = await db
+      .select()
+      .from(roomSettings)
+      .where(eq(roomSettings.roomId, id))
+      .limit(1);
 
-      const [
-        redisMeta,
-        reactionsEnabled,
-        forceMuted,
-        activeSpeaker,
-        participantCount,
-      ] = await Promise.all([
+    const [redisMeta, reactionsEnabled, forceMuted, activeSpeaker, participantCount] =
+      await Promise.all([
         getRoomMeta(id),
         getRoomReactionsEnabled(id),
         isForceMuted(id),
@@ -518,59 +453,46 @@ router.get(
         getRoomPeerCount(id),
       ]);
 
-      const pinnedMessage = redisMeta?.pinnedMessage
-        ? JSON.parse(redisMeta.pinnedMessage)
-        : null;
+    const pinnedMessage = redisMeta?.pinnedMessage ? JSON.parse(redisMeta.pinnedMessage) : null;
 
-      res.json({
-        pinnedMessage,
-        reactionsEnabled,
-        locked: redisMeta?.isLocked === "1" || room.isLocked,
-        forceMuted,
-        activeSpeaker,
-        participantCount,
-      });
-    } catch (error) {
-      console.error("[Get Room State Error]", error);
-      res
-        .status(500)
-        .json({ error: "Internal server error", code: "INTERNAL_ERROR" });
-    }
-  },
-);
+    res.json({
+      pinnedMessage,
+      reactionsEnabled,
+      locked: redisMeta?.isLocked === '1' || room.isLocked,
+      forceMuted,
+      activeSpeaker,
+      participantCount,
+    });
+  } catch (error) {
+    console.error('[Get Room State Error]', error);
+    res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
+  }
+});
 
 // Room messages
 
 router.get(
-  "/:id/messages",
+  '/:id/messages',
   async (
-    req: Request<
-      { id: string },
-      unknown,
-      unknown,
-      { token?: string | string[] }
-    >,
+    req: Request<{ id: string }, unknown, unknown, { token?: string | string[] }>,
     res: Response,
   ): Promise<void> => {
     try {
       const { id } = req.params;
       const authHeader = req.headers.authorization;
       const queryToken = req.query.token;
-      const tokenFromQuery =
-        typeof queryToken === "string" ? queryToken : undefined;
-      const token = authHeader?.startsWith("Bearer ")
-        ? authHeader.slice(7)
-        : tokenFromQuery;
+      const tokenFromQuery = typeof queryToken === 'string' ? queryToken : undefined;
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : tokenFromQuery;
 
       const roomPayload = token ? verifyRoomToken(token) : null;
       const userPayload = req.user;
 
       if (!roomPayload && !userPayload) {
-        res.status(401).json({ error: "Unauthorized", code: "UNAUTHORIZED" });
+        res.status(401).json({ error: 'Unauthorized', code: 'UNAUTHORIZED' });
         return;
       }
       if (roomPayload && roomPayload.roomId !== id) {
-        res.status(403).json({ error: "Forbidden", code: "FORBIDDEN" });
+        res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
         return;
       }
 
@@ -590,10 +512,8 @@ router.get(
 
       res.json({ messages: list.reverse() });
     } catch (error) {
-      console.error("[Get Messages Error]", error);
-      res
-        .status(500)
-        .json({ error: "Internal server error", code: "INTERNAL_ERROR" });
+      console.error('[Get Messages Error]', error);
+      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
 );
@@ -601,7 +521,7 @@ router.get(
 // Waiting room: list
 
 router.get(
-  "/:id/waiting-room",
+  '/:id/waiting-room',
   authenticateToken,
   async (req: Request<{ id: string }>, res: Response): Promise<void> => {
     try {
@@ -609,18 +529,16 @@ router.get(
       const userId = req.user!.id;
 
       const role = await getPeerRole(roomId, userId);
-      if (role !== "host" && role !== "co-host") {
-        res.status(403).json({ error: "Forbidden", code: "FORBIDDEN" });
+      if (role !== 'host' && role !== 'co-host') {
+        res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
         return;
       }
 
       const waitingRoom = await getWaitingRoom(roomId);
       res.json({ waitingRoom });
     } catch (error) {
-      console.error("[Waiting Room List Error]", error);
-      res
-        .status(500)
-        .json({ error: "Internal server error", code: "INTERNAL_ERROR" });
+      console.error('[Waiting Room List Error]', error);
+      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
 );
@@ -628,7 +546,7 @@ router.get(
 // Waiting room: admit one
 
 router.post(
-  "/:id/waiting-room/admit",
+  '/:id/waiting-room/admit',
   authenticateToken,
   async (
     req: Request<{ id: string }, unknown, { participantId: string }>,
@@ -639,16 +557,14 @@ router.post(
       const userId = req.user!.id;
       const { participantId } = req.body;
 
-      if (!participantId || typeof participantId !== "string") {
-        res
-          .status(400)
-          .json({ error: "participantId required", code: "BAD_REQUEST" });
+      if (!participantId || typeof participantId !== 'string') {
+        res.status(400).json({ error: 'participantId required', code: 'BAD_REQUEST' });
         return;
       }
 
       const role = await getPeerRole(roomId, userId);
-      if (role !== "host" && role !== "co-host") {
-        res.status(403).json({ error: "Forbidden", code: "FORBIDDEN" });
+      if (role !== 'host' && role !== 'co-host') {
+        res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
         return;
       }
 
@@ -656,22 +572,17 @@ router.post(
       await removeFromWaitingRoom(roomId, participantId);
 
       // Pre-register role in Redis so the participant's WS getPeerRole check passes
-      await addPeerToRoom(roomId, participantId, "participant");
+      await addPeerToRoom(roomId, participantId, 'participant');
 
       // Record admit result for the 10-second status-check fallback
-      await redis.set(
-        `room:${roomId}:admitResult:${participantId}`,
-        "admitted",
-        "EX",
-        300,
-      );
+      await redis.set(`room:${roomId}:admitResult:${participantId}`, 'admitted', 'EX', 300);
 
       // Generate room token and push to participant's waiting WS connection
       const roomToken = generateRoomToken(participantId, roomId);
       await redis.publish(
         roomSignalChannel(roomId),
         JSON.stringify({
-          type: "participant_admitted",
+          type: 'participant_admitted',
           to: participantId,
           participantId,
           roomToken,
@@ -683,20 +594,18 @@ router.post(
       const waitingRoom = await getWaitingRoom(roomId);
       await redis.publish(
         roomSignalChannel(roomId),
-        JSON.stringify({ type: "waiting_room_update", waitingRoom, roomId }),
+        JSON.stringify({ type: 'waiting_room_update', waitingRoom, roomId }),
       );
 
       // Persist to DB (best-effort audit log)
       db.insert(roomParticipants)
-        .values({ roomId, userId: participantId, role: "participant" })
+        .values({ roomId, userId: participantId, role: 'participant' })
         .catch(() => {});
 
       res.json({ success: true });
     } catch (error) {
-      console.error("[Admit Participant Error]", error);
-      res
-        .status(500)
-        .json({ error: "Internal server error", code: "INTERNAL_ERROR" });
+      console.error('[Admit Participant Error]', error);
+      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
 );
@@ -704,7 +613,7 @@ router.post(
 // Waiting room: reject one
 
 router.post(
-  "/:id/waiting-room/reject",
+  '/:id/waiting-room/reject',
   authenticateToken,
   async (
     req: Request<{ id: string }, unknown, { participantId: string }>,
@@ -715,34 +624,27 @@ router.post(
       const userId = req.user!.id;
       const { participantId } = req.body;
 
-      if (!participantId || typeof participantId !== "string") {
-        res
-          .status(400)
-          .json({ error: "participantId required", code: "BAD_REQUEST" });
+      if (!participantId || typeof participantId !== 'string') {
+        res.status(400).json({ error: 'participantId required', code: 'BAD_REQUEST' });
         return;
       }
 
       const role = await getPeerRole(roomId, userId);
-      if (role !== "host" && role !== "co-host") {
-        res.status(403).json({ error: "Forbidden", code: "FORBIDDEN" });
+      if (role !== 'host' && role !== 'co-host') {
+        res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
         return;
       }
 
       await removeFromWaitingRoom(roomId, participantId);
 
       // Record reject result for the status-check fallback
-      await redis.set(
-        `room:${roomId}:admitResult:${participantId}`,
-        "rejected",
-        "EX",
-        300,
-      );
+      await redis.set(`room:${roomId}:admitResult:${participantId}`, 'rejected', 'EX', 300);
 
       // Push rejection notification to participant's waiting WS
       await redis.publish(
         roomSignalChannel(roomId),
         JSON.stringify({
-          type: "participant_rejected",
+          type: 'participant_rejected',
           to: participantId,
           participantId,
           roomId,
@@ -753,15 +655,13 @@ router.post(
       const waitingRoom = await getWaitingRoom(roomId);
       await redis.publish(
         roomSignalChannel(roomId),
-        JSON.stringify({ type: "waiting_room_update", waitingRoom, roomId }),
+        JSON.stringify({ type: 'waiting_room_update', waitingRoom, roomId }),
       );
 
       res.json({ success: true });
     } catch (error) {
-      console.error("[Reject Participant Error]", error);
-      res
-        .status(500)
-        .json({ error: "Internal server error", code: "INTERNAL_ERROR" });
+      console.error('[Reject Participant Error]', error);
+      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
 );
@@ -769,7 +669,7 @@ router.post(
 // Waiting room: admit all (host only)
 
 router.post(
-  "/:id/waiting-room/admit-all",
+  '/:id/waiting-room/admit-all',
   authenticateToken,
   async (req: Request<{ id: string }>, res: Response): Promise<void> => {
     try {
@@ -777,10 +677,8 @@ router.post(
       const userId = req.user!.id;
 
       const role = await getPeerRole(roomId, userId);
-      if (role !== "host") {
-        res
-          .status(403)
-          .json({ error: "Only the host can admit all", code: "FORBIDDEN" });
+      if (role !== 'host') {
+        res.status(403).json({ error: 'Only the host can admit all', code: 'FORBIDDEN' });
         return;
       }
 
@@ -794,18 +692,13 @@ router.post(
       await Promise.all(
         waiting.map(async (p) => {
           await removeFromWaitingRoom(roomId, p.id);
-          await addPeerToRoom(roomId, p.id, "participant");
-          await redis.set(
-            `room:${roomId}:admitResult:${p.id}`,
-            "admitted",
-            "EX",
-            300,
-          );
+          await addPeerToRoom(roomId, p.id, 'participant');
+          await redis.set(`room:${roomId}:admitResult:${p.id}`, 'admitted', 'EX', 300);
           const roomToken = generateRoomToken(p.id, roomId);
           await redis.publish(
             roomSignalChannel(roomId),
             JSON.stringify({
-              type: "participant_admitted",
+              type: 'participant_admitted',
               to: p.id,
               participantId: p.id,
               roomToken,
@@ -814,7 +707,7 @@ router.post(
           );
           // Persist audit log entry (best-effort)
           db.insert(roomParticipants)
-            .values({ roomId, userId: p.id, role: "participant" })
+            .values({ roomId, userId: p.id, role: 'participant' })
             .catch(() => {});
         }),
       );
@@ -823,7 +716,7 @@ router.post(
       await redis.publish(
         roomSignalChannel(roomId),
         JSON.stringify({
-          type: "waiting_room_update",
+          type: 'waiting_room_update',
           waitingRoom: [],
           roomId,
         }),
@@ -831,10 +724,8 @@ router.post(
 
       res.json({ success: true, admitted: waiting.length });
     } catch (error) {
-      console.error("[Admit All Error]", error);
-      res
-        .status(500)
-        .json({ error: "Internal server error", code: "INTERNAL_ERROR" });
+      console.error('[Admit All Error]', error);
+      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
 );
@@ -842,7 +733,7 @@ router.post(
 // Generate invite token (host only)
 
 router.post(
-  "/:roomId/invite-token",
+  '/:roomId/invite-token',
   authenticateToken,
   apiLimiter,
   async (
@@ -862,12 +753,14 @@ router.post(
         .limit(1);
 
       if (!room) {
-        res.status(404).json({ error: "Room not found", code: "ROOM_NOT_FOUND" });
+        res.status(404).json({ error: 'Room not found', code: 'ROOM_NOT_FOUND' });
         return;
       }
 
       if (room.hostId !== userId) {
-        res.status(403).json({ error: "Only the host can generate invite links", code: "FORBIDDEN" });
+        res
+          .status(403)
+          .json({ error: 'Only the host can generate invite links', code: 'FORBIDDEN' });
         return;
       }
 
@@ -879,11 +772,16 @@ router.post(
           // Verify the previous token belongs to this room before deletion
           const previousRoomId = await redis.get(`invite:${previousToken}`);
           if (previousRoomId && previousRoomId !== roomId) {
-            res.status(400).json({ error: "Token does not belong to this room", code: "INVALID_TOKEN" });
+            res
+              .status(400)
+              .json({ error: 'Token does not belong to this room', code: 'INVALID_TOKEN' });
             return;
           }
           // Wrap deletion with error handling so failures don't abort new token generation
-          await redis.del(`invite:${previousToken}`).catch(err => { console.error('[Invite Token Cleanup]', { error: err.message, roomId }); return 0; });
+          await redis.del(`invite:${previousToken}`).catch((err) => {
+            console.error('[Invite Token Cleanup]', { error: err.message, roomId });
+            return 0;
+          });
         }
       }
 
@@ -892,9 +790,9 @@ router.post(
       const expiresAt = new Date(Date.now() + 86400 * 1000); // 24 hours
 
       // Store in Redis with 24h expiry
-      await redis.set(`invite:${inviteToken}`, roomId, "EX", 86400);
+      await redis.set(`invite:${inviteToken}`, roomId, 'EX', 86400);
 
-      const appUrl = process.env.APP_URL || process.env.VITE_APP_URL || "http://localhost:5173";
+      const appUrl = process.env.APP_URL || process.env.VITE_APP_URL || 'http://localhost:5173';
       const inviteUrl = `${appUrl.replace(/\/$/, '')}/join/${inviteToken}`;
 
       res.json({
@@ -903,8 +801,8 @@ router.post(
         expiresAt: expiresAt.toISOString(),
       });
     } catch (error) {
-      console.error("[Generate Invite Token Error]", error);
-      res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" });
+      console.error('[Generate Invite Token Error]', error);
+      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
 );
@@ -912,13 +810,10 @@ router.post(
 // Join by invite token (public)
 
 router.get(
-  "/join-by-invite/:token",
+  '/join-by-invite/:token',
   globalLimiter,
   optionalAuthenticate,
-  async (
-    req: Request<{ token: string }>,
-    res: Response,
-  ): Promise<void> => {
+  async (req: Request<{ token: string }>, res: Response): Promise<void> => {
     try {
       const { token } = req.params;
 
@@ -926,24 +821,20 @@ router.get(
       const roomId = await redis.get(`invite:${token}`);
 
       if (!roomId) {
-        res.status(410).json({ error: "invite_expired", code: "INVITE_EXPIRED" });
+        res.status(410).json({ error: 'invite_expired', code: 'INVITE_EXPIRED' });
         return;
       }
 
       // Fetch room from PostgreSQL
-      const [room] = await db
-        .select()
-        .from(rooms)
-        .where(eq(rooms.id, roomId))
-        .limit(1);
+      const [room] = await db.select().from(rooms).where(eq(rooms.id, roomId)).limit(1);
 
       if (!room) {
-        res.status(404).json({ error: "Room not found", code: "ROOM_NOT_FOUND" });
+        res.status(404).json({ error: 'Room not found', code: 'ROOM_NOT_FOUND' });
         return;
       }
 
       if (room.endedAt) {
-        res.status(410).json({ error: "invite_expired", code: "ROOM_ENDED" });
+        res.status(410).json({ error: 'invite_expired', code: 'ROOM_ENDED' });
         return;
       }
 
@@ -951,7 +842,7 @@ router.get(
       if (req.user) {
         // Set bypass flag for 120 seconds - allows join without passcode or waiting room
         // Server derives bypass state from this Redis key in the join handler
-        await redis.set(`invite:bypass:${req.user.id}:${roomId}`, "1", "EX", 120);
+        await redis.set(`invite:bypass:${req.user.id}:${roomId}`, '1', 'EX', 120);
       }
 
       // Return room info - the actual join will happen after auth on the frontend
@@ -972,29 +863,29 @@ router.get(
         inviteValid: true,
       });
     } catch (error) {
-      console.error("[Join By Invite Error]", error);
-      res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" });
+      console.error('[Join By Invite Error]', error);
+      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
 );
 
 // Live captions (optional): OpenAI Whisper — requires OPENAI_API_KEY; client uses room token
 router.post(
-  "/:id/transcribe",
+  '/:id/transcribe',
   apiLimiter,
-  captionTranscribeUpload.single("file"),
+  captionTranscribeUpload.single('file'),
   async (req: Request<{ id: string }>, res: Response): Promise<void> => {
     const roomId = req.params.id;
-    const token = req.headers.authorization?.split(" ")[1];
+    const token = req.headers.authorization?.split(' ')[1];
     const decoded = token ? verifyRoomToken(token) : null;
     if (!decoded || decoded.roomId !== roomId) {
-      res.status(403).json({ error: "Invalid room token", code: "INVALID_TOKEN" });
+      res.status(403).json({ error: 'Invalid room token', code: 'INVALID_TOKEN' });
       return;
     }
 
     const file = req.file;
     if (!file?.buffer?.length) {
-      res.status(400).json({ error: "Missing audio file", code: "MISSING_FILE" });
+      res.status(400).json({ error: 'Missing audio file', code: 'MISSING_FILE' });
       return;
     }
 
@@ -1002,86 +893,89 @@ router.post(
     const deepgramKey = process.env.DEEPGRAM_API_KEY?.trim();
     const explicit = process.env.CAPTION_TRANSCRIBE_PROVIDER?.trim().toLowerCase();
     const provider =
-      explicit === "openai" || explicit === "deepgram"
+      explicit === 'openai' || explicit === 'deepgram'
         ? explicit
         : openaiKey
-          ? "openai"
+          ? 'openai'
           : deepgramKey
-            ? "deepgram"
-            : "";
+            ? 'deepgram'
+            : '';
 
-    if (!provider || (provider === "openai" && !openaiKey) || (provider === "deepgram" && !deepgramKey)) {
+    if (
+      !provider ||
+      (provider === 'openai' && !openaiKey) ||
+      (provider === 'deepgram' && !deepgramKey)
+    ) {
       if (!openaiKey && !deepgramKey) {
         res.status(503).json({
           error:
-            "Caption transcription is not configured. Set OPENAI_API_KEY and/or DEEPGRAM_API_KEY and optional CAPTION_TRANSCRIBE_PROVIDER=openai|deepgram",
-          code: "TRANSCRIBE_DISABLED",
+            'Caption transcription is not configured. Set OPENAI_API_KEY and/or DEEPGRAM_API_KEY and optional CAPTION_TRANSCRIBE_PROVIDER=openai|deepgram',
+          code: 'TRANSCRIBE_DISABLED',
         });
         return;
       }
       res.status(503).json({
-        error: "Caption transcription provider misconfigured",
-        code: "TRANSCRIBE_DISABLED",
+        error: 'Caption transcription provider misconfigured',
+        code: 'TRANSCRIBE_DISABLED',
       });
       return;
     }
 
     try {
-      let text = "";
+      let text = '';
 
-      if (provider === "deepgram" && deepgramKey) {
+      if (provider === 'deepgram' && deepgramKey) {
         const upstream = await fetch(
-          "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true",
+          'https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true',
           {
-            method: "POST",
+            method: 'POST',
             headers: {
               Authorization: `Token ${deepgramKey}`,
-              "Content-Type": file.mimetype || "audio/webm",
+              'Content-Type': file.mimetype || 'audio/webm',
             },
             body: new Uint8Array(file.buffer),
           },
         );
         if (!upstream.ok) {
           const errText = await upstream.text();
-          console.error("[transcribe deepgram]", upstream.status, errText);
-          res.status(502).json({ error: "Transcription failed", code: "TRANSCRIBE_FAILED" });
+          console.error('[transcribe deepgram]', upstream.status, errText);
+          res.status(502).json({ error: 'Transcription failed', code: 'TRANSCRIBE_FAILED' });
           return;
         }
         const json = (await upstream.json()) as {
           results?: { channels?: Array<{ alternatives?: Array<{ transcript?: string }> }> };
         };
-        text =
-          json.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim() ?? "";
+        text = json.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim() ?? '';
       } else if (openaiKey) {
         const form = new FormData();
-        form.append("model", "whisper-1");
+        form.append('model', 'whisper-1');
         form.append(
-          "file",
-          new Blob([file.buffer], { type: file.mimetype || "audio/webm" }),
-          "chunk.webm",
+          'file',
+          new Blob([file.buffer], { type: file.mimetype || 'audio/webm' }),
+          'chunk.webm',
         );
 
-        const upstream = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-          method: "POST",
+        const upstream = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+          method: 'POST',
           headers: { Authorization: `Bearer ${openaiKey}` },
           body: form,
         });
 
         if (!upstream.ok) {
           const errText = await upstream.text();
-          console.error("[transcribe openai]", upstream.status, errText);
-          res.status(502).json({ error: "Transcription failed", code: "TRANSCRIBE_FAILED" });
+          console.error('[transcribe openai]', upstream.status, errText);
+          res.status(502).json({ error: 'Transcription failed', code: 'TRANSCRIBE_FAILED' });
           return;
         }
 
         const json = (await upstream.json()) as { text?: string };
-        text = (json.text ?? "").trim();
+        text = (json.text ?? '').trim();
       }
 
       res.json({ text });
     } catch (error) {
-      console.error("[transcribe]", error);
-      res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" });
+      console.error('[transcribe]', error);
+      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
 );

@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "deepgram:flux-demo": "bun run scripts/deepgram-flux-demo.ts",
     "dev": "bun --watch src/server.ts",
     "build": "bun build src/server.ts --outdir dist --target node",
     "start": "bun run dist/server.js",
@@ -44,6 +43,7 @@
     "@types/multer": "^2.1.0",
     "@types/qrcode": "^1.5.6",
     "@types/ua-parser-js": "^0.7.39",
+    "@upstash/redis": "^1.37.0",
     "archiver": "^7.0.1",
     "bcrypt": "^6.0.0",
     "bloom-filters": "^3.0.4",

@@ -43,4 +43,3 @@ export function decrypt(encryptedValue: string): string {
   const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
   return decrypted.toString('utf8');
 }
-

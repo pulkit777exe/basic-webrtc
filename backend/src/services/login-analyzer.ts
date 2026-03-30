@@ -202,4 +202,3 @@ export async function analyzeLogin(context: LoginContext): Promise<SuspicionResu
     deviceFingerprint,
   };
 }
-

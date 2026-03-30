@@ -1,6 +1,6 @@
-import { WebSocket } from "ws";
+import { WebSocket } from 'ws';
 
-export type RoomType = "open" | "locked";
+export type RoomType = 'open' | 'locked';
 
 export interface Participant {
   id: string;
@@ -27,26 +27,26 @@ export interface Room {
 
 export interface WSMessage {
   type:
-    | "join-room"
-    | "offer"
-    | "answer"
-    | "ice-candidate"
-    | "request-join"
-    | "approve-join"
-    | "reject-join"
-    | "user-left"
-    | "start-screen-share"
-    | "stop-screen-share"
-    | "chat-message"
-    | "get-chat-history"
-    | "error"
-    | "send-reaction"
-    | "raise-hand"
-    | "lower-hand"
-    | "kick-user"
-    | "mute-all"
-    | "lock-room"
-    | "unlock-room";
+    | 'join-room'
+    | 'offer'
+    | 'answer'
+    | 'ice-candidate'
+    | 'request-join'
+    | 'approve-join'
+    | 'reject-join'
+    | 'user-left'
+    | 'start-screen-share'
+    | 'stop-screen-share'
+    | 'chat-message'
+    | 'get-chat-history'
+    | 'error'
+    | 'send-reaction'
+    | 'raise-hand'
+    | 'lower-hand'
+    | 'kick-user'
+    | 'mute-all'
+    | 'lock-room'
+    | 'unlock-room';
   payload: any;
 }
 
@@ -101,7 +101,7 @@ export interface AuthResponse {
 
 export interface FileAttachment {
   name: string;
-  type: "image" | "pdf";
+  type: 'image' | 'pdf';
   mimeType: string;
   data: string;
   size: number;

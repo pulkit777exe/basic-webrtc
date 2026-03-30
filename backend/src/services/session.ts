@@ -213,19 +213,22 @@ export async function createSessionForAccessToken(
   };
   const suspiciousVerifiedAt = options?.suspiciousVerifiedAt ?? new Date();
 
-  const [session] = await db.insert(userSessions).values({
-    userId,
-    tokenHash,
-    deviceName: deviceInfo.deviceName,
-    deviceType: deviceInfo.deviceType,
-    browser: deviceInfo.browser,
-    os: deviceInfo.os,
-    ipAddress,
-    location: deviceInfo.location,
-    expiresAt,
-    lastActiveAt: new Date(),
-    suspiciousVerifiedAt,
-  }).returning({ id: userSessions.id });
+  const [session] = await db
+    .insert(userSessions)
+    .values({
+      userId,
+      tokenHash,
+      deviceName: deviceInfo.deviceName,
+      deviceType: deviceInfo.deviceType,
+      browser: deviceInfo.browser,
+      os: deviceInfo.os,
+      ipAddress,
+      location: deviceInfo.location,
+      expiresAt,
+      lastActiveAt: new Date(),
+      suspiciousVerifiedAt,
+    })
+    .returning({ id: userSessions.id });
 
   await redis.set(sessionRedisKey(tokenHash), userId, 'EX', DEFAULT_SESSION_TTL_SECONDS);
   if (suspiciousVerifiedAt) {
@@ -242,10 +245,7 @@ export async function createSessionForAccessToken(
   };
 }
 
-export async function validateSessionToken(
-  userId: string,
-  tokenHash: string,
-): Promise<boolean> {
+export async function validateSessionToken(userId: string, tokenHash: string): Promise<boolean> {
   const cachedUserId = await redis.get(sessionRedisKey(tokenHash));
   if (cachedUserId) {
     return cachedUserId === userId;
@@ -274,12 +274,7 @@ export async function validateSessionToken(
     return false;
   }
 
-  await redis.set(
-    sessionRedisKey(tokenHash),
-    userId,
-    'EX',
-    ttlFromExpiry(session.expiresAt),
-  );
+  await redis.set(sessionRedisKey(tokenHash), userId, 'EX', ttlFromExpiry(session.expiresAt));
   return true;
 }
 
@@ -401,10 +396,7 @@ export async function listActiveSessionsForUser(
   currentTokenHash: string | null,
 ): Promise<SessionListItem[]> {
   const now = new Date();
-  await db
-    .update(userSessions)
-    .set({ isCurrent: false })
-    .where(eq(userSessions.userId, userId));
+  await db.update(userSessions).set({ isCurrent: false }).where(eq(userSessions.userId, userId));
 
   if (currentTokenHash) {
     await db

@@ -1,29 +1,8 @@
-import Redis from 'ioredis';
+import { Redis } from '@upstash/redis';
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-
-export const redis = new Redis(REDIS_URL, {
-  maxRetriesPerRequest: 3,
-  retryStrategy(times) {
-    const delay = Math.min(times * 100, 3000);
-    return delay;
-  },
-});
-
-export const redisSub = new Redis(REDIS_URL, {
-  maxRetriesPerRequest: 3,
-  retryStrategy(times) {
-    const delay = Math.min(times * 100, 3000);
-    return delay;
-  },
-});
-
-redis.on('error', (err) => {
-  console.error('[Redis]', err.message);
-});
-
-redisSub.on('error', (err) => {
-  console.error('[Redis Sub]', err.message);
+export const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 });
 
 const REFRESH_SESSION_TTL_SEC = 7 * 24 * 60 * 60;
@@ -41,12 +20,11 @@ export function blocklistKey(tokenOrJti: string): string {
 }
 
 export async function setRefreshSession(userId: string, tokenHash: string): Promise<void> {
-  const key = userSessionKey(userId);
-  await redis.set(key, tokenHash, 'EX', REFRESH_SESSION_TTL_SEC);
+  await redis.set(userSessionKey(userId), tokenHash, { ex: REFRESH_SESSION_TTL_SEC });
 }
 
 export async function getRefreshSession(userId: string): Promise<string | null> {
-  return redis.get(userSessionKey(userId));
+  return redis.get<string>(userSessionKey(userId));
 }
 
 export async function deleteRefreshSession(userId: string): Promise<void> {
@@ -60,10 +38,8 @@ export async function setUserSessionInvalidBefore(
   await redis.set(userSessionInvalidBeforeKey(userId), String(issuedAtSeconds));
 }
 
-export async function getUserSessionInvalidBefore(
-  userId: string,
-): Promise<number | null> {
-  const raw = await redis.get(userSessionInvalidBeforeKey(userId));
+export async function getUserSessionInvalidBefore(userId: string): Promise<number | null> {
+  const raw = await redis.get<string>(userSessionInvalidBeforeKey(userId));
   if (!raw) return null;
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : null;
@@ -79,13 +55,11 @@ export async function invalidateAllUserSessions(userId: string): Promise<void> {
 
 export async function addToBlocklist(tokenOrJti: string, ttlSeconds: number): Promise<void> {
   if (ttlSeconds <= 0) return;
-  const key = blocklistKey(tokenOrJti);
-  await redis.set(key, '1', 'EX', ttlSeconds);
+  await redis.set(blocklistKey(tokenOrJti), '1', { ex: ttlSeconds });
 }
 
 export async function isBlocklisted(tokenOrJti: string): Promise<boolean> {
-  const key = blocklistKey(tokenOrJti);
-  const v = await redis.get(key);
+  const v = await redis.get(blocklistKey(tokenOrJti));
   return v !== null;
 }
 
@@ -97,24 +71,29 @@ export async function checkRateLimit(
   const now = Math.floor(Date.now() / 1000);
   const windowStart = now - windowSeconds;
 
+  // Upstash supports pipeline via .pipeline() — same chaining API
   const pipe = redis.pipeline();
   pipe.zremrangebyscore(key, 0, windowStart);
   pipe.zcard(key);
   const results = await pipe.exec();
+
   if (!results) {
     return { allowed: false, remaining: 0, resetIn: windowSeconds };
   }
-  const [, count] = results[1];
-  const currentCount = typeof count === 'number' ? count : parseInt(String(count), 10);
+
+  // results[0] = zremrangebyscore result, results[1] = zcard result
+  const currentCount = results[1] as number;
 
   if (currentCount >= maxRequests) {
-    const ttlResult = await redis.zrange(key, 0, 0, 'WITHSCORES');
-    const oldest = ttlResult.length ? Math.floor(parseFloat(ttlResult[1])) : now;
+    // zrange with WITHSCORES: Upstash returns [member, score, member, score, ...]
+    const ttlResult = await redis.zrange(key, 0, 0, { withScores: true });
+    const oldest =
+      ttlResult.length >= 2 ? Math.floor(parseFloat(String((ttlResult as any[])[1]))) : now;
     const resetIn = Math.max(0, oldest + windowSeconds - now);
     return { allowed: false, remaining: 0, resetIn };
   }
 
-  await redis.zadd(key, now, `${now}-${Math.random()}`);
+  await redis.zadd(key, { score: now, member: `${now}-${Math.random()}` });
   await redis.expire(key, windowSeconds);
 
   return {
@@ -142,13 +121,11 @@ export async function setSession(
   data: object,
   expirySeconds: number,
 ): Promise<void> {
-  const key = `session:${sessionId}`;
-  await redis.set(key, JSON.stringify(data), 'EX', expirySeconds);
+  await redis.set(`session:${sessionId}`, JSON.stringify(data), { ex: expirySeconds });
 }
 
 export async function getSession<T>(sessionId: string): Promise<T | null> {
-  const key = `session:${sessionId}`;
-  const raw = await redis.get(key);
+  const raw = await redis.get<string>(`session:${sessionId}`);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as T;

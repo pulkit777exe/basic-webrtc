@@ -42,9 +42,24 @@ router.post(
     try {
       // Validate parameters with appropriate validators and error codes
       const validationRules = [
-        { value: roomId, validator: validateRoomId, error: 'Invalid roomId', code: 'INVALID_ROOM_ID' },
-        { value: participantId, validator: validateId, error: 'Invalid participantId', code: 'INVALID_PARTICIPANT_ID' },
-        { value: sessionId, validator: validateId, error: 'Invalid sessionId', code: 'INVALID_SESSION_ID' }
+        {
+          value: roomId,
+          validator: validateRoomId,
+          error: 'Invalid roomId',
+          code: 'INVALID_ROOM_ID',
+        },
+        {
+          value: participantId,
+          validator: validateId,
+          error: 'Invalid participantId',
+          code: 'INVALID_PARTICIPANT_ID',
+        },
+        {
+          value: sessionId,
+          validator: validateId,
+          error: 'Invalid sessionId',
+          code: 'INVALID_SESSION_ID',
+        },
       ];
 
       for (const { value, validator, error, code } of validationRules) {
@@ -58,7 +73,13 @@ router.post(
       const totalChunksNum = parseInt(totalChunks, 10);
 
       // Validate chunk index
-      if (isNaN(chunkIndexNum) || isNaN(totalChunksNum) || totalChunksNum <= 0 || chunkIndexNum < 0 || chunkIndexNum >= totalChunksNum) {
+      if (
+        isNaN(chunkIndexNum) ||
+        isNaN(totalChunksNum) ||
+        totalChunksNum <= 0 ||
+        chunkIndexNum < 0 ||
+        chunkIndexNum >= totalChunksNum
+      ) {
         res.status(400).json({ error: 'Invalid chunk index', code: 'INVALID_CHUNK_INDEX' });
         return;
       }
@@ -102,7 +123,7 @@ router.post(
         await redis.expire(chunkCountKey, ROOM_TTL_SEC);
       } catch (redisError) {
         console.error('Redis counter error:', redisError);
-        await redis.del(lockKey).catch(err => console.error('Failed to release lock:', err));
+        await redis.del(lockKey).catch((err) => console.error('Failed to release lock:', err));
         lockAcquired = false;
         res.status(500).json({ error: 'Failed to track chunk count', code: 'REDIS_COUNTER_ERROR' });
         return;
@@ -184,14 +205,17 @@ router.post(
             1,
             roomRecordingKey(roomId),
             participantId,
-            ROOM_TTL_SEC.toString()
+            ROOM_TTL_SEC.toString(),
           );
           const updatedState = JSON.parse(updatedStateStr as string);
 
           // Upsert PostgreSQL recording_tracks
-          const session = await db.select()
+          const session = await db
+            .select()
             .from(recordingSessions)
-            .where(and(eq(recordingSessions.roomId, roomId), eq(recordingSessions.sessionId, sessionId)))
+            .where(
+              and(eq(recordingSessions.roomId, roomId), eq(recordingSessions.sessionId, sessionId)),
+            )
             .limit(1);
 
           if (session.length > 0) {
@@ -236,7 +260,7 @@ router.post(
       }
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
-  }
+  },
 );
 
 // GET /api/recordings/:sessionId/download
@@ -250,7 +274,8 @@ router.get(
       const userId = (req as any).user!.id;
 
       // Fetch recording session from PostgreSQL
-      const sessions = await db.select()
+      const sessions = await db
+        .select()
         .from(recordingSessions)
         .where(eq(recordingSessions.sessionId, sessionId))
         .limit(1);
@@ -292,7 +317,9 @@ router.get(
       const outputPath = session.outputPath;
 
       if (!outputPath) {
-        res.status(500).json({ error: 'Output path missing from session record', code: 'NO_OUTPUT_PATH' });
+        res
+          .status(500)
+          .json({ error: 'Output path missing from session record', code: 'NO_OUTPUT_PATH' });
         return;
       }
 
@@ -361,7 +388,7 @@ router.get(
       console.error('[Download Recording Error]', error);
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
-  }
+  },
 );
 
 // GET /api/recordings/:roomId/status
@@ -373,7 +400,8 @@ router.get(
     try {
       const { id: roomId } = req.params;
 
-      const participant = await db.select()
+      const participant = await db
+        .select()
         .from(recordingSessions)
         .where(eq(recordingSessions.roomId, roomId))
         .limit(1);
@@ -395,15 +423,14 @@ router.get(
         uploadedTracks: recordingState?.uploadedTracks || [],
         failedTracks: recordingState?.failedTracks || [],
         // Expose download link if ready, regardless of Redis state
-        downloadUrl: dbSession.status === 'done'
-          ? `/api/recordings/${dbSession.sessionId}/download`
-          : null,
+        downloadUrl:
+          dbSession.status === 'done' ? `/api/recordings/${dbSession.sessionId}/download` : null,
       });
     } catch (error) {
       console.error('[Get Recording Status Error]', error);
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
-  }
+  },
 );
 
 export default router;

@@ -4,7 +4,10 @@ import { createRedisStore } from '../lib/redis-rate-limit-store.js';
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
-  message: { error: 'Too many authentication attempts, please try again later', code: 'RATE_LIMIT' },
+  message: {
+    error: 'Too many authentication attempts, please try again later',
+    code: 'RATE_LIMIT',
+  },
   standardHeaders: true,
   legacyHeaders: false,
   store: createRedisStore(),

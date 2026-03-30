@@ -4,11 +4,7 @@ import { db } from '../db';
 import { users } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt';
-import {
-  setRefreshSession,
-  getRefreshSession,
-  getUserSessionInvalidBefore,
-} from '../config/redis';
+import { setRefreshSession, getRefreshSession, getUserSessionInvalidBefore } from '../config/redis';
 import { validatePassword } from '../utils/password';
 import { validateName } from '../utils/bloomFilter';
 import { AuthResponse, SignupPayload, LoginPayload } from '../types';
@@ -19,7 +15,9 @@ function hashToken(token: string): string {
 
 const SALT_ROUNDS = 10;
 
-export async function signup(payload: SignupPayload): Promise<{ success: boolean; errors?: string[] }> {
+export async function signup(
+  payload: SignupPayload,
+): Promise<{ success: boolean; errors?: string[] }> {
   const { name, email, password } = payload;
 
   const nameValidation = validateName(name);

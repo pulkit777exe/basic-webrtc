@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express } from 'express';
 
 /** Max JSON/binary payload per WebSocket frame (signaling SDP can be large). */
 export const WS_MAX_MESSAGE_BYTES = clampInt(
@@ -19,24 +19,19 @@ export function getDatabasePoolMax(): number {
  */
 export function configureTrustProxy(app: Express): void {
   const raw = process.env.TRUST_PROXY?.trim();
-  if (!raw || raw === "0" || raw === "false") return;
-  if (raw === "true" || raw === "1") {
-    app.set("trust proxy", 1);
+  if (!raw || raw === '0' || raw === 'false') return;
+  if (raw === 'true' || raw === '1') {
+    app.set('trust proxy', 1);
     return;
   }
   const n = parseInt(raw, 10);
   if (Number.isFinite(n) && n >= 0) {
-    app.set("trust proxy", n);
+    app.set('trust proxy', n);
   }
 }
 
-function clampInt(
-  raw: string | undefined,
-  min: number,
-  max: number,
-  fallback: number,
-): number {
-  const n = parseInt(raw ?? "", 10);
+function clampInt(raw: string | undefined, min: number, max: number, fallback: number): number {
+  const n = parseInt(raw ?? '', 10);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, n));
 }

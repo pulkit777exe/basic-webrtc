@@ -11,7 +11,9 @@ const STUN_SERVERS = [
 const TURN_TTL_SEC = 24 * 60 * 60; // 24 hours
 
 router.get('/', (req: Request, res: Response) => {
-  const iceServers: Array<{ urls: string | string[]; username?: string; credential?: string }> = [...STUN_SERVERS];
+  const iceServers: Array<{ urls: string | string[]; username?: string; credential?: string }> = [
+    ...STUN_SERVERS,
+  ];
 
   const turnUrl = process.env.TURN_URL;
   const turnSecret = process.env.TURN_SECRET;

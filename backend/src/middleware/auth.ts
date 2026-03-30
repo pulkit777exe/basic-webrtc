@@ -35,11 +35,7 @@ export interface AuthRequest extends Request {
   };
 }
 
-const RESTRICTED_SESSION_ALLOWED_PATHS = new Set([
-  '/me',
-  '/verify-suspicious-login',
-  '/logout',
-]);
+const RESTRICTED_SESSION_ALLOWED_PATHS = new Set(['/me', '/verify-suspicious-login', '/logout']);
 
 export function authenticate(req: Request, res: Response, next: NextFunction): void {
   const token = extractAccessToken(req);
@@ -65,10 +61,7 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
 
     await touchSessionActivity(tokenHash);
     const restrictedSession = await isSessionRestricted(tokenHash);
-    if (
-      restrictedSession &&
-      !RESTRICTED_SESSION_ALLOWED_PATHS.has(req.path)
-    ) {
+    if (restrictedSession && !RESTRICTED_SESSION_ALLOWED_PATHS.has(req.path)) {
       res.status(403).json({
         error: 'SUSPICIOUS_LOGIN_VERIFICATION_REQUIRED',
       });
