@@ -73,21 +73,21 @@ export function ForgotPasswordPage() {
       <div className="pointer-events-none absolute -right-28 bottom-0 h-96 w-96 rounded-full bg-cyan-400/20 blur-3xl" />
 
       <div className="relative z-10 mx-auto grid min-h-[calc(100vh-4rem)] w-full max-w-5xl items-center gap-6 lg:grid-cols-[1fr_440px]">
-        <Card className="hidden rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md lg:block">
+        <Card className="hidden rounded-3xl border--(--meet-border) bg--(--meet-surface) py-0 backdrop-blur-md lg:block">
           <CardContent className="p-8">
-            <p className="text-sm font-medium text-[var(--meet-text-muted)]">Account Security</p>
+            <p className="text-sm font-medium text--(--meet-text-muted)]">Account Security</p>
             <h1 className="mt-3 max-w-sm text-4xl font-semibold leading-tight">Reset your password safely.</h1>
-            <p className="mt-4 max-w-md text-sm text-[var(--meet-text-muted)]">
+            <p className="mt-4 max-w-md text-sm text-(--meet-text-muted)">
               We will send a secure, one-time reset link to your email. The link expires in 60 minutes.
             </p>
           </CardContent>
         </Card>
 
-        <Card className="card-glow rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md">
+        <Card className="card-glow rounded-3xl border-(--meet-border) bg-(--meet-surface) py-0 backdrop-blur-md">
           <CardHeader className="p-6 sm:p-8 sm:pb-2">
-            <p className="text-xs font-semibold tracking-[0.2em] text-[var(--meet-text-muted)] uppercase">Password reset</p>
+            <p className="text-xs font-semibold tracking-[0.2em] text-(--meet-text-muted) uppercase">Password reset</p>
             <CardTitle className="mt-1 text-3xl font-semibold">Forgot password</CardTitle>
-            <CardDescription className="mt-2 text-sm text-[var(--meet-text-muted)]">
+            <CardDescription className="mt-2 text-sm text-(--meet-text-muted)">
               Enter your email and we will send a reset link if an account exists.
             </CardDescription>
           </CardHeader>
@@ -96,11 +96,11 @@ export function ForgotPasswordPage() {
             {!submitted ? (
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="email" className="text-xs font-medium text-[var(--meet-text-muted)]">
+                  <Label htmlFor="email" className="text-xs font-medium text-(--meet-text-muted)">
                     Email
                   </Label>
                   <div className="relative">
-                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--meet-text-muted)]" />
+                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-(--meet-text-muted)" />
                     <Input
                       id="email"
                       type="email"
@@ -108,7 +108,7 @@ export function ForgotPasswordPage() {
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       autoComplete="email"
-                      className="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)] pl-10"
+                      className="h-11 rounded-xl border-(--meet-border) bg-(--meet-surface) pl-10"
                     />
                   </div>
                 </div>
@@ -121,7 +121,7 @@ export function ForgotPasswordPage() {
 
                 <Button
                   type="submit"
-                  className="h-11 w-full rounded-xl bg-[var(--meet-accent)] text-white hover:bg-blue-600"
+                  className="h-11 w-full rounded-xl bg-(--meet-accent) text-white hover:bg-blue-600"
                   disabled={loading}
                 >
                   {loading ? (
@@ -138,7 +138,7 @@ export function ForgotPasswordPage() {
                   <Button
                     type="button"
                     variant="outline"
-                    className="h-11 w-full rounded-xl border-[var(--meet-border)]"
+                    className="h-11 w-full rounded-xl border-(--meet-border)"
                     onClick={handleRetry}
                     disabled={loading}
                   >
@@ -159,14 +159,14 @@ export function ForgotPasswordPage() {
                 ) : null}
 
                 {cooldownSeconds > 0 ? (
-                  <p className="text-sm text-[var(--meet-text-muted)]">
+                  <p className="text-sm text-(--meet-text-muted)">
                     You can resend in {cooldownSeconds}s.
                   </p>
                 ) : (
                   <Button
                     type="button"
                     variant="outline"
-                    className="h-11 w-full rounded-xl border-[var(--meet-border)]"
+                    className="h-11 w-full rounded-xl border-(--meet-border)"
                     disabled={loading}
                     onClick={() => void sendResetLink(email.trim().toLowerCase())}
                   >
@@ -188,7 +188,7 @@ export function ForgotPasswordPage() {
                   <Button
                     type="button"
                     variant="outline"
-                    className="h-11 w-full rounded-xl border-[var(--meet-border)]"
+                    className="h-11 w-full rounded-xl border-(--meet-border)"
                     onClick={handleRetry}
                     disabled={loading}
                   >
@@ -201,7 +201,7 @@ export function ForgotPasswordPage() {
             <div className="pt-2">
               <Link
                 to="/auth/login"
-                className="inline-flex items-center text-sm font-medium text-[var(--meet-accent)] hover:underline"
+                className="inline-flex items-center text-sm font-medium text-(--meet-accent) hover:underline"
               >
                 <ArrowLeft className="mr-1 h-4 w-4" />
                 Back to login

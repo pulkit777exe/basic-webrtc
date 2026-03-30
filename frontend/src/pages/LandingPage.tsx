@@ -48,6 +48,8 @@ export function LandingPage() {
   const titleRef = useRef<HTMLHeadingElement>(null);
   const ctaRef = useRef<HTMLDivElement>(null);
   const cardsRef = useRef<HTMLDivElement>(null);
+  const createCardRef = useRef<HTMLDivElement>(null);
+  const joinCardRef = useRef<HTMLDivElement>(null);
   const [user, setUser] = useAtom(userAtom);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -112,13 +114,49 @@ export function LandingPage() {
     { scope: containerRef }
   );
 
+  const blobLeftRef = useRef<HTMLDivElement>(null);
+  const blobRightRef = useRef<HTMLDivElement>(null);
+  useGSAP(() => {
+    const cards = [createCardRef.current, joinCardRef.current].filter(Boolean);
+    gsap.fromTo(
+      cards,
+      { opacity: 0, y: 16 },
+      { opacity: 1, y: 0, duration: 0.4, stagger: 0.08, ease: "power2.out" },
+    );
+
+    gsap.to(blobLeftRef.current, {
+      x: 60,
+      y: 40,
+      scale: 1.1,
+      duration: 12,
+      repeat: -1,
+      yoyo: true,
+      ease: "sine.inOut",
+    });
+
+    gsap.to(blobRightRef.current, {
+      x: -80,
+      y: -50,
+      scale: 1.2,
+      duration: 10,
+      repeat: -1,
+      yoyo: true,
+      ease: "sine.inOut",
+      delay: 1,
+    });
+  }, []);
+
   return (
     <div
       ref={containerRef}
       className="relative min-h-screen overflow-hidden bg-grid text-(--meet-text)"
     >
-      <div className="pointer-events-none absolute -left-40 top-6 h-90 w-90 rounded-full bg-cyan-400/15 blur-3xl" />
-      <div className="pointer-events-none absolute -right-44 bottom-0 h-105 w-105 rounded-full bg-blue-500/15 blur-3xl" />
+      <div
+        ref={blobLeftRef}
+        className="pointer-events-none absolute -left-40 top-6 h-90 w-90 rounded-full bg-cyan-400/15 blur-3xl" />
+      <div
+        ref={blobRightRef}
+        className="pointer-events-none absolute -right-44 bottom-0 h-105 w-105 rounded-full bg-blue-500/15 blur-3xl" />
 
       <nav className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-6 sm:px-6">
         <span className="text-xl font-semibold tracking-tight">
@@ -249,7 +287,7 @@ export function LandingPage() {
           <Button
             asChild
             size="lg"
-            className="h-11 rounded-full bg-(--meet-accent) px-6 text-white hover:bg-blue-600"
+            className="h-11 rounded-full bg-(--meet-accent) px-6 text-white hover:bg-blue-600 shadow-inner"
           >
             <Link to="/dashboard">
               Start a Meeting
@@ -260,7 +298,7 @@ export function LandingPage() {
             asChild
             variant="outline"
             size="lg"
-            className="h-11 rounded-full border-(--meet-border) bg-(--meet-surface) px-6 hover:bg-(--meet-elevated)"
+            className="h-11 rounded-full border-(--meet-border) bg-(--meet-surface) px-6 hover:bg-(--meet-elevated) shadow-inner"
           >
             <Link to="/dashboard">
               Join with Code

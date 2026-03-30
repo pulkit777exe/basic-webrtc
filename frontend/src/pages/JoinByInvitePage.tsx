@@ -150,10 +150,10 @@ export function JoinByInvitePage() {
   // Show loading while checking auth
   if (!authChecked) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--meet-bg)">
+      <div className="flex min-h-screen items-center justify-center bg-(--meet-bg)">
         <div className="flex flex-col items-center gap-4">
-          <Loader2 className="h-8 w-8 animate-spin text-[var(--meet-accent)" />
-          <p className="text-[var(--meet-text-muted)">Checking authentication…</p>
+          <Loader2 className="h-8 w-8 animate-spin text-(--meet-accent)" />
+          <p className="text--(--meet-text-muted)">Checking authentication…</p>
         </div>
       </div>
     );
@@ -163,10 +163,10 @@ export function JoinByInvitePage() {
   if (step === "loading_invite" || step === "joining") {
     const message = step === "loading_invite" ? "Validating invite link…" : "Joining room…";
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--meet-bg)">
+      <div className="flex min-h-screen items-center justify-center bg-(--meet-bg)">
         <div className="flex flex-col items-center gap-4">
-          <Loader2 className="h-8 w-8 animate-spin text-[var(--meet-accent)" />
-          <p className="text-[var(--meet-text-muted)">{message}</p>
+          <Loader2 className="h-8 w-8 animate-spin text-(--meet-accent)" />
+          <p className="text-(--meet-text-muted)">{message}</p>
         </div>
       </div>
     );
@@ -175,13 +175,13 @@ export function JoinByInvitePage() {
   // Error state
   if (step === "error" || error) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--meet-bg) p-4">
-        <Card className="w-full max-w-md border-[var(--meet-border) bg-[var(--meet-surface)">
+      <div className="flex min-h-screen items-center justify-center bg--(--meet-bg) p-4">
+        <Card className="w-full max-w-md border-(--meet-border) bg-(--meet-surface)">
           <CardHeader>
             <CardTitle className="text-center text-lg">Unable to Join</CardTitle>
           </CardHeader>
           <CardContent className="text-center">
-            <p className="mb-4 text-[var(--meet-text-muted)">{error || "An error occurred"}</p>
+            <p className="mb-4 text-(--meet-text-muted)">{error || "An error occurred"}</p>
             <Button onClick={() => navigate("/dashboard")}>
               Go to dashboard
             </Button>
@@ -194,19 +194,19 @@ export function JoinByInvitePage() {
   // Show join confirmation when room has passcode
   if (roomData) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--meet-bg) p-4">
-        <Card className="w-full max-w-md border-[var(--meet-border) bg-[var(--meet-surface)">
+      <div className="flex min-h-screen items-center justify-center bg-(--meet-bg) p-4">
+        <Card className="w-full max-w-md border-(--meet-border) bg-(--meet-surface)">
           <CardHeader>
             <CardTitle className="text-center">You're invited!</CardTitle>
           </CardHeader>
           <CardContent className="text-center">
-            <p className="mb-6 text-[var(--meet-text-muted)">
+            <p className="mb-6 text--(--meet-text-muted)">
               You have been invited to join <strong>{roomData.room.title}</strong>
             </p>
             {roomData.room.hasPasscode && (
               <div className="mb-4">
                 <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--meet-text-muted)" />
+                  <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-(--meet-text-muted)" />
                   <Input
                     type="password"
                     placeholder="Enter room passcode"
@@ -224,7 +224,7 @@ export function JoinByInvitePage() {
               </div>
             )}
             <Button
-              className="w-full bg-[var(--meet-accent) text-white hover:bg-blue-600"
+              className="w-full bg-(--meet-accent) text-white hover:bg-blue-600"
               onClick={handleJoin}
               disabled={joining || (roomData.room.hasPasscode && !passcode)}
             >

@@ -80,7 +80,7 @@ export function AccountRecoveryPage() {
       <div className="pointer-events-none absolute -right-24 bottom-0 h-80 w-80 rounded-full bg-blue-500/20 blur-3xl" />
 
       <div className="relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-5xl items-center">
-        <Card className="w-full rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)]">
+        <Card className="w-full rounded-3xl border--(--meet-border) bg-(--meet-surface)">
           <CardHeader>
             <CardTitle className="text-3xl">Account Recovery</CardTitle>
             <CardDescription>
@@ -89,7 +89,7 @@ export function AccountRecoveryPage() {
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="grid gap-6 lg:grid-cols-2">
-              <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)]">
+              <Card className="rounded-2xl border--(--meet-border)] bg--(--meet-elevated)]">
                 <CardHeader>
                   <CardTitle className="text-xl">Use a backup code</CardTitle>
                   <CardDescription>Enter your primary email and a one-time backup code.</CardDescription>
@@ -118,7 +118,7 @@ export function AccountRecoveryPage() {
                     </div>
                     <Button
                       type="submit"
-                      className="w-full bg-[var(--meet-accent)] text-white hover:bg-blue-600"
+                      className="w-full bg--(--meet-accent)] text-white hover:bg-blue-600"
                       disabled={backupLoading}
                     >
                       {backupLoading ? 'Verifying...' : 'Recover account'}
@@ -130,7 +130,7 @@ export function AccountRecoveryPage() {
                 </CardContent>
               </Card>
 
-              <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)]">
+              <Card className="rounded-2xl border--(--meet-border)] bg--(--meet-elevated)]">
                 <CardHeader>
                   <CardTitle className="text-xl">Use your recovery email</CardTitle>
                   <CardDescription>
@@ -151,31 +151,31 @@ export function AccountRecoveryPage() {
                     </div>
                     <Button
                       type="submit"
-                      className="w-full bg-[var(--meet-accent)] text-white hover:bg-blue-600"
+                      className="w-full bg--(--meet-accent)] text-white hover:bg-blue-600"
                       disabled={recoveryLoading}
                     >
                       {recoveryLoading ? 'Sending...' : 'Send recovery link'}
                     </Button>
                     {recoveryMessage ? (
-                      <p className="text-sm text-[var(--meet-text-muted)]">{recoveryMessage}</p>
+                      <p className="text-sm text--(--meet-text-muted)]">{recoveryMessage}</p>
                     ) : null}
                   </form>
                 </CardContent>
               </Card>
             </div>
 
-            <div className="rounded-xl border border-[var(--meet-border)] bg-[var(--meet-elevated)] p-4 text-sm">
+            <div className="rounded-xl border border--(--meet-border)] bg--(--meet-elevated)] p-4 text-sm">
               <p className="font-medium">Still locked out?</p>
-              <p className="mt-1 text-[var(--meet-text-muted)]">
+              <p className="mt-1 text--(--meet-text-muted)]">
                 Contact support at{' '}
-                <a className="text-[var(--meet-accent)] hover:underline" href="mailto:support@yourdomain.com">
+                <a className="text--(--meet-accent)] hover:underline" href="mailto:support@yourdomain.com">
                   support@yourdomain.com
                 </a>
               </p>
             </div>
 
             <div className="text-center text-sm">
-              <Link to="/auth/login" className="font-medium text-[var(--meet-accent)] hover:underline">
+              <Link to="/auth/login" className="font-medium text--(--meet-accent)] hover:underline">
                 Back to login
               </Link>
             </div>

@@ -33,7 +33,7 @@ export const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputPro
         <button
           type="button"
           onClick={() => setVisible((prev) => !prev)}
-          className="absolute inset-y-0 right-0 flex items-center px-3 text-[var(--meet-text-muted)] transition hover:text-[var(--meet-text)]"
+          className="absolute inset-y-0 right-0 flex items-center px-3 text--(--meet-text-muted)] transition hover:text--(--meet-text)]"
           aria-label={visible ? 'Hide password' : 'Show password'}
         >
           <span ref={iconRef}>

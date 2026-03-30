@@ -181,31 +181,31 @@ export function ResetPasswordPage() {
 
       <div className="relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-xl items-center">
         {pageState === "validating" ? (
-          <Card className="card-glow w-full rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md">
+          <Card className="card-glow w-full rounded-3xl border--(--meet-border)] bg--(--meet-surface)] py-0 backdrop-blur-md">
             <CardContent className="flex flex-col items-center gap-3 p-8 text-center">
-              <Loader2 className="h-8 w-8 animate-spin text-[var(--meet-accent)]" />
-              <p className="text-sm text-[var(--meet-text-muted)]">Validating reset link...</p>
+              <Loader2 className="h-8 w-8 animate-spin text--(--meet-accent)]" />
+              <p className="text-sm text--(--meet-text-muted)]">Validating reset link...</p>
             </CardContent>
           </Card>
         ) : null}
 
         {pageState === "invalid" ? (
-          <Card className="card-glow w-full rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md">
+          <Card className="card-glow w-full rounded-3xl border--(--meet-border)] bg--(--meet-surface)] py-0 backdrop-blur-md">
             <CardHeader className="p-6 sm:p-8 sm:pb-2">
               <CardTitle className="text-2xl font-semibold">Invalid or expired link</CardTitle>
-              <CardDescription className="text-[var(--meet-text-muted)]">
+              <CardDescription className="text--(--meet-text-muted)]">
                 This reset link is no longer valid. Request a new one.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 p-6 pt-4 sm:p-8 sm:pt-4">
               <Link to="/auth/forgot-password">
-                <Button className="h-11 w-full rounded-xl bg-[var(--meet-accent)] text-white hover:bg-blue-600">
+                <Button className="h-11 w-full rounded-xl bg--(--meet-accent)] text-white hover:bg-blue-600">
                   Request a new reset link
                 </Button>
               </Link>
               <Link
                 to="/auth/login"
-                className="inline-flex items-center text-sm font-medium text-[var(--meet-accent)] hover:underline"
+                className="inline-flex items-center text-sm font-medium text--(--meet-accent)] hover:underline"
               >
                 <ArrowLeft className="mr-1 h-4 w-4" />
                 Back to login
@@ -215,19 +215,19 @@ export function ResetPasswordPage() {
         ) : null}
 
         {pageState === "success" ? (
-          <Card className="card-glow w-full rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md">
+          <Card className="card-glow w-full rounded-3xl border--(--meet-border)] bg--(--meet-surface)] py-0 backdrop-blur-md">
             <CardHeader className="p-6 sm:p-8 sm:pb-2">
               <CardTitle className="text-2xl font-semibold">Password reset complete</CardTitle>
-              <CardDescription className="text-[var(--meet-text-muted)]">
+              <CardDescription className="text--(--meet-text-muted)]">
                 Password reset! You can now sign in.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 p-6 pt-4 sm:p-8 sm:pt-4">
-              <p className="text-sm text-[var(--meet-text-muted)]">
+              <p className="text-sm text--(--meet-text-muted)]">
                 Redirecting to login in {redirectSeconds}s...
               </p>
               <Link to="/auth/login">
-                <Button className="h-11 w-full rounded-xl bg-[var(--meet-accent)] text-white hover:bg-blue-600">
+                <Button className="h-11 w-full rounded-xl bg--(--meet-accent)] text-white hover:bg-blue-600">
                   Sign in now
                 </Button>
               </Link>
@@ -236,11 +236,11 @@ export function ResetPasswordPage() {
         ) : null}
 
         {pageState === "ready" ? (
-          <Card className="card-glow w-full rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] py-0 backdrop-blur-md">
+          <Card className="card-glow w-full rounded-3xl border--(--meet-border)] bg--(--meet-surface)] py-0 backdrop-blur-md">
             <CardHeader className="p-6 sm:p-8 sm:pb-2">
-              <p className="text-xs font-semibold tracking-[0.2em] text-[var(--meet-text-muted)] uppercase">Password reset</p>
+              <p className="text-xs font-semibold tracking-[0.2em] text--(--meet-text-muted)] uppercase">Password reset</p>
               <CardTitle className="mt-1 text-3xl font-semibold">Choose a new password</CardTitle>
-              <CardDescription className="mt-2 text-sm text-[var(--meet-text-muted)]">
+              <CardDescription className="mt-2 text-sm text--(--meet-text-muted)]">
                 {maskedEmail
                   ? `Resetting password for ${maskedEmail}`
                   : "Create a new password for your account."}
@@ -250,7 +250,7 @@ export function ResetPasswordPage() {
             <CardContent className="space-y-4 p-6 pt-4 sm:p-8 sm:pt-4">
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="newPassword" className="text-xs font-medium text-[var(--meet-text-muted)]">
+                  <Label htmlFor="newPassword" className="text-xs font-medium text--(--meet-text-muted)]">
                     New password
                   </Label>
                   <div className="relative">
@@ -260,13 +260,13 @@ export function ResetPasswordPage() {
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
                       autoComplete="new-password"
-                      className="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)] pr-11"
+                      className="h-11 rounded-xl border--(--meet-border)] bg--(--meet-surface)] pr-11"
                       placeholder="Enter new password"
                     />
                     <button
                       type="button"
                       onClick={() => setShowNewPassword((prev) => !prev)}
-                      className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-[var(--meet-text-muted)]"
+                      className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text--(--meet-text-muted)]"
                       aria-label={showNewPassword ? "Hide password" : "Show password"}
                     >
                       {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -276,7 +276,7 @@ export function ResetPasswordPage() {
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-medium text-[var(--meet-text-muted)]">Password strength</p>
+                    <p className="text-xs font-medium text--(--meet-text-muted)]">Password strength</p>
                     <p className={`text-xs font-semibold ${strengthState.textClass}`}>
                       {strengthState.label}
                     </p>
@@ -285,17 +285,17 @@ export function ResetPasswordPage() {
                     {[0, 1, 2, 3].map((index) => (
                       <div
                         key={index}
-                        className={`h-1.5 rounded-full ${index < strengthState.filledBars ? strengthState.barClass : "bg-[var(--meet-border)]"}`}
+                        className={`h-1.5 rounded-full ${index < strengthState.filledBars ? strengthState.barClass : "bg--(--meet-border)]"}`}
                       />
                     ))}
                   </div>
                 </div>
 
-                <div className="space-y-2 rounded-xl border border-[var(--meet-border)] bg-[var(--meet-elevated)] p-3">
+                <div className="space-y-2 rounded-xl border border--(--meet-border)] bg--(--meet-elevated)] p-3">
                   {requirements.map((item) => (
                     <p
                       key={item.label}
-                      className={`text-sm ${item.met ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--meet-text-muted)]"}`}
+                      className={`text-sm ${item.met ? "text-emerald-600 dark:text-emerald-400" : "text--(--meet-text-muted)]"}`}
                     >
                       {item.met ? "[x]" : "[ ]"} {item.label}
                     </p>
@@ -303,7 +303,7 @@ export function ResetPasswordPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="confirmPassword" className="text-xs font-medium text-[var(--meet-text-muted)]">
+                  <Label htmlFor="confirmPassword" className="text-xs font-medium text--(--meet-text-muted)]">
                     Confirm password
                   </Label>
                   <div className="relative">
@@ -313,13 +313,13 @@ export function ResetPasswordPage() {
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       autoComplete="new-password"
-                      className="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)] pr-11"
+                      className="h-11 rounded-xl border--(--meet-border)] bg--(--meet-surface)] pr-11"
                       placeholder="Confirm new password"
                     />
                     <button
                       type="button"
                       onClick={() => setShowConfirmPassword((prev) => !prev)}
-                      className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-[var(--meet-text-muted)]"
+                      className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text--(--meet-text-muted)]"
                       aria-label={showConfirmPassword ? "Hide password" : "Show password"}
                     >
                       {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -349,7 +349,7 @@ export function ResetPasswordPage() {
 
                 <Button
                   type="submit"
-                  className="h-11 w-full rounded-xl bg-[var(--meet-accent)] text-white hover:bg-blue-600"
+                  className="h-11 w-full rounded-xl bg--(--meet-accent)] text-white hover:bg-blue-600"
                   disabled={!canSubmit}
                 >
                   {submitting ? (
@@ -365,7 +365,7 @@ export function ResetPasswordPage() {
 
               <Link
                 to="/auth/login"
-                className="inline-flex items-center text-sm font-medium text-[var(--meet-accent)] hover:underline"
+                className="inline-flex items-center text-sm font-medium text--(--meet-accent)] hover:underline"
               >
                 <ArrowLeft className="mr-1 h-4 w-4" />
                 Back to login

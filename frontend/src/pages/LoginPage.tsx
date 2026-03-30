@@ -336,7 +336,7 @@ export function LoginPage() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       autoComplete="current-password"
-                      inputClassName="h-11 rounded-xl border-[var(--meet-border)] bg-[var(--meet-surface)] pl-10"
+                      inputClassName="h-11 rounded-xl border--(--meet-border)] bg--(--meet-surface)] pl-10"
                     />
                   </div>
                 </div>

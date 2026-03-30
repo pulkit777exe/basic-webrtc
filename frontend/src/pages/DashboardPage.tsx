@@ -34,7 +34,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { ArrowRight, ChevronDown, DoorOpen, Home, LogOut, PlusSquare, Shield, Sparkles, Sun, Moon } from "lucide-react";
+import {
+  ArrowRight,
+  ChevronDown,
+  DoorOpen,
+  Home,
+  LogOut,
+  PlusSquare,
+  Shield,
+  Sparkles,
+  Sun,
+  Moon,
+} from "lucide-react";
 import { useTheme } from "next-themes";
 
 export function DashboardPage() {
@@ -47,19 +58,27 @@ export function DashboardPage() {
   // Close profile dropdown on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
+      if (
+        profileMenuRef.current &&
+        !profileMenuRef.current.contains(e.target as Node)
+      ) {
         setProfileMenuOpen(false);
       }
     }
-    if (profileMenuOpen) document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    if (profileMenuOpen)
+      document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [profileMenuOpen]);
 
   async function handleLogout() {
-    try { await api.logout(); } catch { /* ignore */ }
+    try {
+      await api.logout();
+    } catch {
+      /* ignore */
+    }
     setAccessToken(null);
     setUser(null);
-    navigate('/login');
+    navigate("/login");
   }
 
   const [createTitle, setCreateTitle] = useState("");
@@ -300,26 +319,62 @@ export function DashboardPage() {
       setJoinLoading(false);
     }
   }
+  const blobLeftRef = useRef<HTMLDivElement>(null);
+  const blobRightRef = useRef<HTMLDivElement>(null);
+  useGSAP(() => {
+    const cards = [createCardRef.current, joinCardRef.current].filter(Boolean);
+    gsap.fromTo(
+      cards,
+      { opacity: 0, y: 16 },
+      { opacity: 1, y: 0, duration: 0.4, stagger: 0.08, ease: "power2.out" },
+    );
+
+    gsap.to(blobLeftRef.current, {
+      x: 60,
+      y: 40,
+      scale: 1.1,
+      duration: 12,
+      repeat: -1,
+      yoyo: true,
+      ease: "sine.inOut",
+    });
+
+    gsap.to(blobRightRef.current, {
+      x: -80,
+      y: -50,
+      scale: 1.2,
+      duration: 10,
+      repeat: -1,
+      yoyo: true,
+      ease: "sine.inOut",
+      delay: 1,
+    });
+  }, []);
 
   return (
     <div className="relative min-h-screen overflow-hidden px-4 py-10 sm:px-6">
-      <div className="pointer-events-none absolute -left-20 top-8 h-72 w-72 rounded-full bg-cyan-400/20 blur-3xl" />
-      <div className="pointer-events-none absolute -right-28 bottom-4 h-80 w-80 rounded-full bg-blue-500/20 blur-3xl" />
-
+      <div
+        ref={blobLeftRef}
+        className="pointer-events-none absolute -left-20 top-8 h-72 w-72 rounded-full bg-cyan-400/20 blur-3xl"
+      />
+      <div
+        ref={blobRightRef}
+        className="pointer-events-none absolute -right-28 bottom-4 h-80 w-80 rounded-full bg-blue-500/20 blur-3xl"
+      />
       <div className="relative mx-auto max-w-6xl">
         <div className="mb-8 flex flex-wrap items-end justify-between gap-3">
           <div className="space-y-3">
-          <Badge
-            variant="secondary"
-            className="border border-(--meet-border) bg-(--meet-elevated) text-(--meet-text-muted)"
-          >
-            Workspace
-          </Badge>
-          <h1 className="text-3xl font-semibold">Dashboard</h1>
-          <p className="max-w-xl text-sm text-(--meet-text-muted)">
-            Start a meeting with controls pre-configured, or jump into an
-            existing room using a code.
-          </p>
+            <Badge
+              variant="secondary"
+              className="border border-(--meet-border) bg-(--meet-elevated) text-(--meet-text-muted)"
+            >
+              Workspace
+            </Badge>
+            <h1 className="text-3xl font-semibold">Dashboard</h1>
+            <p className="max-w-xl text-sm text-(--meet-text-muted)">
+              Start a meeting with controls pre-configured, or jump into an
+              existing room using a code.
+            </p>
           </div>
           {/* Profile dropdown */}
           <div ref={profileMenuRef} className="relative">
@@ -328,24 +383,35 @@ export function DashboardPage() {
               className="flex items-center gap-2.5 rounded-full border border-(--meet-border) bg-(--meet-surface) py-2 pl-2 pr-4 transition-colors hover:bg-(--meet-elevated)"
             >
               {user?.avatarUrl ? (
-                <img src={user.avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
+                <img
+                  src={user.avatarUrl}
+                  alt=""
+                  className="h-8 w-8 rounded-full object-cover"
+                />
               ) : (
                 <span className="flex h-8 w-8 items-center justify-center rounded-full bg-(--meet-accent) text-sm font-semibold text-white">
                   {user?.name?.charAt(0).toUpperCase() ?? "U"}
                 </span>
               )}
-              <span className="hidden text-sm font-medium sm:inline">{user?.name ?? "User"}</span>
+              <span className="hidden text-sm font-medium sm:inline">
+                {user?.name ?? "User"}
+              </span>
               <ChevronDown className="h-3.5 w-3.5 opacity-50" />
             </button>
             {profileMenuOpen && (
               <div className="absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-xl border border-(--meet-border) bg-(--meet-surface) shadow-xl animate-in fade-in slide-in-from-top-2 duration-150">
                 <div className="border-b border-(--meet-border) px-4 py-3">
                   <p className="truncate text-sm font-semibold">{user?.name}</p>
-                  <p className="truncate text-xs text-(--meet-text-muted)">{user?.email}</p>
+                  <p className="truncate text-xs text-(--meet-text-muted)">
+                    {user?.email}
+                  </p>
                 </div>
                 <div className="py-1">
                   <button
-                    onClick={() => { setProfileMenuOpen(false); navigate('/'); }}
+                    onClick={() => {
+                      setProfileMenuOpen(false);
+                      navigate("/");
+                    }}
                     className="flex w-full items-center gap-2.5 px-4 py-2 text-sm transition-colors hover:bg-(--meet-elevated)"
                   >
                     <Home className="h-4 w-4 opacity-60" />
@@ -363,17 +429,22 @@ export function DashboardPage() {
                   </button>
                   <div className="mx-3 my-1 border-t border-(--meet-border)" />
                   <button
-                    onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+                    onClick={() =>
+                      setTheme(resolvedTheme === "dark" ? "light" : "dark")
+                    }
                     className="flex w-full items-center justify-between gap-2.5 px-4 py-2 text-sm transition-colors hover:bg-(--meet-elevated)"
                   >
                     <span className="flex items-center gap-2.5">
-                      {resolvedTheme === 'dark'
-                        ? <Moon className="h-4 w-4 opacity-60" />
-                        : <Sun className="h-4 w-4 opacity-60" />
-                      }
-                      {resolvedTheme === 'dark' ? 'Dark mode' : 'Light mode'}
+                      {resolvedTheme === "dark" ? (
+                        <Moon className="h-4 w-4 opacity-60" />
+                      ) : (
+                        <Sun className="h-4 w-4 opacity-60" />
+                      )}
+                      {resolvedTheme === "dark" ? "Dark mode" : "Light mode"}
                     </span>
-                    <span className="text-xs text-(--meet-text-muted)">Toggle</span>
+                    <span className="text-xs text-(--meet-text-muted)">
+                      Toggle
+                    </span>
                   </button>
                   <div className="mx-3 my-1 border-t border-(--meet-border)" />
                   <button
@@ -554,9 +625,7 @@ export function DashboardPage() {
           <div
             className={`space-y-2 ${passcodeShake ? "animate-[shake_0.35s_ease-in-out]" : ""}`}
           >
-            <Label className="text-xs text-(--meet-text-muted)">
-              Passcode
-            </Label>
+            <Label className="text-xs text-(--meet-text-muted)">Passcode</Label>
             <Input
               autoFocus
               value={modalPasscode}

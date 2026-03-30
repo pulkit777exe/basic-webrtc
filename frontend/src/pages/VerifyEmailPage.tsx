@@ -170,7 +170,7 @@ export function VerifyEmailPage() {
   if (!email) {
     return (
       <div className="flex min-h-screen items-center justify-center px-4">
-        <Card className="w-full max-w-md rounded-2xl border-[var(--meet-border)] bg-[var(--meet-surface)]">
+        <Card className="w-full max-w-md rounded-2xl border--(--meet-border)] bg--(--meet-surface)]">
           <CardHeader>
             <CardTitle>Email not found</CardTitle>
             <CardDescription>Start signup/login again to verify your email.</CardDescription>
@@ -194,13 +194,13 @@ export function VerifyEmailPage() {
       <div className="pointer-events-none absolute -right-20 bottom-0 h-72 w-72 rounded-full bg-cyan-400/20 blur-3xl" />
 
       <div className="relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-lg items-center">
-        <Card className={`card-glow w-full rounded-3xl border-[var(--meet-border)] bg-[var(--meet-surface)] ${shake ? '[animation:shake_0.4s_ease]' : ''}`}>
+        <Card className={`card-glow w-full rounded-3xl border--(--meet-border)] bg--(--meet-surface)] ${shake ? '[animation:shake_0.4s_ease]' : ''}`}>
           <CardHeader className="space-y-2 text-center">
-            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-[var(--meet-accent-soft)]">
+            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg--(--meet-accent-soft)]">
               {success ? (
                 <CheckCircle2 className="h-6 w-6 text-emerald-600" />
               ) : (
-                <Mail className="h-5 w-5 text-[var(--meet-accent)]" />
+                <Mail className="h-5 w-5 text--(--meet-accent)]" />
               )}
             </div>
             <CardTitle className="text-3xl font-semibold">Check your email</CardTitle>
@@ -240,7 +240,7 @@ export function VerifyEmailPage() {
                         e.preventDefault();
                         applyPastedDigits(e.clipboardData.getData('text'));
                       }}
-                      className="h-12 w-11 rounded-xl border border-[var(--meet-border)] bg-[var(--meet-surface)] text-center text-lg font-semibold outline-none focus:border-[var(--meet-accent)] focus:ring-1 focus:ring-[var(--meet-accent)]"
+                      className="h-12 w-11 rounded-xl border border--(--meet-border)] bg--(--meet-surface)] text-center text-lg font-semibold outline-none focus:border--(--meet-accent)] focus:ring-1 focus:ring--(--meet-accent)]"
                     />
                   ))}
                 </div>
@@ -250,7 +250,7 @@ export function VerifyEmailPage() {
                 ) : null}
 
                 <Button
-                  className="h-11 w-full rounded-xl bg-[var(--meet-accent)] text-white hover:bg-blue-600"
+                  className="h-11 w-full rounded-xl bg--(--meet-accent)] text-white hover:bg-blue-600"
                   disabled={!otpComplete || loading}
                   onClick={() => void submitOtp(otpValueFrom(otpDigits))}
                 >
@@ -273,7 +273,7 @@ export function VerifyEmailPage() {
             )}
 
             <div className="text-center text-sm">
-              <Link to="/login" className="font-medium text-[var(--meet-accent)] hover:underline">
+              <Link to="/login" className="font-medium text--(--meet-accent)] hover:underline">
                 Back to login
               </Link>
             </div>

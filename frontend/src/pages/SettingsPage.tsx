@@ -481,18 +481,18 @@ export function SettingsPage() {
                 </TabsContent>
 
                 <TabsContent value="security" className="space-y-6">
-                  <Card className="rounded-2xl border-[var(--meet-border)] bg-[var(--meet-elevated)]">
+                  <Card className="rounded-2xl border--(--meet-border)] bg--(--meet-elevated)]">
                     <CardHeader>
                       <CardTitle>Connected Accounts</CardTitle>
                       <CardDescription>Manage third-party sign-in providers.</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <div className="rounded-xl border border-[var(--meet-border)] bg-[var(--meet-surface)] p-4">
+                      <div className="rounded-xl border border--(--meet-border)] bg--(--meet-surface)] p-4">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>
                             <p className="font-medium">Google</p>
                             {user.googleLinked ? (
-                              <p className="text-sm text-[var(--meet-text-muted)]">
+                              <p className="text-sm text--(--meet-text-muted)]">
                                 Connected as: {user.googleEmail || user.email}
                                 {user.googleLinkedAt ? ` · Linked on ${new Date(user.googleLinkedAt).toLocaleDateString()}` : ''}
                               </p>
@@ -688,7 +688,7 @@ export function SettingsPage() {
                     style={{ width: `${(strength.score / 5) * 100}%` }}
                   />
                 </div>
-                <span className="text-xs text-[var(--meet-text-muted)]">{strength.label}</span>
+                <span className="text-xs text--(--meet-text-muted)]">{strength.label}</span>
               </div>
             </div>
             <div className="space-y-1">
@@ -802,7 +802,7 @@ export function SettingsPage() {
 
           {deleteStep === 1 ? (
             <div className="space-y-4">
-              <ul className="space-y-2 text-sm text-[var(--meet-text-muted)]">
+              <ul className="space-y-2 text-sm text--(--meet-text-muted)]">
                 <li>✗ Your profile and settings will be deleted</li>
                 <li>✗ Your hosted rooms will be closed</li>
                 <li>✗ Your recordings will be deleted</li>
