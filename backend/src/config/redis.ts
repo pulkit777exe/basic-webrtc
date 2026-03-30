@@ -1,8 +1,18 @@
 import { Redis } from '@upstash/redis';
+import { Redis as IoRedis } from 'ioredis';
 
 export const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
+
+export const redisSub = new IoRedis(process.env.UPSTASH_REDIS_REST_URL!, {
+  maxRetriesPerRequest: null,
+  tls: {},
+});
+
+redisSub.on('error', (err) => {
+  console.error('[Redis Sub]', err.message);
 });
 
 const REFRESH_SESSION_TTL_SEC = 7 * 24 * 60 * 60;

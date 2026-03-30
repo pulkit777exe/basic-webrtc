@@ -178,7 +178,6 @@ function gracefulShutdown(signal: string) {
         }
         void (async () => {
           try {
-            await redis.quit();
             await redisSub.quit();
             await closeDatabase();
             logger.info('Graceful shutdown complete');

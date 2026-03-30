@@ -89,7 +89,7 @@ export function LinkAccountPage() {
   const content = useMemo(() => {
     if (loading) {
       return (
-        <div className="flex min-h-[240px] items-center justify-center">
+        <div className="flex min-h-60 items-center justify-center">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-(--meet-border) border-t-(--meet-accent)" />
         </div>
       );

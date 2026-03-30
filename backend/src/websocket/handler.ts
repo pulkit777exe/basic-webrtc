@@ -523,7 +523,7 @@ export class WebSocketHandler {
       if (signal.type === 'active_speaker') {
         // Rate limit: max 1 active_speaker event per participant per 2 seconds
         const rateLimitKey = `ratelimit:speaker:${roomId}:${userId}`;
-        const rateLimitResult = await redis.set(rateLimitKey, '1', 'EX', 2, 'NX');
+        const rateLimitResult = await redis.set(rateLimitKey, '1', {ex: 2, nx: true});
         if (!rateLimitResult) {
           return; // Drop message silently if rate limited
         }
@@ -749,7 +749,7 @@ export class WebSocketHandler {
           return;
         }
         try {
-          await redis.set(`recording:offset:${roomId}:${userId}`, offset, 'EX', 86400);
+          await redis.set(`recording:offset:${roomId}:${userId}`, offset, { ex: 86400});
         } catch (error) {
           console.error('Failed to store recording track offset:', error);
           this.sendError(ws, 'Failed to store track offset');
