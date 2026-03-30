@@ -172,7 +172,7 @@ export function SuspiciousLoginPage() {
       <div className="pointer-events-none absolute -right-20 bottom-0 h-72 w-72 rounded-full bg-orange-400/20 blur-3xl" />
 
       <div className="relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-xl items-center">
-        <Card className="w-full rounded-3xl border--(--meet-border)] bg--(--meet-surface)]">
+        <Card className="w-full rounded-3xl border-(--meet-border) bg-(--meet-surface)">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-3xl">
               <AlertTriangle className="h-8 w-8 text-amber-500" />
@@ -239,8 +239,8 @@ export function SuspiciousLoginPage() {
             </div>
 
             {method === 'email_otp' ? (
-              <div className="space-y-3 rounded-xl border border--(--meet-border)] bg--(--meet-elevated)] p-4">
-                <p className="text-sm text--(--meet-text-muted)]">
+              <div className="space-y-3 rounded-xl border border-(--meet-border) bg-(--meet-elevated) p-4">
+                <p className="text-sm text-(--meet-text-muted)">
                   Send a verification code to your registered email.
                 </p>
                 <Button onClick={() => void sendEmailOtp()} disabled={sendingEmailOtp}>
@@ -267,7 +267,7 @@ export function SuspiciousLoginPage() {
             ) : null}
 
             {method === 'totp' ? (
-              <div className="space-y-3 rounded-xl border border--(--meet-border)] bg--(--meet-elevated)] p-4">
+              <div className="space-y-3 rounded-xl border border-(--meet-border) bg-(--meet-elevated) p-4">
                 <div className="space-y-1">
                   <Label htmlFor="totp">Authenticator code</Label>
                   <Input
@@ -285,7 +285,7 @@ export function SuspiciousLoginPage() {
             ) : null}
 
             {method === 'backup_code' ? (
-              <div className="space-y-3 rounded-xl border border--(--meet-border)] bg--(--meet-elevated)] p-4">
+              <div className="space-y-3 rounded-xl border border-(--meet-border) bg-(--meet-elevated) p-4">
                 <div className="space-y-1">
                   <Label htmlFor="backup-code">Backup code</Label>
                   <Input

@@ -232,7 +232,7 @@ export function TwoFactorChallengePage() {
   if (!pendingToken) {
     return (
       <div className="flex min-h-screen items-center justify-center px-4">
-        <Card className="w-full max-w-md rounded-2xl border--(--meet-border)] bg--(--meet-surface)]">
+        <Card className="w-full max-w-md rounded-2xl border-(--meet-border) bg-(--meet-surface)">
           <CardHeader>
             <CardTitle>Session expired</CardTitle>
             <CardDescription>Please log in again to continue.</CardDescription>
@@ -253,10 +253,10 @@ export function TwoFactorChallengePage() {
       <div className="pointer-events-none absolute -right-20 bottom-0 h-72 w-72 rounded-full bg-cyan-400/20 blur-3xl" />
 
       <div className="relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-lg items-center">
-        <Card className="card-glow w-full rounded-3xl border--(--meet-border)] bg--(--meet-surface)]">
+        <Card className="card-glow w-full rounded-3xl border-(--meet-border) bg-(--meet-surface)">
           <CardHeader className="space-y-2 text-center">
-            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg--(--meet-accent-soft)]">
-              <ShieldCheck className="h-5 w-5 text--(--meet-accent)]" />
+            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-(--meet-accent-soft)">
+              <ShieldCheck className="h-5 w-5 text-(--meet-accent)" />
             </div>
             <CardTitle className="text-3xl font-semibold">Two-Factor Authentication</CardTitle>
             <CardDescription>
@@ -284,18 +284,18 @@ export function TwoFactorChallengePage() {
                         e.preventDefault();
                         applyPastedDigits(e.clipboardData.getData('text'));
                       }}
-                      className="h-12 w-11 rounded-xl border border--(--meet-border)] bg--(--meet-surface)] text-center text-lg font-semibold outline-none focus:border--(--meet-accent)] focus:ring-1 focus:ring--(--meet-accent)]"
+                      className="h-12 w-11 rounded-xl border border-(--meet-border) bg-(--meet-surface) text-center text-lg font-semibold outline-none focus:border--(--meet-accent)] focus:ring-1 focus:ring--(--meet-accent)]"
                     />
                   ))}
                 </div>
                 <div className="space-y-1">
                   <Progress value={progressValue} className="h-1" />
-                  <p className="text-center text-xs text--(--meet-text-muted)]">
+                  <p className="text-center text-xs text-(--meet-text-muted)">
                     Code refreshes in {remainingSeconds}s
                   </p>
                 </div>
                 <Button
-                  className="h-11 w-full rounded-xl bg--(--meet-accent)] text-white hover:bg-blue-600"
+                  className="h-11 w-full rounded-xl bg-(--meet-accent) text-white hover:bg-blue-600"
                   disabled={!totpComplete || loading}
                   onClick={() => void verifyWithTotp(totpValue)}
                 >
@@ -326,7 +326,7 @@ export function TwoFactorChallengePage() {
                   />
                 </div>
                 <Button
-                  className="h-11 w-full rounded-xl bg--(--meet-accent)] text-white hover:bg-blue-600"
+                  className="h-11 w-full rounded-xl bg-(--meet-accent) text-white hover:bg-blue-600"
                   disabled={backupCode.replace('-', '').length !== 10 || loading}
                   onClick={() => void verifyWithBackupCode()}
                 >
@@ -358,7 +358,7 @@ export function TwoFactorChallengePage() {
                   e.preventDefault();
                   resetToLogin();
                 }}
-                className="font-medium text--(--meet-accent)] hover:underline"
+                className="font-medium text-(--meet-accent) hover:underline"
               >
                 Back to login
               </Link>

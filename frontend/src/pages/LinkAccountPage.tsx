@@ -90,7 +90,7 @@ export function LinkAccountPage() {
     if (loading) {
       return (
         <div className="flex min-h-[240px] items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border--(--meet-border)] border-t--(--meet-accent)]" />
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-(--meet-border) border-t-(--meet-accent)" />
         </div>
       );
     }
@@ -102,7 +102,7 @@ export function LinkAccountPage() {
             <CheckCircle2 className="h-8 w-8" />
           </div>
           <p className="text-lg font-semibold">Accounts linked!</p>
-          <p className="text-sm text--(--meet-text-muted)]">
+          <p className="text-sm text-(--meet-text-muted)">
             You can now sign in with Google or your password. Redirecting...
           </p>
         </div>
@@ -113,7 +113,7 @@ export function LinkAccountPage() {
       return (
         <div className="space-y-4 text-center">
           <p className="text-sm text-red-600 dark:text-red-400">{errorMessage || 'Unable to load account details.'}</p>
-          <Link to="/auth/login" className="inline-block font-medium text--(--meet-accent)] hover:underline">
+          <Link to="/auth/login" className="inline-block font-medium text-(--meet-accent) hover:underline">
             Back to login
           </Link>
         </div>
@@ -123,16 +123,16 @@ export function LinkAccountPage() {
     return (
       <div className="space-y-6">
         <div className="grid gap-4 sm:grid-cols-2">
-          <div className="rounded-xl border border--(--meet-border)] bg--(--meet-elevated)] p-4">
-            <p className="text-xs font-semibold tracking-wide text--(--meet-text-muted)] uppercase">Google account</p>
+          <div className="rounded-xl border border-(--meet-border) bg-(--meet-elevated) p-4">
+            <p className="text-xs font-semibold tracking-wide text-(--meet-text-muted) uppercase">Google account</p>
             <p className="mt-2 font-medium">{googleProfile.name}</p>
             <p className="text-sm text--(--meet-text-muted)]">{googleProfile.email}</p>
           </div>
 
-          <div className="rounded-xl border border--(--meet-border)] bg--(--meet-elevated)] p-4">
-            <p className="text-xs font-semibold tracking-wide text--(--meet-text-muted)] uppercase">Existing account</p>
+          <div className="rounded-xl border border-(--meet-border) bg-(--meet-elevated) p-4">
+            <p className="text-xs font-semibold tracking-wide text-(--meet-text-muted) uppercase">Existing account</p>
             <p className="mt-2 font-medium">{existingProfile.name}</p>
-            <p className="text-sm text--(--meet-text-muted)]">{existingProfile.email}</p>
+            <p className="text-sm text-(--meet-text-muted)">{existingProfile.email}</p>
           </div>
         </div>
 
@@ -151,7 +151,7 @@ export function LinkAccountPage() {
           <Button onClick={() => void handleConfirm()} disabled={submitting || !password}>
             {submitting ? 'Linking...' : 'Link Accounts'}
           </Button>
-          <Link to="/auth/login" className="inline-flex items-center text-sm font-medium text--(--meet-accent)] hover:underline">
+          <Link to="/auth/login" className="inline-flex items-center text-sm font-medium text-(--meet-accent) hover:underline">
             Cancel and create a separate account instead
           </Link>
         </div>
@@ -165,7 +165,7 @@ export function LinkAccountPage() {
       <div className="pointer-events-none absolute -right-20 bottom-0 h-72 w-72 rounded-full bg-cyan-400/20 blur-3xl" />
 
       <div className="relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-3xl items-center">
-        <Card className="w-full rounded-3xl border--(--meet-border)] bg--(--meet-surface)]">
+        <Card className="w-full rounded-3xl border-(--meet-border) bg-(--meet-surface)">
           <CardHeader>
             <CardTitle className="text-3xl">Connect your Google account</CardTitle>
             <CardDescription>
