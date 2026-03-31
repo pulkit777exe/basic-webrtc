@@ -4,7 +4,31 @@ import { RedisStore } from 'rate-limit-redis';
 import { redis } from '../config/redis.js';
 
 function createStore(prefix: string): RedisStore {
-  const sendCommand = (...args: string[]) => redis.call(args[0], ...args.slice(1));
+  const sendCommand = async (...args: string[]) => {
+    const cmd = args[0].toUpperCase();
+    if (cmd === 'EVALSHA' || cmd === 'EVAL') {
+      const scriptOrSha = args[1];
+      const numKeys = parseInt(args[2], 10);
+      const keys = args.slice(3, 3 + numKeys);
+      const evalArgs = args.slice(3 + numKeys);
+      if (cmd === 'EVALSHA') {
+        try {
+          return await redis.evalsha(scriptOrSha, keys, evalArgs);
+        } catch (err: any) {
+          if (err.message && err.message.includes('NOSCRIPT')) {
+            throw err;
+          }
+          throw err;
+        }
+      } else {
+        return await redis.eval(scriptOrSha, keys, evalArgs);
+      }
+    }
+    if (cmd === 'PTTL') {
+      return await redis.pttl(args[1]);
+    }
+    throw new Error('Unsupported command for Upstash Redis Store: ' + cmd);
+  };
   return new RedisStore({
     prefix: `ratelimit:${prefix}:`,
     sendCommand: sendCommand as unknown as (...args: string[]) => Promise<any>,

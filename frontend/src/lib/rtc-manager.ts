@@ -61,8 +61,12 @@ function attachLocalTracks(connection: RTCPeerConnection, stream: MediaStream | 
 
 export const RTCManager = {
   async init() {
-    const res = await api.getIceServers();
-    iceServers = res.iceServers ?? [];
+    try {
+      const res = await api.getIceServers();
+      iceServers = res.iceServers && res.iceServers.length > 0 ? res.iceServers : [{ urls: 'stun:stun.l.google.com:19302' }];
+    } catch {
+      iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+    }
   },
 
   setLocalStream(stream: MediaStream | null) {
@@ -241,24 +245,31 @@ export const RTCManager = {
 
   replaceTrack(kind: 'audio' | 'video' | string, track: MediaStreamTrack | null) {
     peerConnections.forEach((connection) => {
-      let sender = connection.getSenders().find((s) => s.track?.kind === kind);
-      // After replaceTrack(null) the slot still exists but sender.track is null — find must not rely on track.kind
-      if (!sender && kind === 'video') {
-        const idle = connection.getSenders().filter((s) => !s.track);
-        if (idle.length === 1) sender = idle[0];
-        else if (idle.length > 1) {
-          const firstAudioIdx = connection.getSenders().findIndex((s) => s.track?.kind === 'audio');
-          sender =
-            connection.getSenders().find((s, i) => !s.track && i !== firstAudioIdx) ??
-            idle[idle.length - 1];
+      const transceivers = connection.getTransceivers();
+      const transceiver = transceivers.find((t) => t.receiver?.track?.kind === kind || t.sender?.track?.kind === kind);
+      // In cases where we have a transceiver that was created blindly from offerToReceive*, 
+      // t.sender.track might be null, but t.receiver.track.kind is reliably what the m= line is typed as.
+      
+      if (!transceiver) {
+        // Fallback if not found by kind, we can rely on order: audio index 0, video index 1 usually.
+        // But the best fallback is to just addTrack and trigger negotiation.
+        if (track && localStream) {
+          connection.addTrack(track, localStream);
         }
-      }
-      if (sender) {
-        sender.replaceTrack(track).catch(() => {});
         return;
       }
-      if (track && localStream) {
-        connection.addTrack(track, localStream);
+
+      transceiver.sender.replaceTrack(track).catch(() => {});
+      
+      if (track) {
+        if (transceiver.direction !== 'sendrecv' && transceiver.direction !== 'sendonly') {
+          try {
+            // This will trigger onnegotiationneeded
+            transceiver.direction = 'sendrecv';
+          } catch {
+            // Some browsers complain if changing direction, but usually it works
+          }
+        }
       }
     });
   },

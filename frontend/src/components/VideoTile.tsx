@@ -73,9 +73,6 @@ export function VideoTile({
       .join('|');
   }, [
     stream,
-    stream?.id,
-    stream?.getAudioTracks().length,
-    stream?.getVideoTracks().length,
   ]);
 
   useEffect(() => {
@@ -118,20 +115,21 @@ export function VideoTile({
         className
       )}
     >
-      {showVideo ? (
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted={isLocal}
-          className={cn(
-            'h-full w-full',
-            isScreenShare ? 'object-contain bg-black' : 'object-cover',
-            isLocal && !isScreenShare ? '-scale-x-100' : ''
-          )}
-        />
-      ) : (
-        <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_25%_25%,rgba(59,130,246,0.25),transparent_45%),radial-gradient(circle_at_80%_20%,rgba(34,211,238,0.2),transparent_40%),rgba(2,6,23,0.72)]">
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted={isLocal}
+        className={cn(
+          'absolute inset-0 h-full w-full',
+          isScreenShare ? 'object-contain bg-black' : 'object-cover',
+          isLocal && !isScreenShare ? '-scale-x-100' : '',
+          !showVideo && 'opacity-0 pointer-events-none'
+        )}
+      />
+
+      {!showVideo && (
+        <div className="absolute inset-0 flex items-center justify-center bg-[radial-gradient(circle_at_25%_25%,rgba(59,130,246,0.25),transparent_45%),radial-gradient(circle_at_80%_20%,rgba(34,211,238,0.2),transparent_40%),rgba(2,6,23,0.72)]">
           <div className="flex h-16 w-16 items-center justify-center rounded-full border border-white/20 bg-black/30 text-2xl font-semibold text-white">
             {initials || '?'}
           </div>

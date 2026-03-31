@@ -6,7 +6,7 @@ import { db } from '../db';
 import { recordingSessions } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || 'redis://localhost:6379';
 
 // Create new BullMQ connection options
 const connectionOptions = {

@@ -18,14 +18,11 @@ const RECORDINGS_DIR = process.env.RECORDINGS_DIR || 'recordings';
 
 const router = Router();
 
-// Chunk uploads use query params + raw body (see RecordingManager); multipart fields are not always present when body is octet-stream.
-// Multipart field "chunk" + body fields (FormData from client)
 const upload = multer({
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB limit
+  limits: { fileSize: 500 * 1024 * 1024 },
   storage: multer.memoryStorage(),
 });
 
-// POST /api/recordings/chunk — authenticated only via room token (see handler); session JWT is not used
 router.post(
   '/chunk',
   upload.single('chunk'),
@@ -39,8 +36,12 @@ router.post(
     const totalChunks = q.totalChunks ?? body.totalChunks;
     let lockAcquired = false;
 
+    if (!roomId || !participantId || !sessionId || typeof chunkIndex !== 'string' || typeof totalChunks !== 'string') {
+      res.status(400).json({ error: 'Missing required parameters', code: 'MISSING_PARAMETERS' });
+      return;
+    }
+
     try {
-      // Validate parameters with appropriate validators and error codes
       const validationRules = [
         {
           value: roomId,
@@ -63,7 +64,7 @@ router.post(
       ];
 
       for (const { value, validator, error, code } of validationRules) {
-        if (!validator(value)) {
+        if (!validator(String(value))) {
           res.status(400).json({ error, code });
           return;
         }
@@ -72,7 +73,6 @@ router.post(
       const chunkIndexNum = parseInt(chunkIndex, 10);
       const totalChunksNum = parseInt(totalChunks, 10);
 
-      // Validate chunk index
       if (
         isNaN(chunkIndexNum) ||
         isNaN(totalChunksNum) ||
@@ -84,7 +84,6 @@ router.post(
         return;
       }
 
-      // Validate room token matches roomId
       const token = req.headers['authorization']?.split(' ')[1];
       if (!token) {
         res.status(401).json({ error: 'Missing token', code: 'MISSING_TOKEN' });
@@ -102,20 +101,18 @@ router.post(
         return;
       }
 
-      // Acquire upload lock in Redis
       const lockKey = `upload:lock:${roomId}:${participantId}`;
-      const lock = await redis.set(lockKey, '1', 'EX', 30, 'NX');
+      const lock = await redis.set(lockKey, '1', {ex: 30, nx: true});
       if (!lock) {
         res.status(429).json({ error: 'UPLOAD_IN_PROGRESS' });
         return;
       }
       lockAcquired = true;
 
-      const participantDir = path.join(RECORDINGS_DIR, roomId, sessionId, participantId);
+      const participantDir = path.join(RECORDINGS_DIR, roomId, String(sessionId), participantId);
       await fs.promises.mkdir(participantDir, { recursive: true });
       await fs.promises.writeFile(path.join(participantDir, `chunk_${chunkIndexNum}`), file.buffer);
 
-      // Use Redis-based chunk counter to track all chunks received
       const chunkCountKey = `upload:chunks:${roomId}:${participantId}:${sessionId}`;
       let currentCount;
       try {
@@ -129,12 +126,10 @@ router.post(
         return;
       }
 
-      // Check if all chunks received
       if (currentCount === totalChunksNum) {
         const participantDir = path.join(RECORDINGS_DIR, roomId, sessionId, participantId);
         const outputPath = path.join(RECORDINGS_DIR, roomId, sessionId, `${participantId}.webm`);
 
-        // Verify all chunk files exist before assembly
         const missingChunks: number[] = [];
         for (let i = 0; i < totalChunksNum; i++) {
           if (!fs.existsSync(path.join(participantDir, `chunk_${i}`))) {
@@ -143,7 +138,6 @@ router.post(
         }
 
         if (missingChunks.length > 0) {
-          // Keep the counter so the client can retry the missing chunks
           await redis.del(lockKey);
           lockAcquired = false;
           res.status(409).json({
@@ -155,7 +149,6 @@ router.post(
         }
 
         try {
-          // Assemble all chunks into a single file
           const chunks: Buffer[] = [];
           for (let i = 0; i < totalChunksNum; i++) {
             const chunkPath = path.join(participantDir, `chunk_${i}`);
@@ -164,18 +157,15 @@ router.post(
 
           await fs.promises.writeFile(outputPath, Buffer.concat(chunks));
 
-          // Delete chunks only after a successful write
           for (let i = 0; i < totalChunksNum; i++) {
             const chunkPath = path.join(participantDir, `chunk_${i}`);
             await fs.promises.unlink(chunkPath);
           }
           await fs.promises.rmdir(participantDir);
 
-          // Delete the counter only after everything succeeds
           await redis.del(chunkCountKey);
         } catch (assemblyError) {
           console.error('Error assembling chunks:', assemblyError);
-          // Keep the counter so the client can retry the final chunk
           await redis.decr(chunkCountKey);
           await redis.del(lockKey);
           lockAcquired = false;
@@ -183,7 +173,6 @@ router.post(
           return;
         }
 
-        // Update Redis uploadedTracks array atomically
         const recordingState = await getRecordingState(roomId);
         if (recordingState) {
           const updatedStateStr = await redis.eval(
@@ -202,14 +191,11 @@ router.post(
             redis.call('SETEX', KEYS[1], ARGV[2], cjson.encode(newState))
             return cjson.encode(newState)
             `,
-            1,
-            roomRecordingKey(roomId),
-            participantId,
-            ROOM_TTL_SEC.toString(),
+            [roomRecordingKey(roomId)],
+            [participantId, ROOM_TTL_SEC.toString()],
           );
           const updatedState = JSON.parse(updatedStateStr as string);
 
-          // Upsert PostgreSQL recording_tracks
           const session = await db
             .select()
             .from(recordingSessions)
@@ -225,7 +211,6 @@ router.post(
               status: 'uploaded',
             });
 
-            // Check merge threshold: ≥50% of participants uploaded
             const participantCount = recordingState.participantCount || 0;
             const mergeThreshold = Math.ceil(participantCount * 0.5);
 
@@ -235,8 +220,8 @@ router.post(
                 const offset = await redis.get(`recording:offset:${roomId}:${id}`);
                 tracks.push({
                   participantId: id,
-                  path: path.join(RECORDINGS_DIR, roomId, sessionId, `${id}.webm`),
-                  startOffset: parseInt(offset || '0', 10),
+                  path: path.join(RECORDINGS_DIR, roomId, String(sessionId), `${id}.webm`),
+                  startOffset: parseInt(String(offset) || '0', 10),
                 });
               }
 
@@ -246,14 +231,12 @@ router.post(
         }
       }
 
-      // Release lock only at end of successful path
       await redis.del(lockKey);
       lockAcquired = false;
 
       res.json({ success: true, chunkIndex: chunkIndexNum });
     } catch (error) {
       console.error('[Recording Chunk Error]', error);
-      // --- FIX: always release lock in catch to avoid deadlock ---
       if (lockAcquired && roomId && participantId) {
         const lockKey = `upload:lock:${roomId}:${participantId}`;
         await redis.del(lockKey).catch(() => {});
@@ -263,7 +246,6 @@ router.post(
   },
 );
 
-// GET /api/recordings/:sessionId/download
 router.get(
   '/:sessionId/download',
   authenticateToken,
@@ -273,7 +255,6 @@ router.get(
       const { sessionId } = req.params;
       const userId = (req as any).user!.id;
 
-      // Fetch recording session from PostgreSQL
       const sessions = await db
         .select()
         .from(recordingSessions)
@@ -287,7 +268,6 @@ router.get(
 
       const session = sessions[0];
 
-      // Verify the requester is the host
       if (session.startedBy !== userId) {
         res.status(403).json({ error: 'Unauthorized', code: 'UNAUTHORIZED' });
         return;
@@ -298,12 +278,9 @@ router.get(
         return;
       }
 
-      // --- FIX: check Postgres status first, then Redis as secondary source ---
-      // Redis has a 24hr TTL and may have expired; Postgres is the source of truth
       const isDoneInPostgres = session.status === 'done';
 
       if (!isDoneInPostgres) {
-        // Fall back to Redis for in-progress status
         const recordingState = await getRecordingState(session.roomId);
         res.status(404).json({
           error: 'NOT_READY',
@@ -312,8 +289,6 @@ router.get(
         return;
       }
 
-      // --- FIX: use outputPath from Postgres, not hardcoded path ---
-      // The worker stores the real outputPath returned by mergeRecordings()
       const outputPath = session.outputPath;
 
       if (!outputPath) {
@@ -332,11 +307,9 @@ router.get(
       const fileSize = stat.size;
       const fileName = `meeting-${sessionId}.mp4`;
 
-      // --- FIX: Range request support for seekable video playback ---
       const rangeHeader = req.headers['range'];
 
       if (rangeHeader) {
-        // Parse Range: bytes=START-END
         const parts = rangeHeader.replace(/bytes=/, '').split('-');
         const start = parseInt(parts[0], 10);
         const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
@@ -366,7 +339,6 @@ router.get(
           }
         });
       } else {
-        // Full file download
         res.status(200).set({
           'Accept-Ranges': 'bytes',
           'Content-Length': fileSize,
@@ -391,7 +363,6 @@ router.get(
   },
 );
 
-// GET /api/recordings/:roomId/status
 router.get(
   '/:id/status',
   authenticateToken,
@@ -411,19 +382,15 @@ router.get(
         return;
       }
 
-      // Combine Redis (live) + Postgres (fallback) since Redis state can expire
       const recordingState = await getRecordingState(roomId);
       const dbSession = participant[0];
 
       res.json({
-        // Redis is preferred (live state); fall back to Postgres
         status: recordingState?.status || dbSession.status || 'idle',
         startedAt: recordingState?.startedAt || dbSession.createdAt,
         participantCount: recordingState?.participantCount,
         uploadedTracks: recordingState?.uploadedTracks || [],
-        failedTracks: recordingState?.failedTracks || [],
-        // Expose download link if ready, regardless of Redis state
-        downloadUrl:
+        failedTracks: recordingState?.failedTracks || [],downloadUrl:
           dbSession.status === 'done' ? `/api/recordings/${dbSession.sessionId}/download` : null,
       });
     } catch (error) {
