@@ -136,7 +136,7 @@ export async function getRoomPeerCount(roomId: string): Promise<number> {
 export async function addPeerToRoom(roomId: string, userId: string, role: RoomRole): Promise<void> {
   const pipe = redis.pipeline();
   pipe.sadd(roomPeersKey(roomId), userId);
-  pipe.hset(roomRolesKey(roomId), userId, role);
+  pipe.hset(roomRolesKey(roomId), { [userId]: role });
   pipe.expire(roomPeersKey(roomId), ROOM_TTL_SEC);
   pipe.expire(roomRolesKey(roomId), ROOM_TTL_SEC);
   pipe.expire(roomKey(roomId), ROOM_TTL_SEC);
@@ -199,29 +199,26 @@ export async function setRecordingState(
   state: Partial<RecordingState>,
 ): Promise<void> {
   const key = roomRecordingKey(roomId);
-  await redis.eval(
-    `
-    local current = redis.call('GET', KEYS[1])
-    local newState
-    if current then
-      newState = cjson.decode(current)
-    else
-      newState = { status: 'idle' }
-    end
-    for k, v in pairs(cjson.decode(ARGV[1])) do
-      newState[k] = v
-    end
-    redis.call('SETEX', KEYS[1], ARGV[2], cjson.encode(newState))
-    `,
-    1,
-    key,
-    JSON.stringify(state),
-    ROOM_TTL_SEC.toString(),
-  );
+  
+  // Get current state
+  const current = await redis.get<string>(key);
+  let newState: RecordingState;
+  
+  if (current) {
+    newState = JSON.parse(current);
+  } else {
+    newState = { status: 'idle' };
+  }
+  
+  // Merge new state
+  newState = { ...newState, ...state };
+  
+  // Set with TTL
+  await redis.setex(key, ROOM_TTL_SEC, JSON.stringify(newState));
 }
 
 export async function getRecordingState(roomId: string): Promise<RecordingState | null> {
-  const value = await redis.get(roomRecordingKey(roomId));
+  const value = await redis.get<string>(roomRecordingKey(roomId));
   return value ? JSON.parse(value) : null;
 }
 
@@ -234,10 +231,11 @@ export async function refreshParticipantTTL(roomId: string): Promise<void> {
 export async function deleteAllRoomKeys(roomId: string): Promise<void> {
   let cursor = '0';
   do {
-    const [newCursor, keys] = await redis.scan(cursor, 'MATCH', `room:${roomId}:*`, 'COUNT', 100);
-    cursor = newCursor;
-    if (keys.length > 0) {
-      await redis.del(...keys);
+    // @ts-ignore
+    const [newCursor, keys] = await redis.scan(cursor, { match: `room:${roomId}:*`, count: 100 });
+    cursor = newCursor as unknown as string;
+    if (Array.isArray(keys) && keys.length > 0) {
+      await redis.del(...(keys as string[]));
     }
   } while (cursor !== '0');
 }
@@ -249,7 +247,7 @@ export async function getPeerRole(roomId: string, userId: string): Promise<RoomR
 }
 
 export async function setPeerRole(roomId: string, userId: string, role: RoomRole): Promise<void> {
-  await redis.hset(roomRolesKey(roomId), userId, role);
+  await redis.hset(roomRolesKey(roomId), { [userId]: role });
   await redis.expire(roomRolesKey(roomId), ROOM_TTL_SEC);
 }
 
@@ -259,7 +257,7 @@ export async function setPeerMedia(
   media: { video: boolean; audio: boolean; screen: boolean },
 ): Promise<void> {
   const key = roomMediaKey(roomId);
-  await redis.hset(key, userId, JSON.stringify(media));
+  await redis.hset(key, { [userId]: JSON.stringify(media) });
   await redis.expire(key, ROOM_TTL_SEC);
 }
 
@@ -269,13 +267,13 @@ export async function addToWaitingRoom(
 ): Promise<void> {
   const key = waitingRoomKey(roomId);
   const score = new Date(participant.joinedAt).getTime();
-  await redis.zadd(key, score, JSON.stringify(participant));
+  await redis.zadd(key, { score, member: JSON.stringify(participant) });
   await redis.expire(key, ROOM_TTL_SEC);
 }
 
 export async function getWaitingRoom(roomId: string): Promise<WaitingParticipant[]> {
   const key = waitingRoomKey(roomId);
-  const members = await redis.zrange(key, 0, -1);
+  const members = await redis.zrange<string[]>(key, 0, -1);
   return members
     .map((m) => {
       try {
@@ -289,7 +287,7 @@ export async function getWaitingRoom(roomId: string): Promise<WaitingParticipant
 
 export async function removeFromWaitingRoom(roomId: string, participantId: string): Promise<void> {
   const key = waitingRoomKey(roomId);
-  const members = await redis.zrange(key, 0, -1);
+  const members = await redis.zrange<string[]>(key, 0, -1);
   const toRemove = members.filter((m) => {
     try {
       return (JSON.parse(m) as WaitingParticipant).id === participantId;
@@ -304,7 +302,7 @@ export async function removeFromWaitingRoom(roomId: string, participantId: strin
 
 export async function isInWaitingRoom(roomId: string, participantId: string): Promise<boolean> {
   const key = waitingRoomKey(roomId);
-  const members = await redis.zrange(key, 0, -1);
+  const members = await redis.zrange<string[]>(key, 0, -1);
   return members.some((m) => {
     try {
       return (JSON.parse(m) as WaitingParticipant).id === participantId;
@@ -319,7 +317,7 @@ export async function getWaitingRoomCount(roomId: string): Promise<number> {
 }
 
 export async function setRoomLocked(roomId: string, isLocked: boolean): Promise<void> {
-  await redis.hset(roomKey(roomId), 'isLocked', isLocked ? '1' : '0');
+  await redis.hset(roomKey(roomId), { isLocked: isLocked ? '1' : '0' });
   await redis.expire(roomKey(roomId), ROOM_TTL_SEC);
 }
 
@@ -329,7 +327,7 @@ export async function isRoomLocked(roomId: string): Promise<boolean> {
 }
 
 export async function setRoomReactionsEnabled(roomId: string, enabled: boolean): Promise<void> {
-  await redis.hset(roomKey(roomId), 'reactionsEnabled', enabled ? '1' : '0');
+  await redis.hset(roomKey(roomId), { reactionsEnabled: enabled ? '1' : '0' });
   await redis.expire(roomKey(roomId), ROOM_TTL_SEC);
 }
 
@@ -345,7 +343,7 @@ export async function setRoomPinnedMessage(
   if (!pinnedMessage) {
     await redis.hdel(roomKey(roomId), 'pinnedMessage');
   } else {
-    await redis.hset(roomKey(roomId), 'pinnedMessage', JSON.stringify(pinnedMessage));
+    await redis.hset(roomKey(roomId), { pinnedMessage: JSON.stringify(pinnedMessage) });
     await redis.expire(roomKey(roomId), ROOM_TTL_SEC);
   }
 }
@@ -353,7 +351,7 @@ export async function setRoomPinnedMessage(
 export async function getRoomPinnedMessage(
   roomId: string,
 ): Promise<{ messageId: string; text: string; authorName: string } | null> {
-  const raw = await redis.hget(roomKey(roomId), 'pinnedMessage');
+  const raw = await redis.hget<string>(roomKey(roomId), 'pinnedMessage');
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as {
