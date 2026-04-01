@@ -6,13 +6,21 @@ export const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 });
 
-export const redisSub = new IoRedis(process.env.UPSTASH_REDIS_REST_URL!, {
+const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+export const redisSub = new IoRedis(redisUrl, {
   maxRetriesPerRequest: null,
-  tls: {},
+  tls: redisUrl.startsWith('rediss://') ? {} : undefined,
+  retryStrategy(times) {
+    return Math.min(times * 100, 5000);
+  },
 });
 
-redisSub.on('error', (err) => {
-  console.error('[Redis Sub]', err.message);
+redisSub.on('error', (err: any) => {
+  // Suppress terminal spam on pure socket errors
+  if (err.code === 'ECONNREFUSED') {
+    return;
+  }
+  console.error('[Redis Sub Error]', err.message || err);
 });
 
 const REFRESH_SESSION_TTL_SEC = 7 * 24 * 60 * 60;

@@ -85,9 +85,7 @@ router.post('/export', authenticateToken, async (req: Request, res: Response): P
     const rateLimitResult = await redis.set(
       `export:ratelimit:${userId}`,
       '1',
-      'EX',
-      EXPORT_RATE_LIMIT_SECONDS,
-      'NX',
+      { ex: EXPORT_RATE_LIMIT_SECONDS, nx: true }
     );
     if (rateLimitResult !== 'OK') {
       const retryAfter = Math.max(0, await redis.ttl(`export:ratelimit:${userId}`));
@@ -147,7 +145,7 @@ router.get('/export/download', async (req: Request, res: Response): Promise<void
     }
 
     const redisKey = `export:download:${token}`;
-    const filePath = await redis.get(redisKey);
+    const filePath = await redis.get<string>(redisKey);
     if (!filePath) {
       res.status(404).json({ error: 'EXPORT_NOT_FOUND' });
       return;

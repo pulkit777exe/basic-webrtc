@@ -156,7 +156,7 @@ async function createExportArchive(userId: string): Promise<{ filePath: string; 
   });
 
   const token = randomBytes(24).toString('hex');
-  await redis.set(`export:download:${token}`, filePath, 'EX', 24 * 60 * 60);
+  await redis.set(`export:download:${token}`, filePath, { ex: 24 * 60 * 60 });
 
   return { filePath, token };
 }

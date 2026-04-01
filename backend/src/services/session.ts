@@ -230,11 +230,11 @@ export async function createSessionForAccessToken(
     })
     .returning({ id: userSessions.id });
 
-  await redis.set(sessionRedisKey(tokenHash), userId, 'EX', DEFAULT_SESSION_TTL_SECONDS);
+  await redis.set(sessionRedisKey(tokenHash), userId, { ex: DEFAULT_SESSION_TTL_SECONDS });
   if (suspiciousVerifiedAt) {
     await redis.del(sessionRestrictedRedisKey(tokenHash));
   } else {
-    await redis.set(sessionRestrictedRedisKey(tokenHash), '1', 'EX', DEFAULT_SESSION_TTL_SECONDS);
+    await redis.set(sessionRestrictedRedisKey(tokenHash), '1', { ex: DEFAULT_SESSION_TTL_SECONDS });
   }
 
   return {
@@ -274,7 +274,7 @@ export async function validateSessionToken(userId: string, tokenHash: string): P
     return false;
   }
 
-  await redis.set(sessionRedisKey(tokenHash), userId, 'EX', ttlFromExpiry(session.expiresAt));
+  await redis.set(sessionRedisKey(tokenHash), userId, { ex: ttlFromExpiry(session.expiresAt) });
   return true;
 }
 
@@ -283,9 +283,7 @@ export async function touchSessionActivity(tokenHash: string): Promise<void> {
   const shouldUpdate = await redis.set(
     lastActiveDebounceKey(tokenHash),
     '1',
-    'EX',
-    LAST_ACTIVE_DEBOUNCE_SECONDS,
-    'NX',
+    { ex: LAST_ACTIVE_DEBOUNCE_SECONDS, nx: true }
   );
   if (shouldUpdate !== 'OK') {
     return;
@@ -465,7 +463,7 @@ export async function isSessionRestricted(tokenHash: string): Promise<boolean> {
   }
 
   const ttl = ttlFromExpiry(session.expiresAt);
-  await redis.set(sessionRestrictedRedisKey(tokenHash), '1', 'EX', ttl);
+  await redis.set(sessionRestrictedRedisKey(tokenHash), '1', { ex: ttl });
   return true;
 }
 

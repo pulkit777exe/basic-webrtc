@@ -52,6 +52,7 @@ import { nanoid } from 'nanoid';
 import { WS_MAX_MESSAGE_BYTES } from '../config/scaling';
 
 const HEARTBEAT_INTERVAL_MS = 30000;
+const serverInstanceId = nanoid();
 
 async function requireRole(
   roomId: string,
@@ -334,8 +335,16 @@ export class WebSocketHandler {
   }
 
   private publish(roomId: string, payload: Record<string, unknown>): void {
+    const channel = roomSignalChannel(roomId);
+    const fullPayload = { ...payload, roomId };
+
+    // 1. Immediately broadcast to all WebSockets connected to this exact node
+    this.forwardFromRedis(channel, fullPayload as any);
+
+    // 2. Publish to Redis for any OTHER nodes
+    const redisPayload = { ...fullPayload, __senderInstanceId: serverInstanceId };
     redis
-      .publish(roomSignalChannel(roomId), JSON.stringify(payload))
+      .publish(channel, JSON.stringify(redisPayload))
       .catch((e) => console.error('[WS] Publish', e));
   }
 
@@ -346,9 +355,15 @@ export class WebSocketHandler {
       from?: string;
       to?: string;
       roomId: string;
+      __senderInstanceId?: string;
       [k: string]: unknown;
     },
   ): void {
+    // If we originated this message locally, drop the reflection to prevent duplicate WebRTC signals
+    if (data.__senderInstanceId === serverInstanceId) {
+      return;
+    }
+
     const roomId = data.roomId;
     const room = this.rooms.get(roomId);
 

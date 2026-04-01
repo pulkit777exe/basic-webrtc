@@ -24,8 +24,20 @@ function createStore(prefix: string): RedisStore {
         return await redis.eval(scriptOrSha, keys, evalArgs);
       }
     }
+    if (cmd === 'SCRIPT') {
+      const subcommand = args[1]?.toUpperCase();
+      if (subcommand === 'LOAD') {
+        return await redis.scriptLoad(args[2]);
+      }
+    }
     if (cmd === 'PTTL') {
       return await redis.pttl(args[1]);
+    }
+    if (cmd === 'DECR') {
+      return await redis.decr(args[1]);
+    }
+    if (cmd === 'DEL') {
+      return await redis.del(...args.slice(1));
     }
     throw new Error('Unsupported command for Upstash Redis Store: ' + cmd);
   };

@@ -31,7 +31,7 @@ passport.use(
         if (rawState.startsWith('link:')) {
           const stateToken = rawState.slice(5);
           const stateKey = `oauth:link-state:${stateToken}`;
-          const stateUserId = await redis.get(stateKey);
+          const stateUserId = await redis.get<string>(stateKey);
           if (!stateUserId) {
             return done(null, false, { linkError: 'INVALID_OR_EXPIRED_LINK_STATE' });
           }
@@ -120,8 +120,7 @@ passport.use(
                 avatar: googleAvatar,
                 existingUserId: existingEmailUser.id,
               }),
-              'EX',
-              600,
+              { ex: 600 }
             );
             return done(null, false, { linkToken });
           }

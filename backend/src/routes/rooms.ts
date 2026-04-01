@@ -575,7 +575,7 @@ router.post(
       await addPeerToRoom(roomId, participantId, 'participant');
 
       // Record admit result for the 10-second status-check fallback
-      await redis.set(`room:${roomId}:admitResult:${participantId}`, 'admitted', 'EX', 300);
+      await redis.set(`room:${roomId}:admitResult:${participantId}`, 'admitted', { ex: 300 });
 
       // Generate room token and push to participant's waiting WS connection
       const roomToken = generateRoomToken(participantId, roomId);
@@ -638,7 +638,7 @@ router.post(
       await removeFromWaitingRoom(roomId, participantId);
 
       // Record reject result for the status-check fallback
-      await redis.set(`room:${roomId}:admitResult:${participantId}`, 'rejected', 'EX', 300);
+      await redis.set(`room:${roomId}:admitResult:${participantId}`, 'rejected', { ex: 300 });
 
       // Push rejection notification to participant's waiting WS
       await redis.publish(
@@ -693,7 +693,7 @@ router.post(
         waiting.map(async (p) => {
           await removeFromWaitingRoom(roomId, p.id);
           await addPeerToRoom(roomId, p.id, 'participant');
-          await redis.set(`room:${roomId}:admitResult:${p.id}`, 'admitted', 'EX', 300);
+          await redis.set(`room:${roomId}:admitResult:${p.id}`, 'admitted', { ex: 300 });
           const roomToken = generateRoomToken(p.id, roomId);
           await redis.publish(
             roomSignalChannel(roomId),
@@ -790,7 +790,7 @@ router.post(
       const expiresAt = new Date(Date.now() + 86400 * 1000); // 24 hours
 
       // Store in Redis with 24h expiry
-      await redis.set(`invite:${inviteToken}`, roomId, 'EX', 86400);
+      await redis.set(`invite:${inviteToken}`, roomId, { ex: 86400 });
 
       const appUrl = process.env.APP_URL || process.env.VITE_APP_URL || 'http://localhost:5173';
       const inviteUrl = `${appUrl.replace(/\/$/, '')}/join/${inviteToken}`;
@@ -818,7 +818,7 @@ router.get(
       const { token } = req.params;
 
       // Look up invite token in Redis
-      const roomId = await redis.get(`invite:${token}`);
+      const roomId = await redis.get<string>(`invite:${token}`);
 
       if (!roomId) {
         res.status(410).json({ error: 'invite_expired', code: 'INVITE_EXPIRED' });
@@ -842,12 +842,12 @@ router.get(
       if (req.user) {
         // Set bypass flag for 120 seconds - allows join without passcode or waiting room
         // Server derives bypass state from this Redis key in the join handler
-        await redis.set(`invite:bypass:${req.user.id}:${roomId}`, '1', 'EX', 120);
+        await redis.set(`invite:bypass:${req.user.id}:${roomId}`, '1', { ex: 120 });
       }
 
       // Return room info - the actual join will happen after auth on the frontend
       // The frontend will call the normal join endpoint (server will check Redis for bypass)
-      const participantCount = await getRoomPeerCount(roomId);
+      const participantCount = await getRoomPeerCount(String(roomId));
 
       res.json({
         room: {
@@ -951,7 +951,7 @@ router.post(
         form.append('model', 'whisper-1');
         form.append(
           'file',
-          new Blob([file.buffer], { type: file.mimetype || 'audio/webm' }),
+          new Blob([new Uint8Array(file.buffer)], { type: file.mimetype || 'audio/webm' }),
           'chunk.webm',
         );
 
