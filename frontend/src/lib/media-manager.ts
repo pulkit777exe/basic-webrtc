@@ -93,6 +93,8 @@ async function negotiateBestAudioTrack(
 
 export const MediaManager = {
   async getStream(video: boolean, audio: boolean) {
+    console.log(`[MediaManager] getStream: video=${video}, audio=${audio}`);
+    
     if (!video && !audio) {
       localStream = new MediaStream();
       store.set(localMediaAtom, { stream: localStream, video: false, audio: false, screen: false });
@@ -104,17 +106,21 @@ export const MediaManager = {
 
     if (video) {
       const videoTrack = await negotiateBestVideoTrack(preferredVideoInputId);
+      console.log(`[MediaManager] getStream: videoTrack=${videoTrack?.id ?? 'null'}`);
       if (videoTrack) stream.addTrack(videoTrack);
     }
 
     if (audio) {
       const audioTrack = await negotiateBestAudioTrack();
+      console.log(`[MediaManager] getStream: audioTrack=${audioTrack?.id ?? 'null'}, enabled=${audioTrack?.enabled ?? 'N/A'}`);
       if (audioTrack) stream.addTrack(audioTrack);
     }
 
     localStream = stream;
     const hasVideo = stream.getVideoTracks().length > 0;
     const hasAudio = stream.getAudioTracks().length > 0;
+
+    console.log(`[MediaManager] getStream: final stream tracks=${stream.getTracks().length}, audio=${hasAudio}, video=${hasVideo}`);
 
     store.set(localMediaAtom, {
       stream: localStream,
@@ -218,13 +224,17 @@ export const MediaManager = {
   },
 
   async toggleAudio() {
+    console.log('[MediaManager] toggleAudio called');
+    
     const current = store.get(localMediaAtom);
     if (!current.stream) return;
 
     const audioTrack = current.stream.getAudioTracks()[0];
+    console.log('[MediaManager] toggleAudio: current audio state:', current.audio, 'audioTrack:', audioTrack?.id, 'enabled:', audioTrack?.enabled);
 
     // If no audio track exists, try to acquire one
     if (!audioTrack) {
+      console.log('[MediaManager] toggleAudio: no audio track exists, acquiring one');
       try {
         const newTrack = await negotiateBestAudioTrack();
         if (!newTrack) {
@@ -248,9 +258,11 @@ export const MediaManager = {
 
     // Toggle existing track
     const next = !current.audio;
+    console.log('[MediaManager] toggleAudio: toggling to:', next);
     audioTrack.enabled = next;
     store.set(localMediaAtom, { ...current, audio: next });
     if (next) store.set(mutedByHostAtom, false);
+    console.log('[MediaManager] toggleAudio: after toggle, audioTrack.enabled:', audioTrack.enabled);
     RTCManager.replaceTrack('audio', audioTrack);
   },
 

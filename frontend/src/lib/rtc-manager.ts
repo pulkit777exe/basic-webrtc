@@ -51,9 +51,31 @@ async function restartIceConnection(userId: string) {
 }
 
 function attachLocalTracks(connection: RTCPeerConnection, stream: MediaStream | null) {
-  stream?.getTracks().forEach((track) => {
+  if (!stream) return;
+  
+  const audioTracks = stream.getAudioTracks();
+  const videoTracks = stream.getVideoTracks();
+  
+  // Log for debugging
+  console.log('[RTCManager] attachLocalTracks:', {
+    audioCount: audioTracks.length,
+    videoCount: videoTracks.length,
+    audioEnabled: audioTracks.map(t => t.enabled),
+    videoEnabled: videoTracks.map(t => t.enabled),
+  });
+  
+  audioTracks.forEach((track) => {
     const alreadySending = connection.getSenders().some((sender) => sender.track?.id === track.id);
     if (!alreadySending) {
+      console.log('[RTCManager] Adding audio track:', track.id, 'enabled:', track.enabled);
+      connection.addTrack(track, stream);
+    }
+  });
+  
+  videoTracks.forEach((track) => {
+    const alreadySending = connection.getSenders().some((sender) => sender.track?.id === track.id);
+    if (!alreadySending) {
+      console.log('[RTCManager] Adding video track:', track.id, 'enabled:', track.enabled);
       connection.addTrack(track, stream);
     }
   });
@@ -71,7 +93,11 @@ export const RTCManager = {
 
   setLocalStream(stream: MediaStream | null) {
     localStream = stream;
-    peerConnections.forEach((connection) => attachLocalTracks(connection, stream));
+    console.log(`[RTCManager] setLocalStream: ${stream ? 'stream set' : 'null'}, tracks=${stream?.getTracks().length ?? 0}`);
+    peerConnections.forEach((connection, userId) => {
+      console.log(`[RTCManager] setLocalStream: attaching to peer ${userId}`);
+      attachLocalTracks(connection, stream);
+    });
   },
 
   /**
@@ -82,12 +108,16 @@ export const RTCManager = {
     userId: string,
     stream: MediaStream | null,
   ): Promise<{ connection: RTCPeerConnection; created: boolean }> {
+    console.log(`[RTCManager] createPeer: ${userId}, stream=${stream ? 'present' : 'null'}, tracks=${stream?.getTracks().length ?? 0}`);
+    
     if (peerConnections.has(userId)) {
       const connection = peerConnections.get(userId)!;
+      console.log(`[RTCManager] createPeer: reusing existing connection for ${userId}`);
       attachLocalTracks(connection, stream ?? localStream);
       return { connection, created: false };
     }
     const connection = new RTCPeerConnection({ iceServers });
+    console.log(`[RTCManager] createPeer: created new connection for ${userId}`);
     attachLocalTracks(connection, stream ?? localStream);
 
     connection.ontrack = (event) => {
@@ -244,13 +274,16 @@ export const RTCManager = {
   },
 
   replaceTrack(kind: 'audio' | 'video' | string, track: MediaStreamTrack | null) {
-    peerConnections.forEach((connection) => {
+    peerConnections.forEach((connection, userId) => {
+      console.log(`[RTCManager] replaceTrack for ${userId}: kind=${kind}, track=${track?.id ?? 'null'}, enabled=${track?.enabled}`);
+      
       const transceivers = connection.getTransceivers();
       const transceiver = transceivers.find((t) => t.receiver?.track?.kind === kind || t.sender?.track?.kind === kind);
       // In cases where we have a transceiver that was created blindly from offerToReceive*, 
       // t.sender.track might be null, but t.receiver.track.kind is reliably what the m= line is typed as.
       
       if (!transceiver) {
+        console.log(`[RTCManager] replaceTrack: no transceiver found for ${userId}, kind=${kind}`);
         // Fallback if not found by kind, we can rely on order: audio index 0, video index 1 usually.
         // But the best fallback is to just addTrack and trigger negotiation.
         if (track && localStream) {
@@ -259,15 +292,26 @@ export const RTCManager = {
         return;
       }
 
-      transceiver.sender.replaceTrack(track).catch(() => {});
+      console.log(`[RTCManager] replaceTrack: found transceiver, direction=${transceiver.direction}, sender.track=${transceiver.sender.track?.id}`);
       
       if (track) {
+        transceiver.sender.replaceTrack(track).catch(() => {});
+        
         if (transceiver.direction !== 'sendrecv' && transceiver.direction !== 'sendonly') {
           try {
             // This will trigger onnegotiationneeded
             transceiver.direction = 'sendrecv';
           } catch {
             // Some browsers complain if changing direction, but usually it works
+          }
+        }
+      } else {
+        // If track is null (muting), we still need to ensure the direction allows sending
+        if (transceiver.direction !== 'sendrecv' && transceiver.direction !== 'sendonly') {
+          try {
+            transceiver.direction = 'sendrecv';
+          } catch (err){
+            console.error(err);
           }
         }
       }
