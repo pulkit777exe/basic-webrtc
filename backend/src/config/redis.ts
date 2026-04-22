@@ -85,22 +85,39 @@ class RedisPool {
 
 export const redisPool = new RedisPool();
 
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-export const redisSub = new IoRedis(redisUrl, {
-  maxRetriesPerRequest: null,
-  tls: redisUrl.startsWith('rediss://') ? {} : undefined,
-  retryStrategy(times) {
-    return Math.min(times * 100, 5000);
-  },
-});
-
-redisSub.on('error', (err: any) => {
-  // Suppress terminal spam on pure socket errors
-  if (err.code === 'ECONNREFUSED') {
-    return;
+const getRedisUrl = (): string => {
+  const url = process.env.REDIS_URL;
+  if (!url) {
+    console.warn('[Redis] REDIS_URL not set, pub/sub disabled');
+    return '';
   }
-  console.error('[Redis Sub Error]', err.message || err);
-});
+  return url;
+};
+
+const redisUrl = getRedisUrl();
+
+let redisSub: IoRedis | null = null;
+if (redisUrl) {
+  redisSub = new IoRedis(redisUrl, {
+    maxRetriesPerRequest: null,
+    tls: redisUrl.startsWith('rediss://') ? {} : undefined,
+    retryStrategy(times) {
+      return Math.min(times * 100, 5000);
+    },
+    lazyConnect: true,
+    connectTimeout: 10000,
+  });
+
+  redisSub.on('error', (err: any) => {
+    if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+      console.warn('[Redis] Pub/sub unavailable, using memory fallback');
+      return;
+    }
+    console.error('[Redis Sub Error]', err.message || err);
+  });
+}
+
+export const getRedisSub = (): IoRedis | null => redisSub;
 
 const REFRESH_SESSION_TTL_SEC = 7 * 24 * 60 * 60;
 

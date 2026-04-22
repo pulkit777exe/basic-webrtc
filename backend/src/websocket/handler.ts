@@ -40,8 +40,7 @@ import {
   getRecordingState,
   refreshParticipantTTL,
 } from '../lib/redis-rooms';
-import { redis } from '../config/redis';
-import { redisSub } from '../config/redis';
+import { redis, getRedisSub } from '../config/redis';
 import type { Signal, PublicUser, AdminAction } from '../lib/signals';
 import { isSignal } from '../lib/signals';
 import { sanitizeText } from '../utils/sanitize';
@@ -95,7 +94,11 @@ export class WebSocketHandler {
       });
     }, HEARTBEAT_INTERVAL_MS);
 
-    redisSub.on('message', (channel: string, message: string) => {
+    const redisSub = getRedisSub();
+    if (!redisSub) {
+      console.warn('[WS] Pub/sub disabled, cross-server messaging unavailable');
+    } else {
+      redisSub.on('message', (channel: string, message: string) => {
       try {
         if (channel.endsWith(':ended')) {
           const roomId = channel.replace(/^room:(.+):ended$/, '$1');
@@ -126,6 +129,7 @@ export class WebSocketHandler {
         console.error('[WS] Redis message parse error', err);
       }
     });
+    }
 
     this.wss.on('connection', (ws: WebSocket, req: unknown) => {
       const ext = ws as ExtendedWebSocket;
@@ -317,19 +321,23 @@ export class WebSocketHandler {
   }
 
   private subscribeRoom(roomId: string): void {
+    const sub = getRedisSub();
+    if (!sub) return;
     const ch = roomSignalChannel(roomId);
     if (this.subscribedChannels.has(ch)) return;
     this.subscribedChannels.add(ch);
-    redisSub.subscribe(ch);
-    redisSub.subscribe(roomEndedChannel(roomId));
+    sub.subscribe(ch);
+    sub.subscribe(roomEndedChannel(roomId));
   }
 
   private unsubscribeRoom(roomId: string): void {
+    const sub = getRedisSub();
+    if (!sub) return;
     const ch = roomSignalChannel(roomId);
     const endCh = roomEndedChannel(roomId);
     if (this.subscribedChannels.has(ch)) {
-      redisSub.unsubscribe(ch);
-      redisSub.unsubscribe(endCh);
+      sub.unsubscribe(ch);
+      sub.unsubscribe(endCh);
       this.subscribedChannels.delete(ch);
     }
   }

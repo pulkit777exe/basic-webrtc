@@ -25,7 +25,7 @@ import { globalLimiter, apiLimiter, authLimiter } from './lib/rate-limiters';
 import { logger } from './lib/logger';
 import { configureTrustProxy } from './config/scaling';
 import { closeDatabase } from './db';
-import { redis, redisSub, redisPool } from './config/redis';
+import { redis, getRedisSub, redisPool } from './config/redis';
 import { startCleanupJob } from './lib/cleanup-job';
 import { startRecordingWorker } from './jobs/recording-worker';
 import { startExportWorker } from './jobs/export-worker';
@@ -180,7 +180,8 @@ function gracefulShutdown(signal: string) {
         }
         void (async () => {
           try {
-            await redisSub.quit();
+            const sub = getRedisSub();
+            if (sub) await sub.quit();
             await redisPool.close();
             await closeDatabase();
             logger.info('Graceful shutdown complete');
