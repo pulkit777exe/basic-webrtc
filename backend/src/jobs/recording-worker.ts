@@ -2,11 +2,12 @@ import { Queue, Worker } from 'bullmq';
 import { mergeRecordings } from '../services/recording-merge';
 import { setRecordingState } from '../lib/redis-rooms';
 import { publishSignal } from '../lib/redis-streams';
+import { clearRecordingStatus } from '../services/recording-broadcast';
 import { db } from '../db';
 import { recordingSessions } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 
-const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL || 'redis://localhost:6379';
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
 // Create new BullMQ connection options
 const connectionOptions = {
@@ -80,6 +81,9 @@ export function startRecordingWorker() {
           type: 'recording_ready',
           downloadUrl: `/api/recordings/${sessionId}/download`,
         });
+
+        // 7. Clean up tracking state
+        await clearRecordingStatus(roomId, sessionId);
       } catch (error) {
         console.error('Recording worker error:', error);
         await setRecordingState(roomId, { status: 'failed' });

@@ -157,6 +157,8 @@ server.on('upgrade', (request, socket, head) => {
 
 new WebSocketHandler(wss);
 
+await redisPool.initialize();
+
 let shuttingDown = false;
 function gracefulShutdown(signal: string) {
   if (shuttingDown) return;
@@ -179,6 +181,7 @@ function gracefulShutdown(signal: string) {
         void (async () => {
           try {
             await redisSub.quit();
+            await redisPool.close();
             await closeDatabase();
             logger.info('Graceful shutdown complete');
             process.exit(0);

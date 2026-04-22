@@ -1,10 +1,89 @@
 import { Redis } from '@upstash/redis';
 import { Redis as IoRedis } from 'ioredis';
 
+const POOL_SIZE = parseInt(process.env.REDIS_POOL_SIZE || '10');
+
 export const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+  enableAutoPipelining: true,
 });
+
+class RedisPool {
+  private connections: IoRedis[] = [];
+  private index = 0;
+  private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
+
+  async initialize(): Promise<void> {
+    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+
+    for (let i = 0; i < POOL_SIZE; i++) {
+      const conn = new IoRedis(redisUrl, {
+        maxRetriesPerRequest: null,
+        tls: redisUrl.startsWith('rediss://') ? {} : undefined,
+        retryStrategy(times) {
+          return Math.min(times * 100, 5000);
+        },
+        lazyConnect: true,
+      });
+      await conn.connect();
+      this.connections.push(conn);
+    }
+
+    console.log(`[RedisPool] Initialized ${this.connections.length} connections`);
+    this.startHealthCheck();
+  }
+
+  get(): IoRedis {
+    const conn = this.connections[this.index];
+    this.index = (this.index + 1) % this.connections.length;
+    return conn;
+  }
+
+  private startHealthCheck(): void {
+    this.healthCheckInterval = setInterval(async () => {
+      let healthy = 0;
+      let total = this.connections.length;
+
+      for (const conn of this.connections) {
+        try {
+          const start = Date.now();
+          await conn.ping();
+          const latency = Date.now() - start;
+
+          if (latency < 500) {
+            healthy++;
+          } else {
+            console.warn(`[RedisPool] High latency: ${latency}ms`);
+          }
+        } catch {
+          console.error('[RedisPool] Connection failed health check');
+        }
+      }
+
+      if (healthy < total / 2) {
+        console.error(`[RedisPool] Critical: only ${healthy}/${total} healthy`);
+      }
+    }, 30000);
+  }
+
+  async close(): Promise<void> {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+    }
+    await Promise.all(this.connections.map((c) => c.quit()));
+    this.connections = [];
+  }
+
+  getStats() {
+    return {
+      size: this.connections.length,
+      currentIndex: this.index,
+    };
+  }
+}
+
+export const redisPool = new RedisPool();
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 export const redisSub = new IoRedis(redisUrl, {
