@@ -69,9 +69,9 @@ export function attachLiveCaptionsBridge(wss: WebSocketServer): void {
         const dgSocket = await deepgram.listen.v1.connect({
           model,
           language,
-          interim_results: true,
-          smart_format: true,
-          punctuate: true,
+          interim_results: 'true' as string,
+          smart_format: 'true' as string,
+          punctuate: 'true' as string,
           encoding: 'linear16',
           sample_rate: 16000,
           channels: 1,

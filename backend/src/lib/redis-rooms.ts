@@ -14,7 +14,6 @@ export interface RecordingState {
   sessionId?: string;
 }
 
-// Key generators for new Redis keys
 export function roomParticipantsKey(roomId: string): string {
   return `room:${roomId}:participants`;
 }
@@ -75,7 +74,7 @@ export interface WaitingParticipant {
   id: string;
   name: string;
   avatarUrl?: string;
-  joinedAt: string; // ISO timestamp
+  joinedAt: string;
 }
 
 export type RoomRole = 'host' | 'co-host' | 'participant';
@@ -151,7 +150,6 @@ export async function removePeerFromRoom(roomId: string, userId: string): Promis
   await pipe.exec();
 }
 
-// Kicked participants blocklist
 export async function addToKickedList(roomId: string, participantId: string): Promise<void> {
   const key = roomKickedKey(roomId);
   await redis.sadd(key, participantId);
@@ -163,7 +161,6 @@ export async function isKicked(roomId: string, participantId: string): Promise<b
   return result === 1;
 }
 
-// Force mute all
 export async function setForceMuted(roomId: string, muted: boolean): Promise<void> {
   const key = roomForceMutedKey(roomId);
   await redis.setex(key, ROOM_TTL_SEC, muted ? '1' : '0');
@@ -174,7 +171,6 @@ export async function isForceMuted(roomId: string): Promise<boolean> {
   return value === '1';
 }
 
-// Active speaker
 export async function setActiveSpeaker(roomId: string, participantId: string): Promise<void> {
   const key = roomActiveSpeakerKey(roomId);
   await redis.setex(key, ACTIVE_SPEAKER_TTL_SEC, participantId);
@@ -193,27 +189,19 @@ export async function getActiveSpeaker(roomId: string): Promise<string | null> {
   return await redis.get(roomActiveSpeakerKey(roomId));
 }
 
-// Recording state - atomic update using Lua script to prevent race conditions
 export async function setRecordingState(
   roomId: string,
   state: Partial<RecordingState>,
 ): Promise<void> {
   const key = roomRecordingKey(roomId);
-  
-  // Get current state
   const current = await redis.get<string>(key);
   let newState: RecordingState;
-  
   if (current) {
     newState = JSON.parse(current);
   } else {
     newState = { status: 'idle' };
   }
-  
-  // Merge new state
   newState = { ...newState, ...state };
-  
-  // Set with TTL
   await redis.setex(key, ROOM_TTL_SEC, JSON.stringify(newState));
 }
 
@@ -222,12 +210,10 @@ export async function getRecordingState(roomId: string): Promise<RecordingState 
   return value ? JSON.parse(value) : null;
 }
 
-// Heartbeat refresh: call this every 30s per participant
 export async function refreshParticipantTTL(roomId: string): Promise<void> {
   await redis.expire(roomParticipantsKey(roomId), ROOM_TTL_SEC);
 }
 
-// Cleanup: delete all Redis keys for a room when it ends
 export async function deleteAllRoomKeys(roomId: string): Promise<void> {
   let cursor = '0';
   do {
@@ -273,7 +259,7 @@ export async function addToWaitingRoom(
 
 export async function getWaitingRoom(roomId: string): Promise<WaitingParticipant[]> {
   const key = waitingRoomKey(roomId);
-  const members = await redis.zrange<string[]>(key, 0, -1);
+  const members = (await redis.zrange(key, 0, -1)) as string[];
   return members
     .map((m) => {
       try {
@@ -287,7 +273,7 @@ export async function getWaitingRoom(roomId: string): Promise<WaitingParticipant
 
 export async function removeFromWaitingRoom(roomId: string, participantId: string): Promise<void> {
   const key = waitingRoomKey(roomId);
-  const members = await redis.zrange<string[]>(key, 0, -1);
+  const members = (await redis.zrange(key, 0, -1)) as string[];
   const toRemove = members.filter((m) => {
     try {
       return (JSON.parse(m) as WaitingParticipant).id === participantId;
@@ -302,7 +288,7 @@ export async function removeFromWaitingRoom(roomId: string, participantId: strin
 
 export async function isInWaitingRoom(roomId: string, participantId: string): Promise<boolean> {
   const key = waitingRoomKey(roomId);
-  const members = await redis.zrange<string[]>(key, 0, -1);
+  const members = (await redis.zrange(key, 0, -1)) as string[];
   return members.some((m) => {
     try {
       return (JSON.parse(m) as WaitingParticipant).id === participantId;
@@ -327,12 +313,14 @@ export async function isRoomLocked(roomId: string): Promise<boolean> {
 }
 
 export async function setRoomReactionsEnabled(roomId: string, enabled: boolean): Promise<void> {
-  await redis.hset(roomKey(roomId), { reactionsEnabled: enabled ? '1' : '0' });
-  await redis.expire(roomKey(roomId), ROOM_TTL_SEC);
+  const key = roomKey(roomId);
+  await redis.hset(key, { reactionsEnabled: enabled ? '1' : '0' });
+  await redis.expire(key, ROOM_TTL_SEC);
 }
 
 export async function getRoomReactionsEnabled(roomId: string): Promise<boolean> {
-  const value = await redis.hget(roomKey(roomId), 'reactionsEnabled');
+  const key = roomKey(roomId);
+  const value = await redis.hget<string>(key, 'reactionsEnabled');
   return value !== '0';
 }
 
@@ -340,18 +328,21 @@ export async function setRoomPinnedMessage(
   roomId: string,
   pinnedMessage: { messageId: string; text: string; authorName: string } | null,
 ): Promise<void> {
+  const key = roomKey(roomId);
   if (!pinnedMessage) {
-    await redis.hdel(roomKey(roomId), 'pinnedMessage');
+    await redis.hdel(key, 'pinnedMessage');
   } else {
-    await redis.hset(roomKey(roomId), { pinnedMessage: JSON.stringify(pinnedMessage) });
-    await redis.expire(roomKey(roomId), ROOM_TTL_SEC);
+    const data: Record<string, string> = { pinnedMessage: JSON.stringify(pinnedMessage) };
+    await redis.hset(key, data);
+    await redis.expire(key, ROOM_TTL_SEC);
   }
 }
 
 export async function getRoomPinnedMessage(
   roomId: string,
 ): Promise<{ messageId: string; text: string; authorName: string } | null> {
-  const raw = await redis.hget<string>(roomKey(roomId), 'pinnedMessage');
+  const key = roomKey(roomId);
+  const raw = await redis.hget<string>(key, 'pinnedMessage');
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as {
@@ -375,7 +366,6 @@ export async function canPerformAdminAction(
   if (actorRole !== 'host' && actorRole !== 'co-host') {
     return false;
   }
-  // This room's moderation actions are host-authoritative.
   if (
     action === 'lock' ||
     action === 'reactions' ||

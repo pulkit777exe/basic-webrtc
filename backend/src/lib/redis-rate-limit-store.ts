@@ -20,11 +20,10 @@ export function createRedisStore(): Store {
       multi.incr(k);
       multi.pttl(k);
       const results = await multi.exec();
-      if (!results) {
+      if (!results || !Array.isArray(results)) {
         return { totalHits: 1, resetTime: new Date(Date.now() + windowMs) };
       }
-      const [, incrResult] = results[0];
-      const [, ttlResult] = results[1];
+      const [incrResult, ttlResult] = results;
       const totalHits =
         typeof incrResult === 'number' ? incrResult : parseInt(String(incrResult), 10);
       const ttl = typeof ttlResult === 'number' ? ttlResult : parseInt(String(ttlResult), 10);

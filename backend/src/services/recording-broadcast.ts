@@ -71,12 +71,12 @@ export async function updateParticipantRecordingState(
   if (!raw) return;
 
   try {
-    const status = JSON.parse(raw) as RecordingStatus;
-    const idx = status.participantStates.findIndex((p) => p.participantId === participantId);
+    const parseStatus: RecordingStatus = JSON.parse(raw);
+    const idx = parseStatus.participantStates.findIndex((p) => p.participantId === participantId);
     if (idx >= 0) {
-      status.participantStates[idx] = { participantId, status, progress };
+      parseStatus.participantStates[idx] = { participantId, status: state, progress };
     }
-    await redis.setex(key, RECORDING_STATUS_TTL_SEC, JSON.stringify(status));
+    await redis.setex(key, RECORDING_STATUS_TTL_SEC, JSON.stringify(parseStatus));
   } catch {
     // ignore parse errors
   }

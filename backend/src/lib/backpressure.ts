@@ -24,14 +24,15 @@ export class BackpressureManager {
 
   async check(roomId: string, userId: string): Promise<{ allowed: boolean; reason?: string }> {
     const key = `bp:${roomId}:${userId}`;
+    const tsKey = `bp:ts:${roomId}:${userId}`;
 
     const [queueSize, lastSeen] = await Promise.all([
       redis.llen(key),
-      redis.get(`bp:ts:${roomId}:${userId}`),
+      redis.get<string>(tsKey),
     ]);
 
     const now = Date.now();
-    const messageAge = lastSeen ? now - parseInt(lastSeen) : 0;
+    const messageAge = lastSeen ? now - (parseInt(lastSeen, 10) || 0) : 0;
 
     if (queueSize >= this.config.maxQueueSize) {
       if (this.config.dropOnFull) {
@@ -70,7 +71,7 @@ export class BackpressureManager {
 
   async dequeue(roomId: string, userId: string): Promise<object | null> {
     const key = `bp:${roomId}:${userId}`;
-    const payload = await redis.lpop(key);
+    const payload = await redis.lpop<string>(key);
     if (!payload) return null;
 
     try {

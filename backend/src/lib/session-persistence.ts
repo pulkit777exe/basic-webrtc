@@ -95,13 +95,16 @@ export class SessionPersistence {
   }
 
   private async captureRoomState(roomId: string): Promise<PersistedSession | null> {
-    const [participants, roles, meta] = await Promise.all([
+    const [participants, rolesRaw, metaRaw] = await Promise.all([
       redis.smembers(roomPeersKey(roomId)),
       redis.hgetall(roomRolesKey(roomId)),
       redis.hgetall(roomKey(roomId)),
     ]);
 
     if (participants.length === 0) return null;
+
+    const roles = rolesRaw as unknown as Record<string, string>;
+    const meta = metaRaw as unknown as Record<string, string>;
 
     return {
       roomId,
