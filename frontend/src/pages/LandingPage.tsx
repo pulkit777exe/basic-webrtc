@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { Link } from 'react-router-dom';
 import { useAtom } from 'jotai';
 import gsap from 'gsap';
@@ -21,6 +21,8 @@ import {
   Users,
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
+
+const Globe = lazy(() => import('@/components/Globe').then((m) => ({ default: m.Globe })));
 
 const TITLE = 'Meetour';
 
@@ -304,6 +306,23 @@ export function LandingPage() {
               Join with Code
             </Link>
           </Button>
+        </div>
+
+        {/* Globe section */}
+        <div className="relative mx-auto mt-14 flex flex-col items-center">
+          <Suspense fallback={
+            <div className="flex h-[340px] w-[340px] items-center justify-center sm:h-[440px] sm:w-[440px] md:h-[520px] md:w-[520px]">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-(--meet-border) border-t-(--meet-accent)" />
+            </div>
+          }>
+            <Globe
+              size={520}
+              className="h-[340px] w-[340px] sm:h-[440px] sm:w-[440px] md:h-[520px] md:w-[520px]"
+            />
+          </Suspense>
+          <p className="-mt-2 text-center text-sm tracking-wide text-(--meet-text-muted) sm:text-base">
+            Connect from anywhere in the world
+          </p>
         </div>
 
         <div ref={cardsRef} className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
