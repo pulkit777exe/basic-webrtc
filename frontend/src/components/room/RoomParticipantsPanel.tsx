@@ -2,17 +2,20 @@ import { useRef } from 'react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
 import { useAtomValue } from 'jotai';
-import { participantsAtom, pinnedParticipantsAtom, userAtom } from '@/store/atoms';
+import { participantsAtom, pinnedParticipantsAtom, userAtom, handRaisedQueueAtom, canManageAtom } from '@/store/atoms';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { X } from 'lucide-react';
 import { AdminPanel } from '@/components/room/AdminPanel';
+import { WSManager } from '@/lib/ws-manager';
 
 export function RoomParticipantsPanel({ onClose }: { onClose: () => void }) {
   const participants = useAtomValue(participantsAtom);
   const pinnedParticipants = useAtomValue(pinnedParticipantsAtom);
   const user = useAtomValue(userAtom);
+  const handRaisedQueue = useAtomValue(handRaisedQueueAtom);
+  const canManage = useAtomValue(canManageAtom);
   const panelRef = useRef<HTMLDivElement>(null);
 
   useGSAP(
@@ -44,6 +47,42 @@ export function RoomParticipantsPanel({ onClose }: { onClose: () => void }) {
       </div>
       <Separator className="bg-(--room-border)" />
       <div className="flex-1 space-y-2 overflow-y-auto p-4 sm:p-5">
+        {handRaisedQueue.length > 0 && (
+          <div className="space-y-2">
+            <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-amber-400">
+              <span>✋</span> Raised Hands ({handRaisedQueue.length})
+            </h4>
+            {handRaisedQueue.map((entry) => (
+              <div
+                key={entry.userId}
+                className="flex items-center gap-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2"
+              >
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-500/30 text-xs font-semibold text-amber-200">
+                  {entry.name.slice(0, 2).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-amber-100">
+                    {entry.name}
+                    {entry.userId === user?.id && ' (You)'}
+                  </p>
+                </div>
+                {canManage && entry.userId !== user?.id && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 rounded-full bg-amber-500/20 px-2 text-[10px] text-amber-300 hover:bg-amber-500/30 hover:text-amber-200"
+                    onClick={() => {
+                      WSManager.send({ type: 'hand_raise', raised: false, targetUserId: entry.userId });
+                    }}
+                  >
+                    Lower
+                  </Button>
+                )}
+              </div>
+            ))}
+            <Separator className="bg-(--room-border)" />
+          </div>
+        )}
         <AdminPanel />
         {participants.map((p) => (
           <div

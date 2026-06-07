@@ -14,9 +14,10 @@ export interface VideoTileProps {
   audioMuted: boolean;
   videoMuted: boolean;
   isScreenShare: boolean;
+  handRaised?: boolean;
   canPin?: boolean;
   onTogglePin?: (participantId: string) => void;
-  /** Browser PiP for this tile’s video (intended for remote camera/screen). */
+  /** Browser PiP for this tile's video (intended for remote camera/screen). */
   onEnterPiP?: () => void;
   onPopOutScreen?: (participantId: string) => void;
   registerVideoElement?: (participantId: string, element: HTMLVideoElement | null) => void;
@@ -34,6 +35,7 @@ export function VideoTile({
   audioMuted,
   videoMuted,
   isScreenShare,
+  handRaised = false,
   canPin = false,
   onTogglePin,
   onEnterPiP,
@@ -160,6 +162,11 @@ export function VideoTile({
       </div>
 
       <div className="absolute right-2.5 top-2.5 flex items-center gap-1.5">
+        {handRaised && (
+          <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-amber-500/90 text-sm text-white shadow-lg" title="Hand raised">
+            ✋
+          </span>
+        )}
         {onEnterPiP && (
           <Button
             type="button"

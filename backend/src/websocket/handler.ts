@@ -38,6 +38,7 @@ import {
   setRecordingState,
   getRecordingState,
   refreshParticipantTTL,
+  setHandRaised,
 } from '../lib/redis-rooms';
 import { redis, getRedisSub } from '../config/redis';
 import type { Redis } from '@upstash/redis';
@@ -51,6 +52,8 @@ import { nanoid } from 'nanoid';
 import { WS_MAX_MESSAGE_BYTES } from '../config/scaling';
 
 const HEARTBEAT_INTERVAL_MS = 30000;
+const CHAT_FLUSH_INTERVAL_MS = 2000;
+const CHAT_BUFFER_SIZE = 50;
 const serverInstanceId = nanoid();
 
 async function requireRole(
@@ -72,11 +75,20 @@ interface ExtendedWebSocket extends WebSocket {
   user?: PublicUser;
 }
 
+interface ChatBufferEntry {
+  roomId: string;
+  userId: string;
+  content: string;
+  timestamp: number;
+  id: string;
+}
+
 export class WebSocketHandler {
   private rooms: Map<string, Map<string, ExtendedWebSocket>> = new Map();
   private waitingRooms: Map<string, Map<string, ExtendedWebSocket>> = new Map();
   private signalSubscriber: ReturnType<Redis['psubscribe']> | null = null;
   private endedSubscriber: ReturnType<Redis['subscribe']> | null = null;
+  private chatBuffer: ChatBufferEntry[] = [];
 
   constructor(private wss: WebSocketServer) {
     this.initialize();
@@ -94,6 +106,10 @@ export class WebSocketHandler {
         ws.ping();
       });
     }, HEARTBEAT_INTERVAL_MS);
+
+    setInterval(() => {
+      this.flushChatBuffer();
+    }, CHAT_FLUSH_INTERVAL_MS);
 
     const redisSub = getRedisSub();
     if (!redisSub) {
@@ -242,6 +258,17 @@ export class WebSocketHandler {
             } catch {
               // ignore malformed pinned payload
             }
+          }
+
+          const { getHandRaisedMap } = await import('../lib/redis-rooms');
+          const handRaisedMap = await getHandRaisedMap(roomId);
+          for (const [handUserId, timestamp] of Object.entries(handRaisedMap)) {
+            this.send(ext, {
+              type: 'hand_raise',
+              raised: true,
+              from: handUserId,
+              timestamp,
+            });
           }
 
           logger.info('WS join', { roomId, userId, name: publicUser.name });
@@ -467,22 +494,16 @@ export class WebSocketHandler {
       if (signal.type === 'chat') {
         const content = sanitizeText(String(signal.content ?? '').slice(0, 2000));
         if (!content.trim()) return;
-        try {
-          const [row] = await db
-            .insert(messages)
-            .values({ roomId, userId, content, type: 'text' })
-            .returning({ id: messages.id });
-          this.publish(roomId, {
-            type: 'chat',
-            id: row.id,
-            content,
-            timestamp: signal.timestamp ?? Date.now(),
-            from: userId,
-            roomId,
-          });
-        } catch (e) {
-          console.error('[WS] Chat insert', e);
-          this.sendError(ws, 'Failed to send message');
+        const entry: ChatBufferEntry = {
+          roomId,
+          userId,
+          content,
+          timestamp: signal.timestamp ?? Date.now(),
+          id: nanoid(),
+        };
+        this.chatBuffer.push(entry);
+        if (this.chatBuffer.length >= CHAT_BUFFER_SIZE) {
+          await this.flushChatBuffer();
         }
         return;
       }
@@ -763,6 +784,35 @@ export class WebSocketHandler {
         return;
       }
 
+      if (signal.type === 'hand_raise') {
+        const targetId = signal.targetUserId;
+        if (targetId) {
+          const role = await getPeerRole(roomId, userId);
+          if (role !== 'host' && role !== 'co-host') {
+            this.sendError(ws, 'Unauthorized');
+            return;
+          }
+          await setHandRaised(roomId, targetId, signal.raised);
+          this.publish(roomId, {
+            type: 'hand_raise',
+            raised: signal.raised,
+            from: targetId,
+            roomId,
+            timestamp: signal.raised ? Date.now() : null,
+          });
+          return;
+        }
+        await setHandRaised(roomId, userId, signal.raised);
+        this.publish(roomId, {
+          type: 'hand_raise',
+          raised: signal.raised,
+          from: userId,
+          roomId,
+          timestamp: signal.raised ? Date.now() : null,
+        });
+        return;
+      }
+
       if (signal.type === 'recording_track_offset') {
         // Sent by each client when recording starts, reports their startOffset
         // No role check: any participant
@@ -908,6 +958,43 @@ export class WebSocketHandler {
     }
   }
 
+  private async flushChatBuffer(): Promise<void> {
+    const batch = this.chatBuffer.splice(0);
+    if (batch.length === 0) return;
+    try {
+      await db
+        .insert(messages)
+        .values(
+          batch.map((e) => ({
+            id: e.id,
+            roomId: e.roomId,
+            userId: e.userId,
+            content: e.content,
+            type: 'text' as const,
+          })),
+        );
+      for (const e of batch) {
+        this.publish(e.roomId, {
+          type: 'chat',
+          id: e.id,
+          content: e.content,
+          timestamp: e.timestamp,
+          from: e.userId,
+          roomId: e.roomId,
+        });
+      }
+    } catch (e) {
+      console.error('[WS] Chat batch insert', e);
+      for (const e of batch) {
+        const room = this.rooms.get(e.roomId);
+        const targetWs = room?.get(e.userId);
+        if (targetWs && this.isOpen(targetWs)) {
+          this.send(targetWs, { type: 'error', message: 'Failed to send message' });
+        }
+      }
+    }
+  }
+
   private handleDisconnect(ws: ExtendedWebSocket): void {
     const userId = ws.userId;
     const roomId = ws.roomId;
@@ -915,6 +1002,7 @@ export class WebSocketHandler {
     logger.info('WS leave', { roomId, userId });
     this.removeFromMap(roomId, userId);
     removePeerFromRoom(roomId, userId).catch(() => {});
+    setHandRaised(roomId, userId, false).catch(() => {});
     this.publish(roomId, { type: 'leave', userId, roomId });
   }
 

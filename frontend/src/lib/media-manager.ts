@@ -19,7 +19,7 @@ const PREFERRED_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   autoGainControl: true,
 };
 
-async function negotiateBestVideoTrack(
+export async function negotiateBestVideoTrack(
   deviceId: string | null,
 ): Promise<MediaStreamTrack | null> {
   const baseConstraints = deviceId ? { deviceId: { exact: deviceId } } : {};
@@ -66,7 +66,7 @@ async function negotiateBestVideoTrack(
  * Negotiate the best audio track — preferred constraints first,
  * then plain `true` so built-in mics and unusual hardware still work.
  */
-async function negotiateBestAudioTrack(
+export async function negotiateBestAudioTrack(
   deviceId?: string,
 ): Promise<MediaStreamTrack | null> {
   const baseConstraints: MediaTrackConstraints = deviceId

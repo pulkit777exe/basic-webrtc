@@ -1,4 +1,5 @@
 import { atom } from "jotai";
+import { atomFamily } from "jotai/utils";
 
 export interface WaitingParticipant {
   id: string;
@@ -48,6 +49,8 @@ export interface PeerState {
   audio: boolean;
   screen: boolean;
   role: "host" | "co-host" | "participant";
+  handRaised: boolean;
+  handRaisedAt: number | null;
 }
 
 export interface LocalMedia {
@@ -88,6 +91,7 @@ export interface Participant {
   video: boolean;
   audio: boolean;
   screen: boolean;
+  handRaised: boolean;
 }
 
 export interface UIState {
@@ -111,14 +115,33 @@ export interface ConsentState {
 export const userAtom = atom<User | null>(null);
 export const roomAtom = atom<Room | null>(null);
 export const roomTokenAtom = atom<string | null>(null);
-export const peersAtom = atom<Map<string, PeerState>>(new Map());
+export const peerAtomFamily = atomFamily((userId: string) =>
+  atom<PeerState | null>(null)
+);
+export const peerIdsAtom = atom<string[]>([]);
+export const peerListAtom = atom((get) => {
+  const ids = get(peerIdsAtom);
+  return ids
+    .map((id) => get(peerAtomFamily(id)))
+    .filter((p): p is PeerState => p !== null);
+});
+/** @deprecated Use peerAtomFamily / peerIdsAtom / peerListAtom instead */
+export const peersAtom = peerListAtom;
 export const localMediaAtom = atom<LocalMedia>({
   stream: null,
   video: true,
   audio: true,
   screen: false,
 });
+const MAX_CHAT_MESSAGES = 500;
 export const chatAtom = atom<Message[]>([]);
+export const appendChatAtom = atom(null, (get, set, update: Message) => {
+  const current = get(chatAtom);
+  const next = current.length >= MAX_CHAT_MESSAGES
+    ? [...current.slice(-(MAX_CHAT_MESSAGES - 1)), update]
+    : [...current, update];
+  set(chatAtom, next);
+});
 /** True when there are chat messages not yet "seen" (sidebar was closed). Cleared when opening chat. */
 export const chatUnreadAtom = atom<boolean>(false);
 export const participantsAtom = atom<Participant[]>([]);
@@ -177,4 +200,27 @@ export const canManageAtom = atom((get) => {
   const participants = get(participantsAtom);
   const role = participants.find((p) => p.userId === user?.id)?.role;
   return role === "host" || role === "co-host";
+});
+
+export interface HandRaisedEntry {
+  userId: string;
+  name: string;
+  timestamp: number;
+}
+
+export const handRaisedQueueAtom = atom((get) => {
+  const ids = get(peerIdsAtom);
+  const entries: HandRaisedEntry[] = [];
+  for (const id of ids) {
+    const peer = get(peerAtomFamily(id));
+    if (peer?.handRaised && peer.handRaisedAt != null) {
+      entries.push({
+        userId: peer.userId,
+        name: peer.user.name,
+        timestamp: peer.handRaisedAt,
+      });
+    }
+  }
+  entries.sort((a, b) => a.timestamp - b.timestamp);
+  return entries;
 });

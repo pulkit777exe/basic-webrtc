@@ -12,6 +12,7 @@ interface GridParticipant {
   video: boolean;
   screen: boolean;
   isLocal: boolean;
+  handRaised: boolean;
 }
 
 interface RoomVideoGridProps {
@@ -79,6 +80,7 @@ export function RoomVideoGrid({
       video: localVideo,
       screen: localScreen,
       isLocal: true,
+      handRaised: false,
     }),
     [localAudio, localScreen, localStream, localUser?.id, localUser?.name, localVideo]
   );
@@ -93,6 +95,7 @@ export function RoomVideoGrid({
         video: peer.video,
         screen: peer.screen,
         isLocal: false,
+        handRaised: peer.handRaised ?? false,
       })),
     [peers]
   );
@@ -227,6 +230,7 @@ export function RoomVideoGrid({
       audioMuted={!participant.audio}
       videoMuted={!participant.video}
       isScreenShare={participant.screen}
+      handRaised={participant.handRaised}
       canPin={!participant.isLocal}
       onTogglePin={onTogglePin}
       onEnterPiP={

@@ -1,15 +1,16 @@
 import { store } from "@/store";
 import {
   activeSpeakerAtom,
+  appendChatAtom,
   captionsAtom,
-  chatAtom,
   chatReactionsAtom,
   chatUnreadAtom,
   localMediaAtom,
   mutedByHostAtom,
   pinnedChatMessageAtom,
   participantsAtom,
-  peersAtom,
+  peerAtomFamily,
+  peerIdsAtom,
   pinnedParticipantsAtom,
   reactionsEnabledAtom,
   recordingAtom,
@@ -23,6 +24,8 @@ import {
 } from "@/store/atoms";
 import { toast } from "sonner";
 import { RTCManager } from "./rtc-manager";
+import { handleSignal } from "./signal-handler";
+import { playHandRaiseSound } from "./hand-raise-sound";
 
 export function getWsUrl(): string {
   const env =
@@ -102,6 +105,7 @@ type Signal =
   | { type: "participant_rejected"; to: string; participantId: string }
   | { type: "waiting_room_position"; position: number; total: number }
   | { type: "caption"; text: string; from?: string; timestamp: number }
+  | { type: "hand_raise"; raised: boolean; from?: string; timestamp?: number | null }
   | { type: "ping" }
   | { type: "pong" }
   | { type: "error"; message: string }
@@ -145,12 +149,10 @@ function resolveParticipantRole(userId: string): void {
         updated[idx] = { ...updated[idx], role: 'host' };
         store.set(participantsAtom, updated);
       }
-      // Patch peersAtom
-      const peers = new Map(store.get(peersAtom));
-      const peer = peers.get(userId);
+      // Patch peerAtomFamily
+      const peer = store.get(peerAtomFamily(userId));
       if (peer) {
-        peers.set(userId, { ...peer, role: 'host' });
-        store.set(peersAtom, peers);
+        store.set(peerAtomFamily(userId), { ...peer, role: 'host' });
       }
     }
     // Role resolved synchronously - no subscription needed
@@ -181,12 +183,10 @@ function resolveParticipantRole(userId: string): void {
         updatedParticipants[currentIdx] = { ...updatedParticipants[currentIdx], role: 'host' };
         store.set(participantsAtom, updatedParticipants);
         
-        // Patch peersAtom
-        const peers = new Map(store.get(peersAtom));
-        const peer = peers.get(userId);
+        // Patch peerAtomFamily
+        const peer = store.get(peerAtomFamily(userId));
         if (peer) {
-          peers.set(userId, { ...peer, role: 'host' });
-          store.set(peersAtom, peers);
+          store.set(peerAtomFamily(userId), { ...peer, role: 'host' });
         }
       }
     }
@@ -266,19 +266,19 @@ export const WSManager = {
                 video: true,
                 audio: true,
                 screen: false,
+                handRaised: false,
               },
             ]);
           }
 
-          // Add to peersAtom - read role from participantsAtom after resolveParticipantRole, or default to "participant"
-          const peers = new Map(store.get(peersAtom));
-          if (!peers.has(data.user.id)) {
+          // Add to peerAtomFamily - read role from participantsAtom after resolveParticipantRole, or default to "participant"
+          if (!store.get(peerAtomFamily(data.user.id))) {
             // Get the role from participantsAtom (may have been updated by resolveParticipantRole)
             const updatedParticipants = store.get(participantsAtom);
             const participant = updatedParticipants.find((p) => p.userId === data.user.id);
             const role = participant?.role || "participant";
             
-            peers.set(data.user.id, {
+            store.set(peerAtomFamily(data.user.id), {
               userId: data.user.id,
               user: data.user,
               stream: null,
@@ -286,8 +286,12 @@ export const WSManager = {
               audio: true,
               screen: false,
               role: role,
+              handRaised: false,
+              handRaisedAt: null,
             });
-            store.set(peersAtom, peers);
+            store.set(peerIdsAtom, (prev) =>
+              prev.includes(data.user.id) ? prev : [...prev, data.user.id]
+            );
           }
           
           // Resolve participant role (handles both sync and async cases)
@@ -326,9 +330,8 @@ export const WSManager = {
             .filter((participant) => participant.userId !== data.userId);
           store.set(participantsAtom, participants);
 
-          const peers = new Map(store.get(peersAtom));
-          peers.delete(data.userId);
-          store.set(peersAtom, peers);
+          store.set(peerAtomFamily(data.userId), null);
+          store.set(peerIdsAtom, (prev) => prev.filter((id) => id !== data.userId));
 
           RTCManager.removePeer(data.userId);
 
@@ -351,26 +354,21 @@ export const WSManager = {
           }
         } else if (data.type === "chat") {
           const participants = store.get(participantsAtom);
-          const peers = store.get(peersAtom);
           const fromId = data.from ?? "";
           const userName =
             participants.find((p) => p.userId === fromId)?.user.name ??
-            peers.get(fromId)?.user.name ??
+            store.get(peerAtomFamily(fromId))?.user.name ??
             "Participant";
-          const list = store.get(chatAtom);
-          store.set(chatAtom, [
-            ...list,
-            {
-              id:
-                data.id ??
-                `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-              userId: fromId,
-              userName,
-              content: data.content,
-              type: "text",
-              timestamp: data.timestamp ?? Date.now(),
-            },
-          ]);
+          store.set(appendChatAtom, {
+            id:
+              data.id ??
+              `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            userId: fromId,
+            userName,
+            content: data.content,
+            type: "text",
+            timestamp: data.timestamp ?? Date.now(),
+          });
           const me = store.get(userAtom)?.id;
           if (fromId && me && fromId !== me && !store.get(uiAtom).chatOpen) {
             store.set(chatUnreadAtom, true);
@@ -397,16 +395,14 @@ export const WSManager = {
             });
           }
         } else if (data.type === "media-state" && data.from) {
-          const peers = new Map(store.get(peersAtom));
-          const peer = peers.get(data.from);
+          const peer = store.get(peerAtomFamily(data.from));
           if (peer) {
-            peers.set(data.from, {
+            store.set(peerAtomFamily(data.from), {
               ...peer,
               video: data.video,
               audio: data.audio,
               screen: data.screen,
             });
-            store.set(peersAtom, peers);
             RTCManager.syncIncomingMedia(data.from);
           }
         } else if (data.type === "audio-activity" && data.from) {
@@ -441,11 +437,9 @@ export const WSManager = {
                 : participant,
             );
           store.set(participantsAtom, participants);
-          const peers = new Map(store.get(peersAtom));
-          const target = peers.get(data.targetId);
+          const target = store.get(peerAtomFamily(data.targetId));
           if (target) {
-            peers.set(data.targetId, { ...target, role: "co-host" });
-            store.set(peersAtom, peers);
+            store.set(peerAtomFamily(data.targetId), { ...target, role: "co-host" });
           }
         } else if (data.type === "admin_kick") {
           if (data.targetId === store.get(userAtom)?.id) {
@@ -512,6 +506,29 @@ export const WSManager = {
             ];
             return next.slice(-50);
           });
+        } else if (data.type === "hand_raise" && data.from) {
+          const isLocal = data.from === store.get(userAtom)?.id;
+          const peer = store.get(peerAtomFamily(data.from));
+          if (peer) {
+            store.set(peerAtomFamily(data.from), {
+              ...peer,
+              handRaised: data.raised,
+              handRaisedAt: data.raised ? (data.timestamp ?? Date.now()) : null,
+            });
+          }
+          const participants = store.get(participantsAtom);
+          const idx = participants.findIndex((p) => p.userId === data.from);
+          if (idx >= 0) {
+            const updated = [...participants];
+            updated[idx] = { ...updated[idx], handRaised: data.raised };
+            store.set(participantsAtom, updated);
+          }
+          if (isLocal) {
+            store.set(uiAtom, (ui) => ({ ...ui, handRaised: data.raised }));
+          }
+          if (data.raised && !isLocal) {
+            playHandRaiseSound();
+          }
         } else if (data.type === "waiting_room_join") {
           // A new participant entered the waiting room; update the host list
           const current = store.get(waitingRoomParticipantsAtom);
@@ -545,9 +562,7 @@ export const WSManager = {
           }));
         }
 
-        (
-          window as unknown as { __wsSignal?: (signal: Signal) => void }
-        ).__wsSignal?.(data as Signal);
+        handleSignal(data as Signal);
       } catch (error) {
         console.error("[WS] parse", error);
       }

@@ -1,6 +1,6 @@
 import { api } from '@/lib/api';
 import { store } from '@/store';
-import { peersAtom } from '@/store/atoms';
+import { peerAtomFamily, peerIdsAtom } from '@/store/atoms';
 import { WSManager } from '@/lib/ws-manager';
 
 let iceServers: RTCIceServer[] = [];
@@ -121,8 +121,7 @@ export const RTCManager = {
     attachLocalTracks(connection, stream ?? localStream);
 
     connection.ontrack = (event) => {
-      const peers = new Map(store.get(peersAtom));
-      const peer = peers.get(userId);
+      const peer = store.get(peerAtomFamily(userId));
       if (!peer) return;
 
       const track = event.track;
@@ -154,12 +153,11 @@ export const RTCManager = {
         .getVideoTracks()
         .some((t) => t.readyState === 'live' && t.enabled);
 
-      peers.set(userId, {
+      store.set(peerAtomFamily(userId), {
         ...peer,
         stream: merged,
         video: hasLiveVideo || peer.video,
       });
-      store.set(peersAtom, peers);
     };
 
     connection.onicecandidate = (event) => {
@@ -262,9 +260,8 @@ export const RTCManager = {
       peerConnections.delete(userId);
     }
     iceRestartAttempts.delete(userId);
-    const peers = new Map(store.get(peersAtom));
-    peers.delete(userId);
-    store.set(peersAtom, peers);
+    store.set(peerAtomFamily(userId), null);
+    store.set(peerIdsAtom, (prev) => prev.filter((id) => id !== userId));
   },
 
   disconnectAll() {
@@ -329,8 +326,7 @@ export const RTCManager = {
         (t): t is MediaStreamTrack =>
           t != null && t.readyState !== 'ended',
       );
-    const peers = new Map(store.get(peersAtom));
-    const peer = peers.get(remoteUserId);
+    const peer = store.get(peerAtomFamily(remoteUserId));
     if (!peer) return;
     const merged = new MediaStream();
     const seen = new Set<string>();
@@ -343,8 +339,7 @@ export const RTCManager = {
         /* duplicate */
       }
     }
-    peers.set(remoteUserId, { ...peer, stream: merged });
-    store.set(peersAtom, peers);
+    store.set(peerAtomFamily(remoteUserId), { ...peer, stream: merged });
   },
 
   /** Keep reference for addTrack fallback without re-attaching on every toggle */

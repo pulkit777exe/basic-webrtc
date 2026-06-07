@@ -31,73 +31,11 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { AlertCircle, Mic, MicOff, Video, VideoOff } from "lucide-react";
+import { negotiateBestVideoTrack, negotiateBestAudioTrack } from "@/lib/media-manager";
 
 const BARS = 20;
 
-const VIDEO_RESOLUTION_LADDER = [
-  { width: 1920, height: 1080 },
-  { width: 1280, height: 720 },
-  { width: 854,  height: 480 },
-  { width: 640,  height: 360 },
-] as const;
-
 type MediaError = { video?: string; audio?: string };
-
-async function acquireVideoTrack(deviceId: string | null): Promise<MediaStreamTrack | null> {
-  const base = deviceId ? { deviceId: { exact: deviceId } } : {};
-  const failures: Array<{ width: number; height: number; error: string }> = [];
-  for (const { width, height } of VIDEO_RESOLUTION_LADDER) {
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { ...base, width: { ideal: width }, height: { ideal: height } },
-      });
-      return s.getVideoTracks()[0] ?? null;
-    } catch (err) { failures.push({ width, height, error: err instanceof Error ? err.message : String(err) }); }
-  }
-  if (failures.length > 0) {
-    console.debug('[MediaManager] Video ladder failures:', failures);
-  }
-  try {
-    const s = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: deviceId ? { deviceId: { exact: deviceId } } : true,
-    });
-    return s.getVideoTracks()[0] ?? null;
-  } catch {
-    // exact deviceId may have been unplugged — try any camera
-    if (deviceId) {
-      try {
-        const s = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
-        return s.getVideoTracks()[0] ?? null;
-      } catch { return null; }
-    }
-    return null;
-  }
-}
-
-async function acquireAudioTrack(deviceId?: string): Promise<MediaStreamTrack | null> {
-  const preferred: MediaTrackConstraints = {
-    ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
-    noiseSuppression: true,
-    echoCancellation: true,
-    autoGainControl: true,
-  };
-  try {
-    const s = await navigator.mediaDevices.getUserMedia({ audio: preferred, video: false });
-    return s.getAudioTracks()[0] ?? null;
-  } catch (err) {
-    // DSP constraints rejected — collect the error before the plain fallback attempt
-    console.debug('[MediaManager] Audio DSP constraints rejected:', err instanceof Error ? err.message : String(err), '— falling back to plain audio');
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({
-        audio: deviceId ? { deviceId: { exact: deviceId } } : true,
-        video: false,
-      });
-      return s.getAudioTracks()[0] ?? null;
-    } catch { return null; }
-  }
-}
 
 export function LobbyPage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -135,7 +73,7 @@ export function LobbyPage() {
     (async () => {
       const errors: MediaError = {};
 
-      const videoTrack = await acquireVideoTrack(null);
+      const videoTrack = await negotiateBestVideoTrack(null);
       if (cancelled) { videoTrack?.stop(); return; }
 
       if (videoTrack) {
@@ -146,7 +84,7 @@ export function LobbyPage() {
         setVideoEnabled(false);
       }
 
-      const audioTrack = await acquireAudioTrack();
+      const audioTrack = await negotiateBestAudioTrack();
       if (cancelled) { videoTrack?.stop(); audioTrack?.stop(); return; }
 
       if (!audioTrack) {
@@ -205,7 +143,7 @@ export function LobbyPage() {
 
     let cancelled = false;
     (async () => {
-      const nextTrack = await acquireVideoTrack(selectedCamera);
+      const nextTrack = await negotiateBestVideoTrack(selectedCamera);
       if (cancelled || !nextTrack) return;
       if (currentTrack) { stream.removeTrack(currentTrack); currentTrack.stop(); }
       stream.addTrack(nextTrack);
@@ -226,7 +164,7 @@ export function LobbyPage() {
 
     let cancelled = false;
     (async () => {
-      const nextTrack = await acquireAudioTrack(selectedMic);
+      const nextTrack = await negotiateBestAudioTrack(selectedMic);
       if (cancelled || !nextTrack) return;
       if (currentTrack) { stream.removeTrack(currentTrack); currentTrack.stop(); }
       stream.addTrack(nextTrack);

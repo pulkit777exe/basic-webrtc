@@ -3,6 +3,7 @@ import {
   Circle,
   Focus,
   GalleryVerticalEnd,
+  Hand,
   LayoutGrid,
   MessageSquare,
   Mic,
@@ -20,8 +21,9 @@ import {
 import { useAtomValue, useAtom } from 'jotai';
 import { useEffect, useMemo, useState } from 'react';
 import type { LayoutMode, SelfViewMode } from '@/store/atoms';
-import { audioOutputDeviceIdAtom, localMediaAtom, mutedByHostAtom } from '@/store/atoms';
+import { audioOutputDeviceIdAtom, localMediaAtom, mutedByHostAtom, uiAtom } from '@/store/atoms';
 import { MediaManager } from '@/lib/media-manager';
+import { WSManager } from '@/lib/ws-manager';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import {
@@ -71,6 +73,7 @@ export function RoomControlBar({
   const localMedia = useAtomValue(localMediaAtom);
   const { stream, video, audio, screen } = localMedia;
   const mutedByHost = useAtomValue(mutedByHostAtom);
+  const [ui, setUi] = useAtom(uiAtom);
   const [audioOutputDeviceId, setAudioOutputDeviceId] = useAtom(audioOutputDeviceIdAtom);
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [videoInputs, setVideoInputs] = useState<MediaDeviceInfo[]>([]);
@@ -148,6 +151,23 @@ export function RoomControlBar({
             </Button>
           </TooltipTrigger>
           <TooltipContent>{screen ? 'Stop sharing' : 'Share screen'}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={ui.handRaised ? 'secondary' : 'ghost'}
+              size="icon"
+              className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${ui.handRaised ? 'bg-amber-500/20 text-amber-400' : ''}`}
+              onClick={() => {
+                const next = !ui.handRaised;
+                setUi((prev) => ({ ...prev, handRaised: next }));
+                WSManager.send({ type: 'hand_raise', raised: next });
+              }}
+            >
+              <Hand className="h-4 w-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{ui.handRaised ? 'Lower hand' : 'Raise hand'}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <DropdownMenu>

@@ -19,7 +19,7 @@ import {
   roomLockedAtom,
   roomTokenAtom,
   userAtom,
-  peersAtom,
+  peerListAtom,
   pinnedParticipantsAtom,
   pinnedChatMessageAtom,
   localMediaAtom,
@@ -79,7 +79,7 @@ export function RoomPage() {
   const roomToken = useAtomValue(roomTokenAtom);
   const user = useAtomValue(userAtom);
   const isHost = useAtomValue(isHostAtom);
-  const peers = useAtomValue(peersAtom);
+  const peers = useAtomValue(peerListAtom);
   const speakingPeers = useAtomValue(speakingPeersAtom);
   const activeSpeakerId = useAtomValue(activeSpeakerAtom);
   const audioOutputDeviceId = useAtomValue(audioOutputDeviceIdAtom);
@@ -179,6 +179,7 @@ export function RoomPage() {
           video: lobbyVideo,
           audio: lobbyAudio,
           screen: false,
+          handRaised: false,
         },
       ]);
     });
@@ -187,39 +188,6 @@ export function RoomPage() {
     setChatReactions({});
     setPinnedChatMessage(null);
     setCaptions([]);
-
-    (window as unknown as { __wsSignal?: (s: unknown) => void }).__wsSignal = (
-      signal: unknown,
-    ) => {
-      const s = signal as {
-        type: string;
-        from?: string;
-        sdp?: RTCSessionDescriptionInit;
-        candidate?: RTCIceCandidateInit;
-      };
-      if (s.type === "offer" && s.from && s.sdp) {
-        const stream = store.get(localMediaAtom).stream;
-        void (async () => {
-          try {
-            await RTCManager.createPeer(s.from!, stream);
-            await RTCManager.setRemoteDescription(s.from!, s.sdp!);
-            await RTCManager.answer(s.from!);
-          } catch (err) {
-            console.error("[RTC] offer handling failed", err);
-          }
-        })();
-      } else if (s.type === "answer" && s.from && s.sdp) {
-        void (async () => {
-          try {
-            await RTCManager.setRemoteDescription(s.from!, s.sdp!);
-          } catch (err) {
-            console.error("[RTC] answer handling failed", err);
-          }
-        })();
-      } else if (s.type === "ice" && s.from && s.candidate) {
-        RTCManager.addIceCandidate(s.from, s.candidate);
-      }
-    };
 
     return () => {
       cleanedUpRef.current = true;
@@ -240,8 +208,6 @@ export function RoomPage() {
       setChatReactions({});
       setPinnedChatMessage(null);
       setCaptions([]);
-      (window as unknown as { __wsSignal?: (s: unknown) => void }).__wsSignal =
-        undefined;
     };
   }, [
     room?.hostId,
@@ -289,10 +255,14 @@ export function RoomPage() {
     let previous = 0;
 
     const tick = () => {
+      if (!localMedia.audio) {
+        animationFrame = requestAnimationFrame(tick);
+        return;
+      }
       analyser.getByteFrequencyData(levels);
       const total = levels.reduce((acc, value) => acc + value, 0);
       const level = Math.min(1, total / levels.length / 120);
-      const speaking = localMedia.audio && level > 0.11;
+      const speaking = level > 0.11;
       const now = performance.now();
       if (now - previous >= 250) {
         previous = now;
@@ -560,7 +530,7 @@ export function RoomPage() {
     { scope: gridRef, dependencies: [room] },
   );
 
-  const peerList = Array.from(peers.values());
+  const peerList = peers;
   const participantCount = Math.max(participants.length, peerList.length + 1);
 
   function togglePin(participantId: string) {
