@@ -30,7 +30,7 @@ export function startCleanupJob(): void {
     for (const room of staleRooms) {
       try {
         // Check Redis for active participants
-        const participantCount = await redis.hlen(roomParticipantsKey(room.id));
+        const participantCount = await redis.scard(roomParticipantsKey(room.id));
 
         if (participantCount === 0) {
           logger.info(`Marking room ${room.id} as ended (no active participants)`);

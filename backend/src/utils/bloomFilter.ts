@@ -7,11 +7,22 @@ const FALSE_POSITIVE_RATE = 0.01;
 
 export const usernameBloomFilter = BloomFilter.create(EXPECTED_USERNAMES, FALSE_POSITIVE_RATE);
 
+let seeded = false;
+
+export function isSeeded(): boolean {
+  return seeded;
+}
+
+export function markSeeded(): void {
+  seeded = true;
+}
+
 export function addUsername(username: string): void {
   usernameBloomFilter.add(username.toLowerCase());
 }
 
 export function mightExist(username: string): boolean {
+  if (!seeded) return true;
   return usernameBloomFilter.has(username.toLowerCase());
 }
 

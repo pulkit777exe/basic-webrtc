@@ -366,14 +366,7 @@ export async function canPerformAdminAction(
   if (actorRole !== 'host' && actorRole !== 'co-host') {
     return false;
   }
-  if (
-    action === 'lock' ||
-    action === 'reactions' ||
-    action === 'promote' ||
-    action === 'mute-all' ||
-    action === 'mute' ||
-    action === 'kick'
-  ) {
+  if (action === 'promote') {
     if (actorRole !== 'host') {
       return false;
     }
@@ -398,6 +391,45 @@ export async function clearRoomState(roomId: string): Promise<void> {
   pipe.del(waitingKey(roomId));
   pipe.del(waitingRoomKey(roomId));
   await pipe.exec();
+}
+
+export function roomHandRaisedKey(roomId: string): string {
+  return `room:${roomId}:handRaised`;
+}
+
+export async function setHandRaised(
+  roomId: string,
+  userId: string,
+  raised: boolean,
+): Promise<void> {
+  const key = roomHandRaisedKey(roomId);
+  if (raised) {
+    await redis.hset(key, { [userId]: String(Date.now()) });
+  } else {
+    await redis.hdel(key, userId);
+  }
+  await redis.expire(key, ROOM_TTL_SEC);
+}
+
+export async function getHandRaisedMap(
+  roomId: string,
+): Promise<Record<string, number>> {
+  const key = roomHandRaisedKey(roomId);
+  const raw = await redis.hgetall(key);
+  if (!raw || Object.keys(raw).length === 0) return {};
+  const result: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    result[k] = Number(v);
+  }
+  return result;
+}
+
+export async function isHandRaised(
+  roomId: string,
+  userId: string,
+): Promise<boolean> {
+  const val = await redis.hget(roomHandRaisedKey(roomId), userId);
+  return val != null;
 }
 
 export function roomSignalChannel(roomId: string): string {

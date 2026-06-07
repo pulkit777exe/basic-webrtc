@@ -428,7 +428,7 @@ router.post(
 
 // Room state
 
-router.get('/:id/state', async (req: Request<{ id: string }>, res: Response): Promise<void> => {
+router.get('/:id/state', authenticateToken, async (req: Request<{ id: string }>, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
 

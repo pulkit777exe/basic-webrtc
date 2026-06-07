@@ -1,10 +1,10 @@
-import { createHash } from 'crypto';
 import { Router } from 'express';
 import passport from '../config/passport';
 import { createSessionForAccessToken } from '../services/session.js';
 import { generateAccessToken, generateRefreshToken } from '../utils/jwt.js';
 import { setRefreshSession } from '../config/redis.js';
 import { queueEmail } from '../services/email.js';
+import { hashToken, getFrontendBaseUrl } from '../utils/crypto.js';
 
 type OAuthUser = {
   id: string;
@@ -13,20 +13,6 @@ type OAuthUser = {
 };
 
 const router = Router();
-
-function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
-}
-
-function getFrontendBaseUrl(): string {
-  const configured =
-    process.env.FRONTEND_URL ||
-    process.env.BASE_URL ||
-    process.env.CLIENT_URL ||
-    process.env.ALLOWED_ORIGINS?.split(',')[0] ||
-    'http://localhost:3000';
-  return configured.replace(/\/$/, '');
-}
 
 router.get('/google', (req, res, next) => {
   const state = typeof req.query?.state === 'string' ? req.query.state : undefined;

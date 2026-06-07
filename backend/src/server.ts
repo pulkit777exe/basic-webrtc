@@ -24,12 +24,14 @@ import { requireVerifiedEmail } from './middleware/verified-email';
 import { globalLimiter, apiLimiter, authLimiter } from './lib/rate-limiters';
 import { logger } from './lib/logger';
 import { configureTrustProxy } from './config/scaling';
-import { closeDatabase } from './db';
+import { closeDatabase, db } from './db';
 import { redis } from './config/redis';
 import { startCleanupJob } from './lib/cleanup-job';
 import { startRecordingWorker } from './jobs/recording-worker';
 import { startExportWorker } from './jobs/export-worker';
 import { startDeletionWorker } from './jobs/deletion-worker';
+import { addUsername, markSeeded } from './utils/bloomFilter';
+import { users } from './db/schema';
 
 dotenv.config();
 
@@ -204,4 +206,19 @@ server.listen(PORT, () => {
   startRecordingWorker(); // Start recording merge worker
   startExportWorker(); // Start account export worker
   startDeletionWorker(); // Start account deletion worker
+
+  // Seed bloom filter from existing usernames in the database
+  (async () => {
+    try {
+      const rows = await db.select({ email: users.email }).from(users);
+      for (const row of rows) {
+        const username = row.email.split('@')[0];
+        if (username) addUsername(username);
+      }
+      markSeeded();
+      console.log(`[BloomFilter] Seeded with ${rows.length} usernames`);
+    } catch (err) {
+      console.error('[BloomFilter] Seeding failed, login bloom check disabled', err);
+    }
+  })();
 });

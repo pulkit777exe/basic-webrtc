@@ -77,6 +77,7 @@ export type Signal =
   | { type: 'waiting_room_position'; position: number; total: number }
   | { type: 'waiting_room_status_check' }
   | { type: 'caption'; text: string; timestamp: number }
+  | { type: 'hand_raise'; raised: boolean; targetUserId?: string }
   | { type: 'ping' }
   | { type: 'pong' }
   | { type: 'error'; message: string }
@@ -121,6 +122,7 @@ export function isSignal(obj: unknown): obj is Signal {
     'waiting_room_position',
     'waiting_room_status_check',
     'caption',
+    'hand_raise',
     'ping',
     'pong',
     'error',

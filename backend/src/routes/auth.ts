@@ -1,5 +1,6 @@
 import bcrypt from 'bcrypt';
 import { createHash, randomBytes } from 'crypto';
+import { hashToken, getFrontendBaseUrl } from '../utils/crypto.js';
 import { promises as fs } from 'fs';
 import multer from 'multer';
 import path from 'path';
@@ -15,7 +16,7 @@ import { db } from '../db/index.js';
 import { backupCodes, loginEvents, otpCodes, passwordResetTokens, users } from '../db/schema.js';
 import { queueEmail } from '../services/email.js';
 import { validatePassword } from '../utils/password.js';
-import { validateName } from '../utils/bloomFilter.js';
+import { addUsername, mightExist, validateName } from '../utils/bloomFilter.js';
 import {
   generateAccessToken,
   generateRefreshToken,
@@ -109,10 +110,6 @@ function hashResetToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
-}
-
 function maskEmail(email: string): string {
   const parts = email.split('@');
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
@@ -168,16 +165,6 @@ async function applyRateLimit(
     return { limited: true, retryAfter };
   }
   return { limited: false, retryAfter: 0 };
-}
-
-function getFrontendBaseUrl(): string {
-  const envBaseUrl =
-    process.env.BASE_URL ||
-    process.env.FRONTEND_URL ||
-    process.env.CLIENT_URL ||
-    process.env.ALLOWED_ORIGINS?.split(',')[0] ||
-    'http://localhost:3000';
-  return envBaseUrl.replace(/\/$/, '');
 }
 
 async function createAndQueuePasswordResetEmail(input: {
@@ -1278,6 +1265,7 @@ router.post('/signup', async (req: Request, res: Response): Promise<void> => {
       passwordHash,
       emailVerified: false,
     });
+    addUsername(normalizedEmail.split('@')[0]);
     await createAndSendOtp(normalizedEmail);
     res.status(200).json({
       status: 'verification_required',
@@ -1683,6 +1671,11 @@ router.post('/login', loginLimiter, async (req: Request, res: Response): Promise
         lockedUntil: user.lockedUntil.toISOString(),
         remainingSeconds,
       });
+      return;
+    }
+
+    if (!mightExist(emailInput.split('@')[0])) {
+      res.status(401).json({ error: 'Invalid email or password' });
       return;
     }
 

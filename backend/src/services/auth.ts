@@ -1,5 +1,5 @@
 import bcrypt from 'bcrypt';
-import { createHash } from 'crypto';
+import { hashToken } from '../utils/crypto';
 import { db } from '../db';
 import { users } from '../db/schema';
 import { eq } from 'drizzle-orm';
@@ -8,10 +8,6 @@ import { setRefreshSession, getRefreshSession, getUserSessionInvalidBefore } fro
 import { validatePassword } from '../utils/password';
 import { validateName } from '../utils/bloomFilter';
 import { AuthResponse, SignupPayload, LoginPayload } from '../types';
-
-function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
-}
 
 const SALT_ROUNDS = 10;
 
