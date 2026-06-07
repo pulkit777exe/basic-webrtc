@@ -28,7 +28,6 @@ import {
   isInWaitingRoom,
   getWaitingRoom,
   roomSignalChannel,
-  roomEndedChannel,
   type RoomRole,
   type WaitingParticipant,
   isKicked,
@@ -41,6 +40,7 @@ import {
   refreshParticipantTTL,
 } from '../lib/redis-rooms';
 import { redis, getRedisSub } from '../config/redis';
+import type { Redis } from '@upstash/redis';
 import type { Signal, PublicUser, AdminAction } from '../lib/signals';
 import { isSignal } from '../lib/signals';
 import { sanitizeText } from '../utils/sanitize';
@@ -75,7 +75,8 @@ interface ExtendedWebSocket extends WebSocket {
 export class WebSocketHandler {
   private rooms: Map<string, Map<string, ExtendedWebSocket>> = new Map();
   private waitingRooms: Map<string, Map<string, ExtendedWebSocket>> = new Map();
-  private subscribedChannels: Set<string> = new Set();
+  private signalSubscriber: ReturnType<Redis['psubscribe']> | null = null;
+  private endedSubscriber: ReturnType<Redis['subscribe']> | null = null;
 
   constructor(private wss: WebSocketServer) {
     this.initialize();
@@ -98,37 +99,14 @@ export class WebSocketHandler {
     if (!redisSub) {
       console.warn('[WS] Pub/sub disabled, cross-server messaging unavailable');
     } else {
-      redisSub.on('message', (channel: string, message: string) => {
-      try {
-        if (channel.endsWith(':ended')) {
-          const roomId = channel.replace(/^room:(.+):ended$/, '$1');
-          const room = this.rooms.get(roomId);
-          if (room) {
-            room.forEach((peer) => {
-              if (this.isOpen(peer)) {
-                this.send(peer, { type: 'error', message: 'Room has ended' });
-                peer.close();
-              }
-            });
-            this.rooms.delete(roomId);
-            this.unsubscribeRoom(roomId);
-          }
-          return;
-        }
-        const data = JSON.parse(message) as {
-          type: string;
-          from?: string;
-          to?: string;
-          roomId: string;
-          userId?: string;
-          user?: PublicUser;
-          payload?: unknown;
-        };
-        this.forwardFromRedis(channel, data);
-      } catch (err) {
-        console.error('[WS] Redis message parse error', err);
-      }
-    });
+      this.signalSubscriber = redisSub.psubscribe<string>('room:*:signal');
+      this.signalSubscriber.on('pmessage', (event: any) => {
+        this.handleRedisMessage(event.channel, event.message);
+      });
+      this.endedSubscriber = redisSub.subscribe<string>('room:*:ended');
+      this.endedSubscriber.on('message', (event: any) => {
+        this.handleRedisMessage(event.channel, event.message);
+      });
     }
 
     this.wss.on('connection', (ws: WebSocket, req: unknown) => {
@@ -320,26 +298,44 @@ export class WebSocketHandler {
     if (room.size === 0) this.waitingRooms.delete(roomId);
   }
 
-  private subscribeRoom(roomId: string): void {
-    const sub = getRedisSub();
-    if (!sub) return;
-    const ch = roomSignalChannel(roomId);
-    if (this.subscribedChannels.has(ch)) return;
-    this.subscribedChannels.add(ch);
-    sub.subscribe(ch);
-    sub.subscribe(roomEndedChannel(roomId));
+  private handleRedisMessage(channel: string, message: string): void {
+    try {
+      if (channel.endsWith(':ended')) {
+        const roomId = channel.replace(/^room:(.+):ended$/, '$1');
+        const room = this.rooms.get(roomId);
+        if (room) {
+          room.forEach((peer) => {
+            if (this.isOpen(peer)) {
+              this.send(peer, { type: 'error', message: 'Room has ended' });
+              peer.close();
+            }
+          });
+          this.rooms.delete(roomId);
+          this.unsubscribeRoom(roomId);
+        }
+        return;
+      }
+      const data = JSON.parse(message) as {
+        type: string;
+        from?: string;
+        to?: string;
+        roomId: string;
+        userId?: string;
+        user?: PublicUser;
+        payload?: unknown;
+      };
+      this.forwardFromRedis(channel, data);
+    } catch (err) {
+      console.error('[WS] Redis message parse error', err);
+    }
   }
 
-  private unsubscribeRoom(roomId: string): void {
-    const sub = getRedisSub();
-    if (!sub) return;
-    const ch = roomSignalChannel(roomId);
-    const endCh = roomEndedChannel(roomId);
-    if (this.subscribedChannels.has(ch)) {
-      sub.unsubscribe(ch);
-      sub.unsubscribe(endCh);
-      this.subscribedChannels.delete(ch);
-    }
+  private subscribeRoom(_roomId: string): void {
+    // Pattern subscriptions handle all rooms automatically
+  }
+
+  private unsubscribeRoom(_roomId: string): void {
+    // Pattern subscriptions handle all rooms automatically
   }
 
   private publish(roomId: string, payload: Record<string, unknown>): void {
@@ -586,7 +582,11 @@ export class WebSocketHandler {
           return;
         }
         await setForceMuted(roomId, false);
-        await publishSignal(roomId, { type: 'force_unmute_all' });
+        this.publish(roomId, {
+          type: 'admin_unmute_all',
+          from: userId,
+          roomId,
+        });
         this.send(ws, { type: 'ack', action: 'unmute_all' });
         return;
       }
@@ -809,11 +809,12 @@ export class WebSocketHandler {
           return;
         }
         if (action === 'mute-all') {
-          const allowed = await canPerformAdminAction(roomId, userId, 'mute-all');
+          const allowed = await requireRole(roomId, userId, 'co-host');
           if (!allowed) {
             this.sendError(ws, 'Unauthorized');
             return;
           }
+          await setForceMuted(roomId, true);
           this.publish(roomId, {
             type: 'admin_mute_all',
             from: userId,
@@ -822,7 +823,7 @@ export class WebSocketHandler {
           return;
         }
         if (action === 'mute-user' && signal.targetUserId) {
-          const allowed = await canPerformAdminAction(roomId, userId, 'mute', signal.targetUserId);
+          const allowed = await requireRole(roomId, userId, 'co-host');
           if (!allowed) {
             this.sendError(ws, 'Unauthorized');
             return;
@@ -836,9 +837,17 @@ export class WebSocketHandler {
           return;
         }
         if (action === 'remove-user' && signal.targetUserId) {
-          const allowed = await canPerformAdminAction(roomId, userId, 'kick', signal.targetUserId);
+          const allowed = await requireRole(roomId, userId, 'co-host');
           if (!allowed) {
             this.sendError(ws, 'Unauthorized');
+            return;
+          }
+          const roomMeta = await getRoomMeta(roomId);
+          if (!roomMeta) {
+            return;
+          }
+          if (signal.targetUserId === roomMeta.hostId) {
+            this.sendError(ws, 'Cannot kick the host');
             return;
           }
           this.publish(roomId, {
@@ -854,20 +863,23 @@ export class WebSocketHandler {
             target.close();
           }
           this.removeFromMap(roomId, signal.targetUserId);
-          removePeerFromRoom(roomId, signal.targetUserId).catch(() => {});
+          await removePeerFromRoom(roomId, signal.targetUserId);
+          await addToKickedList(roomId, signal.targetUserId);
           return;
         }
         if (action === 'promote' && signal.targetUserId) {
-          const allowed = await canPerformAdminAction(
-            roomId,
-            userId,
-            'promote',
-            signal.targetUserId,
-          );
+          const allowed = await requireRole(roomId, userId, 'host');
           if (!allowed) {
             this.sendError(ws, 'Unauthorized');
             return;
           }
+          await setPeerRole(roomId, signal.targetUserId, 'co-host');
+          await db
+            .update(roomParticipants)
+            .set({ role: 'co-host' })
+            .where(
+              and(eq(roomParticipants.roomId, roomId), eq(roomParticipants.userId, signal.targetUserId)),
+            );
           this.publish(roomId, {
             type: 'admin_promote',
             targetId: signal.targetUserId,
