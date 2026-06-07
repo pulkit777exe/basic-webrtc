@@ -1,7 +1,4 @@
 import { Redis } from '@upstash/redis';
-import { Redis as IoRedis } from 'ioredis';
-
-const POOL_SIZE = parseInt(process.env.REDIS_POOL_SIZE || '10');
 
 export const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
@@ -9,115 +6,19 @@ export const redis = new Redis({
   enableAutoPipelining: true,
 });
 
-class RedisPool {
-  private connections: IoRedis[] = [];
-  private index = 0;
-  private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
+let redisSub: Redis | null = null;
 
-  async initialize(): Promise<void> {
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-
-    for (let i = 0; i < POOL_SIZE; i++) {
-      const conn = new IoRedis(redisUrl, {
-        maxRetriesPerRequest: null,
-        tls: redisUrl.startsWith('rediss://') ? {} : undefined,
-        retryStrategy(times) {
-          return Math.min(times * 100, 5000);
-        },
-        lazyConnect: true,
-      });
-      await conn.connect();
-      this.connections.push(conn);
-    }
-
-    console.log(`[RedisPool] Initialized ${this.connections.length} connections`);
-    this.startHealthCheck();
+export function getRedisSub(): Redis | null {
+  if (redisSub) return redisSub;
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) {
+    console.warn('[Redis] UPSTASH credentials not set, pub/sub disabled');
+    return null;
   }
-
-  get(): IoRedis {
-    const conn = this.connections[this.index];
-    this.index = (this.index + 1) % this.connections.length;
-    return conn;
-  }
-
-  private startHealthCheck(): void {
-    this.healthCheckInterval = setInterval(async () => {
-      let healthy = 0;
-      let total = this.connections.length;
-
-      for (const conn of this.connections) {
-        try {
-          const start = Date.now();
-          await conn.ping();
-          const latency = Date.now() - start;
-
-          if (latency < 500) {
-            healthy++;
-          } else {
-            console.warn(`[RedisPool] High latency: ${latency}ms`);
-          }
-        } catch {
-          console.error('[RedisPool] Connection failed health check');
-        }
-      }
-
-      if (healthy < total / 2) {
-        console.error(`[RedisPool] Critical: only ${healthy}/${total} healthy`);
-      }
-    }, 30000);
-  }
-
-  async close(): Promise<void> {
-    if (this.healthCheckInterval) {
-      clearInterval(this.healthCheckInterval);
-    }
-    await Promise.all(this.connections.map((c) => c.quit()));
-    this.connections = [];
-  }
-
-  getStats() {
-    return {
-      size: this.connections.length,
-      currentIndex: this.index,
-    };
-  }
+  redisSub = new Redis({ url, token });
+  return redisSub;
 }
-
-export const redisPool = new RedisPool();
-
-const getRedisUrl = (): string => {
-  const url = process.env.REDIS_URL;
-  if (!url) {
-    console.warn('[Redis] REDIS_URL not set, pub/sub disabled');
-    return '';
-  }
-  return url;
-};
-
-const redisUrl = getRedisUrl();
-
-let redisSub: IoRedis | null = null;
-if (redisUrl) {
-  redisSub = new IoRedis(redisUrl, {
-    maxRetriesPerRequest: null,
-    tls: redisUrl.startsWith('rediss://') ? {} : undefined,
-    retryStrategy(times) {
-      return Math.min(times * 100, 5000);
-    },
-    lazyConnect: true,
-    connectTimeout: 10000,
-  });
-
-  redisSub.on('error', (err: any) => {
-    if (err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
-      console.warn('[Redis] Pub/sub unavailable, using memory fallback');
-      return;
-    }
-    console.error('[Redis Sub Error]', err.message || err);
-  });
-}
-
-export const getRedisSub = (): IoRedis | null => redisSub;
 
 const REFRESH_SESSION_TTL_SEC = 7 * 24 * 60 * 60;
 
@@ -173,8 +74,8 @@ export async function addToBlocklist(tokenOrJti: string, ttlSeconds: number): Pr
 }
 
 export async function isBlocklisted(tokenOrJti: string): Promise<boolean> {
-  const v = await redis.get(blocklistKey(tokenOrJti));
-  return v !== null;
+  const redisVal = await redis.get(blocklistKey(tokenOrJti));
+  return redisVal !== null;
 }
 
 export async function checkRateLimit(
@@ -185,7 +86,6 @@ export async function checkRateLimit(
   const now = Math.floor(Date.now() / 1000);
   const windowStart = now - windowSeconds;
 
-  // Upstash supports pipeline via .pipeline() — same chaining API
   const pipe = redis.pipeline();
   pipe.zremrangebyscore(key, 0, windowStart);
   pipe.zcard(key);
@@ -195,11 +95,9 @@ export async function checkRateLimit(
     return { allowed: false, remaining: 0, resetIn: windowSeconds };
   }
 
-  // results[0] = zremrangebyscore result, results[1] = zcard result
   const currentCount = results[1] as number;
 
   if (currentCount >= maxRequests) {
-    // zrange with WITHSCORES: Upstash returns [member, score, member, score, ...]
     const ttlResult = await redis.zrange(key, 0, 0, { withScores: true });
     const oldest =
       ttlResult.length >= 2 ? Math.floor(parseFloat(String((ttlResult as any[])[1]))) : now;

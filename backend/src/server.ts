@@ -25,7 +25,7 @@ import { globalLimiter, apiLimiter, authLimiter } from './lib/rate-limiters';
 import { logger } from './lib/logger';
 import { configureTrustProxy } from './config/scaling';
 import { closeDatabase } from './db';
-import { redis, getRedisSub, redisPool } from './config/redis';
+import { redis } from './config/redis';
 import { startCleanupJob } from './lib/cleanup-job';
 import { startRecordingWorker } from './jobs/recording-worker';
 import { startExportWorker } from './jobs/export-worker';
@@ -157,8 +157,6 @@ server.on('upgrade', (request, socket, head) => {
 
 new WebSocketHandler(wss);
 
-await redisPool.initialize();
-
 let shuttingDown = false;
 function gracefulShutdown(signal: string) {
   if (shuttingDown) return;
@@ -180,9 +178,6 @@ function gracefulShutdown(signal: string) {
         }
         void (async () => {
           try {
-            const sub = getRedisSub();
-            if (sub) await sub.quit();
-            await redisPool.close();
             await closeDatabase();
             logger.info('Graceful shutdown complete');
             process.exit(0);
