@@ -1,0 +1,206 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "dev:all",
+      "detail": "Start full dev stack (backend + frontend)",
+      "dependsOn": ["dev:backend", "dev:frontend"],
+      "dependsOrder": "parallel",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "runOptions": { "runOn": "folderOpen" }
+    },
+    {
+      "label": "dev:backend",
+      "detail": "Start backend dev server",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "dev"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "isBackground": true,
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "dev:frontend",
+      "detail": "Start frontend dev server",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "dev"],
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "isBackground": true,
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "dev:docker",
+      "detail": "Start full stack via Docker Compose",
+      "type": "shell",
+      "command": "docker",
+      "args": ["compose", "up", "--build"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "build:backend",
+      "detail": "Build backend",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "build"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "build:frontend",
+      "detail": "Build frontend",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "build"],
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "build:all",
+      "detail": "Build both packages",
+      "dependsOn": ["build:backend", "build:frontend"],
+      "dependsOrder": "parallel",
+      "group": "build"
+    },
+    {
+      "label": "test:backend",
+      "detail": "Run backend tests",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "test"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "test:frontend",
+      "detail": "Run frontend tests",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "test"],
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "test:all",
+      "detail": "Run all tests",
+      "dependsOn": ["test:backend", "test:frontend"],
+      "dependsOrder": "parallel",
+      "group": "test"
+    },
+    {
+      "label": "test:watch:backend",
+      "detail": "Watch backend tests",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "test:watch"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "test:watch:frontend",
+      "detail": "Watch frontend tests",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "test:watch"],
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "typecheck:backend",
+      "detail": "Typecheck backend",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "typecheck"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "group": "build",
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "typecheck:frontend",
+      "detail": "Typecheck frontend",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "typecheck"],
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "group": "build",
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "typecheck:all",
+      "detail": "Typecheck both packages",
+      "dependsOn": ["typecheck:backend", "typecheck:frontend"],
+      "dependsOrder": "parallel",
+      "group": "build",
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "db:generate",
+      "detail": "Generate Drizzle migrations",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "db:generate"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "db:migrate",
+      "detail": "Run Drizzle migrations",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "db:migrate"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "db:push",
+      "detail": "Push schema to database",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "db:push"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "db:studio",
+      "detail": "Open Drizzle Studio",
+      "type": "shell",
+      "command": "bun",
+      "args": ["run", "db:studio"],
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "docker:down",
+      "detail": "Stop Docker Compose services",
+      "type": "shell",
+      "command": "docker",
+      "args": ["compose", "down"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "docker:logs",
+      "detail": "Tail Docker Compose logs",
+      "type": "shell",
+      "command": "docker",
+      "args": ["compose", "logs", "-f"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}

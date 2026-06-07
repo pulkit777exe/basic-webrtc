@@ -1,0 +1,34 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch Backend",
+      "type": "bun",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/backend",
+      "program": "src/server.ts",
+      "stopOnEntry": false
+    },
+    {
+      "name": "Launch Frontend (Vite)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/frontend",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "dev"],
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Attach Backend",
+      "type": "bun",
+      "request": "attach",
+      "url": "ws://localhost:6499"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full Stack",
+      "configurations": ["Launch Backend", "Launch Frontend (Vite)"]
+    }
+  ]
+}
