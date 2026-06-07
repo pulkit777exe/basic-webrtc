@@ -15,7 +15,7 @@ import {
   userSessions,
   users,
 } from '../db/schema';
-import { accountQueueConnection } from './account-jobs';
+import { getAccountQueueConnection } from './account-jobs';
 
 interface DeletionJobData {
   userId: string;
@@ -48,6 +48,12 @@ async function getOrCreateDeletedUserId(): Promise<string> {
 }
 
 export function startDeletionWorker() {
+  const conn = getAccountQueueConnection();
+  if (!conn) {
+    console.warn('[DeletionWorker] REDIS_URL not set, deletion worker disabled');
+    return;
+  }
+
   const worker = new Worker<DeletionJobData>(
     'account-deletion',
     async (job) => {
@@ -114,7 +120,7 @@ export function startDeletionWorker() {
       });
     },
     {
-      connection: accountQueueConnection,
+      connection: conn,
       concurrency: 1,
     },
   );

@@ -16,7 +16,7 @@ import {
 } from '../db/schema';
 import { redis } from '../config/redis';
 import { queueEmail } from '../services/email';
-import { accountQueueConnection } from './account-jobs';
+import { getAccountQueueConnection } from './account-jobs';
 
 interface ExportJobData {
   userId: string;
@@ -162,6 +162,12 @@ async function createExportArchive(userId: string): Promise<{ filePath: string; 
 }
 
 export function startExportWorker() {
+  const conn = getAccountQueueConnection();
+  if (!conn) {
+    console.warn('[ExportWorker] REDIS_URL not set, export worker disabled');
+    return;
+  }
+
   const worker = new Worker<ExportJobData>(
     'account-export',
     async (job) => {
@@ -193,7 +199,7 @@ export function startExportWorker() {
       });
     },
     {
-      connection: accountQueueConnection,
+      connection: conn,
       concurrency: 1,
     },
   );

@@ -10,7 +10,7 @@ import { requireVerifiedEmail } from '../middleware/verified-email';
 import { verifyRoomToken } from '../utils/jwt';
 import { validateId, validateRoomId } from '../utils/validation';
 import { redis } from '../config/redis';
-import { mergeQueue } from '../jobs/recording-worker';
+import { getMergeQueue } from '../jobs/recording-worker';
 import { setRecordingState, getRecordingState, roomRecordingKey } from '../lib/redis-rooms';
 
 const ROOM_TTL_SEC = 24 * 60 * 60;
@@ -225,7 +225,10 @@ router.post(
                 });
               }
 
-              await mergeQueue.add('recording-merge', { roomId, sessionId, tracks });
+              const mergeQueue = getMergeQueue();
+              if (mergeQueue) {
+                await mergeQueue.add('recording-merge', { roomId, sessionId, tracks });
+              }
             }
           }
         }

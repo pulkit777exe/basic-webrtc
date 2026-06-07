@@ -7,20 +7,34 @@ import { db } from '../db';
 import { recordingSessions } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const REDIS_URL = process.env.REDIS_URL;
 
-// Create new BullMQ connection options
-const connectionOptions = {
-  host: new URL(REDIS_URL).hostname,
-  port: parseInt(new URL(REDIS_URL).port || '6379'),
-  password: new URL(REDIS_URL).password,
-};
+function getConnectionOptions() {
+  if (!REDIS_URL) return null;
+  return {
+    host: new URL(REDIS_URL).hostname,
+    port: parseInt(new URL(REDIS_URL).port || '6379'),
+    password: new URL(REDIS_URL).password,
+  };
+}
 
-export const mergeQueue = new Queue('recording-merge', {
-  connection: connectionOptions,
-});
+let _mergeQueue: Queue | null = null;
+
+export function getMergeQueue(): Queue | null {
+  if (!REDIS_URL) return null;
+  if (!_mergeQueue) {
+    _mergeQueue = new Queue('recording-merge', { connection: getConnectionOptions()! });
+  }
+  return _mergeQueue;
+}
 
 export function startRecordingWorker() {
+  const connectionOptions = getConnectionOptions();
+  if (!connectionOptions) {
+    console.warn('[RecordingWorker] REDIS_URL not set, recording worker disabled');
+    return;
+  }
+
   const worker = new Worker(
     'recording-merge',
     async (job) => {
