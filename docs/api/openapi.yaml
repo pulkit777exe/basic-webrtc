@@ -1,0 +1,425 @@
+openapi: "3.0.3"
+info:
+  title: Basic WebRTC API
+  description: REST API for the Basic WebRTC video conferencing application.
+  version: "1.0.0"
+
+servers:
+  - url: http://localhost:4000
+    description: Local development
+
+security:
+  - BearerAuth: []
+
+paths:
+  /api/auth/signup:
+    post:
+      tags: [Auth]
+      summary: Create a new account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, name, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                name:
+                  type: string
+                  minLength: 2
+                  maxLength: 100
+                password:
+                  type: string
+                  minLength: 8
+      responses:
+        "201":
+          description: Account created, verification email sent
+        "409":
+          description: Email already registered
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Sign in
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid credentials
+        "403":
+          description: Email not verified
+
+  /api/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      responses:
+        "200":
+          description: New access token issued
+        "401":
+          description: Invalid or expired refresh token
+
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Sign out
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Logged out
+
+  /api/auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current user profile
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+
+  /api/auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request password reset email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+      responses:
+        "200":
+          description: Reset email sent (if account exists)
+
+  /api/auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Reset password with token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Password reset
+        "400":
+          description: Invalid or expired token
+
+  /api/rooms:
+    post:
+      tags: [Rooms]
+      summary: Create a new room
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                type:
+                  type: string
+                  enum: [open, locked, waiting-room]
+      responses:
+        "201":
+          description: Room created
+
+  /api/rooms/{id}/state:
+    get:
+      tags: [Rooms]
+      summary: Get room state (reactions, lock, participant count)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Room state
+        "404":
+          description: Room not found
+
+  /api/rooms/{id}/join:
+    post:
+      tags: [Rooms]
+      summary: Join an existing room
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                passcode:
+                  type: string
+      responses:
+        "200":
+          description: Joined room, returns room token
+        "403":
+          description: Room locked or passcode required
+
+  /api/rooms/{id}/end:
+    post:
+      tags: [Rooms]
+      summary: End a room (host only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Room ended
+        "403":
+          description: Not host
+
+  /api/ice-servers:
+    get:
+      tags: [ICE]
+      summary: Get ICE/TURN server credentials
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: ICE server configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  iceServers:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ICEServer"
+
+  /api/recordings/chunk:
+    post:
+      tags: [Recordings]
+      summary: Upload a recording chunk
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: roomId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: participantId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: sessionId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: chunkIndex
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: totalChunks
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [chunk]
+              properties:
+                chunk:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Chunk uploaded
+
+  /api/recordings/{sessionId}/download:
+    get:
+      tags: [Recordings]
+      summary: Download a completed recording
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Recording file (video/mp4)
+        "404":
+          description: Recording not found
+
+  /api/account/export:
+    post:
+      tags: [Account]
+      summary: Request data export
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Export started
+        "429":
+          description: Rate limited
+
+  /api/account/delete:
+    post:
+      tags: [Account]
+      summary: Schedule account deletion (30-day grace period)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password, confirmation]
+              properties:
+                password:
+                  type: string
+                confirmation:
+                  type: string
+                  description: Must be "DELETE MY ACCOUNT"
+      responses:
+        "200":
+          description: Deletion scheduled
+        "409":
+          description: Active room exists
+
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness check
+      responses:
+        "200":
+          description: OK
+
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Readiness check (Redis + Postgres)
+      responses:
+        "200":
+          description: All dependencies reachable
+        "503":
+          description: Dependency unavailable
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    AuthResponse:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/UserProfile"
+        accessToken:
+          type: string
+
+    UserProfile:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        avatarUrl:
+          type: string
+          nullable: true
+        emailVerified:
+          type: boolean
+        twoFactorEnabled:
+          type: boolean
+        googleLinked:
+          type: boolean
+
+    ICEServer:
+      type: object
+      properties:
+        urls:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        username:
+          type: string
+        credential:
+          type: string
