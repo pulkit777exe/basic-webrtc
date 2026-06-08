@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { createStore } from 'jotai';
 import {
   userAtom,
   roomAtom,
   roomTokenAtom,
-  peersAtom,
+  peerListAtom,
   localMediaAtom,
   chatAtom,
   appendChatAtom,
@@ -25,17 +25,14 @@ import {
   reactionsEnabledAtom,
   roomLockedAtom,
   recordingAtom,
-  recordingUploadsAtom,
   mutedByHostAtom,
-  pinnedChatMessageAtom,
   captionsEnabledAtom,
   captionsAtom,
-  audioOutputDeviceIdAtom,
   chatReactionsAtom,
   isHostAtom,
   canManageAtom,
 } from './atoms';
-import type { Message, CaptionLine, Participant } from './atoms';
+import type { Message, CaptionLine } from './atoms';
 
 function makeMessage(id: string): Message {
   return { id, userId: 'u1', content: `msg ${id}`, type: 'text', timestamp: Date.now() };
@@ -62,9 +59,9 @@ describe('atoms', () => {
       expect(store.get(roomTokenAtom)).toBeNull();
     });
 
-    it('peersAtom defaults to empty array (derived from peerListAtom)', () => {
+    it('peerListAtom defaults to empty array', () => {
       const store = createStore();
-      const peers = store.get(peersAtom);
+      const peers = store.get(peerListAtom);
       expect(Array.isArray(peers)).toBe(true);
       expect(peers).toHaveLength(0);
     });

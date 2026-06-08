@@ -108,6 +108,7 @@ type Signal =
   | { type: "hand_raise"; raised: boolean; from?: string; timestamp?: number | null }
   | { type: "ping" }
   | { type: "pong" }
+  | { type: "token_expired" }
   | { type: "error"; message: string }
   | { type: "kicked" }
   | { type: "rate_limited" };
@@ -242,6 +243,12 @@ export const WSManager = {
 
         if (data.type === "pong") return;
 
+        if (data.type === "token_expired") {
+          store.set(roomAtom, null);
+          toast.error("Your session has expired. Please rejoin the room.");
+          return;
+        }
+
         if (data.type === "rate_limited") {
           toast.warning("Sending too fast. Wait a moment and try again.");
           return;
@@ -282,6 +289,7 @@ export const WSManager = {
               userId: data.user.id,
               user: data.user,
               stream: null,
+              screenStream: null,
               video: true,
               audio: true,
               screen: false,
@@ -298,7 +306,6 @@ export const WSManager = {
           resolveParticipantRole(data.user.id);
           
           // Only the peer with lexicographically greater userId creates the offer
-          // This prevents double-offer collision where both peers try to initiate
           const currentUserId = store.get(userAtom)?.id;
           if (
             data.user.id !== currentUserId &&
@@ -580,7 +587,7 @@ export const WSManager = {
         });
       }
       if (reconnectAttempts < MAX_RECONNECT) {
-        const delay = DELAYS[Math.min(reconnectAttempts, DELAYS.length - 1)];
+        const delay = DELAYS[Math.min(reconnectAttempts, DELAYS.length - 1)] + Math.random() * 1000;
         reconnectAttempts++;
         setTimeout(() => WSManager.connect(roomToken), delay);
       } else if (!intentionalDisconnect) {

@@ -3,69 +3,43 @@ import { db } from '../db';
 import {
   users,
   messages,
-  rooms,
-  roomParticipants,
-  roomSettings,
   recordingSessions,
-  recordingTracks,
 } from '../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { validateRoomId } from '../utils/validation';
 import {
   addPeerToRoom,
-  canPerformAdminAction,
   getRoomReactionsEnabled,
   removePeerFromRoom,
   getRoomMeta,
   getRoomPeerCount,
   getPeerRole,
-  setRoomReactionsEnabled,
-  setRoomPinnedMessage,
-  setRoomLocked,
-  setPeerRole,
-  setPeerMedia,
-  removeFromWaitingRoom,
   isInWaitingRoom,
   getWaitingRoom,
   roomSignalChannel,
   type RoomRole,
   type WaitingParticipant,
   isKicked,
-  addToKickedList,
-  setForceMuted,
-  setActiveSpeaker,
-  getParticipant,
   setRecordingState,
   getRecordingState,
-  refreshParticipantTTL,
   setHandRaised,
 } from '../lib/redis-rooms';
 import { redis, getRedisSub } from '../config/redis';
 import type { Redis } from '@upstash/redis';
-import type { Signal, PublicUser, AdminAction } from '../lib/signals';
+import type { Signal, PublicUser } from '../lib/signals';
 import { isSignal } from '../lib/signals';
-import { sanitizeText } from '../utils/sanitize';
 import { logger } from '../lib/logger';
-import { publishSignal, readSignals } from '../lib/redis-streams';
-import { generateRoomToken } from '../utils/jwt';
+import { publishSignal } from '../lib/redis-streams';
+import { generateRoomToken, verifyRoomToken } from '../utils/jwt';
 import { nanoid } from 'nanoid';
 import { WS_MAX_MESSAGE_BYTES } from '../config/scaling';
+import { handlerRegistry } from './handlers';
 
 const HEARTBEAT_INTERVAL_MS = 30000;
 const CHAT_FLUSH_INTERVAL_MS = 2000;
 const CHAT_BUFFER_SIZE = 50;
+const CHAT_REDIS_KEY_PREFIX = 'room:chatBuffer:';
 const serverInstanceId = nanoid();
-
-async function requireRole(
-  roomId: string,
-  senderId: string,
-  minRole: 'co-host' | 'host',
-): Promise<boolean> {
-  const participant = await getParticipant(roomId, senderId);
-  if (!participant) return false;
-  if (minRole === 'host') return participant.role === 'host';
-  return participant.role === 'host' || participant.role === 'co-host';
-}
 
 interface ExtendedWebSocket extends WebSocket {
   userId?: string;
@@ -73,6 +47,7 @@ interface ExtendedWebSocket extends WebSocket {
   isAlive?: boolean;
   isWaiting?: boolean;
   user?: PublicUser;
+  roomToken?: string;
 }
 
 interface ChatBufferEntry {
@@ -89,6 +64,9 @@ export class WebSocketHandler {
   private signalSubscriber: ReturnType<Redis['psubscribe']> | null = null;
   private endedSubscriber: ReturnType<Redis['subscribe']> | null = null;
   private chatBuffer: ChatBufferEntry[] = [];
+  private heartbeatTimers: Map<string, NodeJS.Timeout> = new Map();
+  /** Per-user token buckets for exempt message types: { userId: { tokens: number, lastRefill: number } } */
+  private exemptRateLimits: Map<string, { tokens: number; lastRefill: number }> = new Map();
 
   constructor(private wss: WebSocketServer) {
     this.initialize();
@@ -116,14 +94,19 @@ export class WebSocketHandler {
       console.warn('[WS] Pub/sub disabled, cross-server messaging unavailable');
     } else {
       this.signalSubscriber = redisSub.psubscribe<string>('room:*:signal');
-      this.signalSubscriber.on('pmessage', (event: any) => {
-        this.handleRedisMessage(event.channel, event.message);
+      this.signalSubscriber.on('pmessage', (event) => {
+        const msg = typeof event.message === 'string' ? event.message : JSON.stringify(event.message);
+        this.handleRedisMessage(event.channel, msg);
       });
       this.endedSubscriber = redisSub.subscribe<string>('room:*:ended');
-      this.endedSubscriber.on('message', (event: any) => {
-        this.handleRedisMessage(event.channel, event.message);
+      this.endedSubscriber.on('message', (event) => {
+        const msg = typeof event.message === 'string' ? event.message : JSON.stringify(event.message);
+        this.handleRedisMessage(event.channel, msg);
       });
     }
+
+    // Crash recovery: drain any leftover chat buffer entries from Redis
+    this.recoverChatBuffers().catch((e) => logger.error('Chat buffer recovery failed', { err: String(e) }));
 
     this.wss.on('connection', (ws: WebSocket, req: unknown) => {
       const ext = ws as ExtendedWebSocket;
@@ -159,8 +142,18 @@ export class WebSocketHandler {
           ws.on('pong', () => {
             ext.isAlive = true;
           });
+
+          // Set up heartbeat timer for token re-validation
+          const timer = setInterval(() => {
+            if (ext.isAlive === false) {
+              clearInterval(timer);
+              this.heartbeatTimers.delete(userId);
+              return;
+            }
+            ext.isAlive = false;
+          }, HEARTBEAT_INTERVAL_MS);
+          this.heartbeatTimers.set(userId, timer);
           this.addToWaitingMap(roomId, userId, ext);
-          this.subscribeRoom(roomId); // needed to receive admit/reject signals
           ws.on('message', (data: Buffer) => void this.handleWaitingMessage(ext, data));
           ws.on('close', () => this.handleWaitingDisconnect(ext));
           ws.on('error', () => this.handleWaitingDisconnect(ext));
@@ -213,7 +206,7 @@ export class WebSocketHandler {
           }
 
           const count = await getRoomPeerCount(roomId);
-          const max = parseInt(meta.maxParticipants, 10) || 50;
+          const max = parseInt(meta.maxParticipants, 10) || 10;
           if (count >= max) {
             this.sendError(ext, 'Room is full');
             ws.close();
@@ -225,7 +218,6 @@ export class WebSocketHandler {
             logger.error('Redis addPeer', { roomId, userId, err: String(e) }),
           );
           this.addToMap(roomId, userId, ext);
-          this.subscribeRoom(roomId);
 
           // Send roster to the new connection: Redis join broadcast only reaches peers already
           // connected, so without this they would never learn about existing participants.
@@ -305,7 +297,6 @@ export class WebSocketHandler {
     room.delete(userId);
     if (room.size === 0) {
       this.rooms.delete(roomId);
-      this.unsubscribeRoom(roomId);
     }
   }
 
@@ -338,7 +329,6 @@ export class WebSocketHandler {
             }
           });
           this.rooms.delete(roomId);
-          this.unsubscribeRoom(roomId);
         }
         return;
       }
@@ -357,20 +347,14 @@ export class WebSocketHandler {
     }
   }
 
-  private subscribeRoom(_roomId: string): void {
-    // Pattern subscriptions handle all rooms automatically
-  }
 
-  private unsubscribeRoom(_roomId: string): void {
-    // Pattern subscriptions handle all rooms automatically
-  }
 
   private publish(roomId: string, payload: Record<string, unknown>): void {
     const channel = roomSignalChannel(roomId);
     const fullPayload = { ...payload, roomId };
 
     // 1. Immediately broadcast to all WebSockets connected to this exact node
-    this.forwardFromRedis(channel, fullPayload as any);
+    this.forwardFromRedis(channel, fullPayload as Record<string, unknown>);
 
     // 2. Publish to Redis for any OTHER nodes
     const redisPayload = { ...fullPayload, __senderInstanceId: serverInstanceId };
@@ -381,21 +365,14 @@ export class WebSocketHandler {
 
   private forwardFromRedis(
     channel: string,
-    data: {
-      type: string;
-      from?: string;
-      to?: string;
-      roomId: string;
-      __senderInstanceId?: string;
-      [k: string]: unknown;
-    },
+    data: Record<string, unknown>,
   ): void {
     // If we originated this message locally, drop the reflection to prevent duplicate WebRTC signals
     if (data.__senderInstanceId === serverInstanceId) {
       return;
     }
 
-    const roomId = data.roomId;
+    const roomId = data.roomId as string;
     const room = this.rooms.get(roomId);
 
     if (data.type === 'leave') {
@@ -452,18 +429,17 @@ export class WebSocketHandler {
       const userId = ws.userId!;
       const roomId = ws.roomId!;
 
+      // Hard cap: 500 msg/sec total per WebSocket
+      if (!this.checkHardRateLimit(userId)) {
+        this.send(ws, { type: 'rate_limited' });
+        return;
+      }
+
       // Rate-limit only low-volume messages. ICE + audio-activity + media-state
       // easily exceed 50/s/room and were starving chat/captions.
       const exemptFromRoomBurstLimit = new Set<string>([
-        'offer',
-        'answer',
-        'ice',
-        'ping',
-        'pong',
-        'media-state',
-        'audio-activity',
-        'recording_upload_progress',
-        'active_speaker',
+        'offer', 'answer', 'ice', 'ping', 'pong',
+        'media-state', 'audio-activity', 'recording_upload_progress', 'active_speaker',
       ]);
       if (!exemptFromRoomBurstLimit.has(signal.type)) {
         const count = await redis.incr(`ratelimit:room:${roomId}:messages`);
@@ -480,492 +456,116 @@ export class WebSocketHandler {
         return;
       }
 
+      // ── Ping / heartbeat: token re-validation + room existence ──
       if (signal.type === 'ping') {
-        await refreshParticipantTTL(roomId);
-        this.send(ws, { type: 'pong' });
-        return;
+        if (ws.roomToken) {
+          const payload = verifyRoomToken(ws.roomToken);
+          if (!payload) {
+            this.send(ws, { type: 'token_expired' });
+            ws.close(4004);
+            return;
+          }
+          if (await isKicked(roomId, userId)) {
+            this.send(ws, { type: 'kicked' });
+            ws.close(4003);
+            return;
+          }
+          const meta = await getRoomMeta(roomId);
+          if (!meta) {
+            this.sendError(ws, 'Room not found or ended');
+            ws.close(4002);
+            return;
+          }
+        }
       }
 
+      // ── ICE / WebRTC: per-user token bucket ──
       if (signal.type === 'offer' || signal.type === 'answer' || signal.type === 'ice') {
-        this.publish(roomId, { ...signal, from: userId, roomId });
-        return;
-      }
-
-      if (signal.type === 'chat') {
-        const content = sanitizeText(String(signal.content ?? '').slice(0, 2000));
-        if (!content.trim()) return;
-        const entry: ChatBufferEntry = {
-          roomId,
-          userId,
-          content,
-          timestamp: signal.timestamp ?? Date.now(),
-          id: nanoid(),
-        };
-        this.chatBuffer.push(entry);
-        if (this.chatBuffer.length >= CHAT_BUFFER_SIZE) {
-          await this.flushChatBuffer();
+        if (!this.checkExemptRateLimit(`ice:${userId}`, 100)) {
+          return; // Drop silently — these are advisory
         }
-        return;
       }
-
-      if (signal.type === 'chat_pin') {
-        const role = await getPeerRole(roomId, userId);
-        if (role !== 'host' && role !== 'co-host') {
-          this.sendError(ws, 'Unauthorized');
-          return;
-        }
-        const pinnedMessage = {
-          messageId: sanitizeText(String(signal.messageId ?? '')).slice(0, 128),
-          text: sanitizeText(String(signal.text ?? '')).slice(0, 500),
-          authorName: sanitizeText(String(signal.authorName ?? '')).slice(0, 120),
-        };
-        if (!pinnedMessage.messageId || !pinnedMessage.text) {
-          this.sendError(ws, 'Invalid pinned message');
-          return;
-        }
-        await setRoomPinnedMessage(roomId, pinnedMessage);
-        this.publish(roomId, {
-          type: 'chat_pin',
-          ...pinnedMessage,
-          from: userId,
-          roomId,
-        });
-        return;
-      }
-
-      if (signal.type === 'chat_reaction') {
-        const messageId = sanitizeText(String(signal.messageId ?? '')).slice(0, 128);
-        const emoji = sanitizeText(String(signal.emoji ?? '')).slice(0, 16);
-        if (!messageId || !emoji) {
-          this.sendError(ws, 'Invalid chat reaction');
-          return;
-        }
-        this.publish(roomId, {
-          type: 'chat_reaction',
-          messageId,
-          emoji,
-          from: userId,
-          roomId,
-        });
-        return;
-      }
-
       if (signal.type === 'media-state') {
-        setPeerMedia(roomId, userId, {
-          video: signal.video,
-          audio: signal.audio,
-          screen: signal.screen,
-        }).catch(() => {});
-        this.publish(roomId, { ...signal, from: userId, roomId });
-        return;
+        if (!this.checkExemptRateLimit(`media:${userId}`, 10)) return;
       }
-
-      if (signal.type === 'active_speaker') {
-        // Rate limit: max 1 active_speaker event per participant per 2 seconds
-        const rateLimitKey = `ratelimit:speaker:${roomId}:${userId}`;
-        const rateLimitResult = await redis.set(rateLimitKey, '1', {ex: 2, nx: true});
-        if (!rateLimitResult) {
-          return; // Drop message silently if rate limited
-        }
-        await setActiveSpeaker(roomId, userId);
-        await publishSignal(roomId, {
-          type: 'active_speaker',
-          participantId: userId,
-        });
-        return;
-      }
-
       if (signal.type === 'audio-activity') {
-        this.publish(roomId, { ...signal, from: userId, roomId });
-        return;
+        if (!this.checkExemptRateLimit(`audio:${userId}`, 10)) return;
       }
 
-      if (signal.type === 'admin_mute_all') {
-        const allowed = await requireRole(roomId, userId, 'co-host');
-        if (!allowed) {
-          ws.close(4003);
-          return;
-        }
-        await setForceMuted(roomId, true);
-        this.publish(roomId, {
-          type: 'admin_mute_all',
-          from: userId,
-          roomId,
-        });
-        this.send(ws, { type: 'ack', action: 'mute_all' });
-        return;
+      // ── Dispatch to registered handler ──
+      const handler = handlerRegistry.get(signal.type);
+      if (handler) {
+        const ctx = this.buildHandlerContext(ws, signal, userId, roomId);
+        await handler(ctx);
+      } else {
+        this.sendError(ws, 'Unknown message type');
       }
-
-      if (signal.type === 'admin_unmute_all') {
-        const allowed = await requireRole(roomId, userId, 'co-host');
-        if (!allowed) {
-          ws.close(4003);
-          return;
-        }
-        await setForceMuted(roomId, false);
-        this.publish(roomId, {
-          type: 'admin_unmute_all',
-          from: userId,
-          roomId,
-        });
-        this.send(ws, { type: 'ack', action: 'unmute_all' });
-        return;
-      }
-
-      if (signal.type === 'admin_lock' || signal.type === 'room_locked') {
-        const allowed = await requireRole(roomId, userId, 'host');
-        if (!allowed) {
-          ws.close(4003);
-          return;
-        }
-        const locked = signal.locked;
-        await setRoomLocked(roomId, locked);
-        await db.update(rooms).set({ isLocked: locked }).where(eq(rooms.id, roomId));
-        this.publish(roomId, { type: 'room_locked', locked, roomId });
-        this.send(ws, { type: 'ack', action: 'lock' });
-        return;
-      }
-
-      if (signal.type === 'admin_reactions_toggle') {
-        const allowed = await requireRole(roomId, userId, 'co-host');
-        if (!allowed) {
-          ws.close(4003);
-          return;
-        }
-        await setRoomReactionsEnabled(roomId, signal.enabled);
-        await db
-          .update(roomSettings)
-          .set({ reactionsEnabled: signal.enabled })
-          .where(eq(roomSettings.roomId, roomId));
-        this.publish(roomId, {
-          type: 'admin_reactions_toggle',
-          enabled: signal.enabled,
-          roomId,
-        });
-        this.send(ws, { type: 'ack', action: 'reactions_toggle' });
-        return;
-      }
-
-      if (signal.type === 'admin_kick') {
-        const allowed = await requireRole(roomId, userId, 'co-host');
-        if (!allowed) {
-          ws.close(4003);
-          return;
-        }
-        // Validate targetId is not the host
-        const roomMeta = await getRoomMeta(roomId);
-        if (!roomMeta) {
-          return;
-        }
-        if (signal.targetId === roomMeta.hostId) {
-          this.sendError(ws, 'Cannot kick the host');
-          return;
-        }
-        await removePeerFromRoom(roomId, signal.targetId);
-        await addToKickedList(roomId, signal.targetId);
-        await publishSignal(roomId, {
-          type: 'kicked',
-          targetId: signal.targetId,
-        });
-        const room = this.rooms.get(roomId);
-        const target = room?.get(signal.targetId);
-        if (target && this.isOpen(target)) {
-          target.close(4003);
-        }
-        this.removeFromMap(roomId, signal.targetId);
-        this.send(ws, { type: 'ack', action: 'kick' });
-        return;
-      }
-
-      if (signal.type === 'admin_promote') {
-        const allowed = await requireRole(roomId, userId, 'host');
-        if (!allowed) {
-          ws.close(4003);
-          return;
-        }
-        await setPeerRole(roomId, signal.targetId, 'co-host');
-        await db
-          .update(roomParticipants)
-          .set({ role: 'co-host' })
-          .where(
-            and(eq(roomParticipants.roomId, roomId), eq(roomParticipants.userId, signal.targetId)),
-          );
-        this.publish(roomId, {
-          type: 'admin_promote',
-          targetId: signal.targetId,
-          roomId,
-        });
-        this.send(ws, { type: 'ack', action: 'promote' });
-        return;
-      }
-
-      if (signal.type === 'admin_pin_message') {
-        const allowed = await requireRole(roomId, userId, 'co-host');
-        if (!allowed) {
-          ws.close(4003);
-          return;
-        }
-        const pinnedMessage = {
-          messageId: sanitizeText(String(signal.id ?? '')).slice(0, 128),
-          text: sanitizeText(String(signal.text ?? '')).slice(0, 500),
-          authorName: sanitizeText(String(signal.authorName ?? '')).slice(0, 120),
-        };
-        if (!pinnedMessage.messageId || !pinnedMessage.text) {
-          this.sendError(ws, 'Invalid pinned message');
-          return;
-        }
-        await setRoomPinnedMessage(roomId, pinnedMessage);
-        await publishSignal(roomId, {
-          type: 'message_pinned',
-          message: pinnedMessage,
-        });
-        this.send(ws, { type: 'ack', action: 'pin_message' });
-        return;
-      }
-
-      if (signal.type === 'admin_mute') {
-        const allowed = await canPerformAdminAction(roomId, userId, 'mute', signal.targetId);
-        if (!allowed) {
-          this.sendError(ws, 'Unauthorized');
-          return;
-        }
-        this.publish(roomId, {
-          type: 'admin_mute',
-          targetId: signal.targetId,
-          from: userId,
-          roomId,
-        });
-        return;
-      }
-
-      if (signal.type === 'recording_start') {
-        const role = await getPeerRole(roomId, userId);
-        if (role !== 'host') {
-          this.sendError(ws, 'Unauthorized');
-          return;
-        }
-        const sessionId = await this.startRoomRecording(roomId, userId);
-        if (sessionId === null) {
-          this.sendError(ws, 'Already recording');
-          return;
-        }
-        return;
-      }
-
-      if (signal.type === 'recording_stop') {
-        const role = await getPeerRole(roomId, userId);
-        if (role !== 'host') {
-          this.sendError(ws, 'Unauthorized');
-          return;
-        }
-        const stopped = await this.stopRoomRecording(roomId);
-        if (!stopped) {
-          this.sendError(ws, 'Not recording');
-          return;
-        }
-        return;
-      }
-
-      if (signal.type === 'recording_upload_progress') {
-        this.publish(roomId, { ...signal, from: userId, roomId });
-        return;
-      }
-
-      if (signal.type === 'caption') {
-        const text = sanitizeText(String(signal.text ?? '').slice(0, 2000));
-        if (!text.trim()) return;
-        this.publish(roomId, {
-          type: 'caption',
-          text,
-          timestamp: signal.timestamp ?? Date.now(),
-          from: userId,
-          roomId,
-        });
-        return;
-      }
-
-      if (signal.type === 'hand_raise') {
-        const targetId = signal.targetUserId;
-        if (targetId) {
-          const role = await getPeerRole(roomId, userId);
-          if (role !== 'host' && role !== 'co-host') {
-            this.sendError(ws, 'Unauthorized');
-            return;
-          }
-          await setHandRaised(roomId, targetId, signal.raised);
-          this.publish(roomId, {
-            type: 'hand_raise',
-            raised: signal.raised,
-            from: targetId,
-            roomId,
-            timestamp: signal.raised ? Date.now() : null,
-          });
-          return;
-        }
-        await setHandRaised(roomId, userId, signal.raised);
-        this.publish(roomId, {
-          type: 'hand_raise',
-          raised: signal.raised,
-          from: userId,
-          roomId,
-          timestamp: signal.raised ? Date.now() : null,
-        });
-        return;
-      }
-
-      if (signal.type === 'recording_track_offset') {
-        // Sent by each client when recording starts, reports their startOffset
-        // No role check: any participant
-        const offset = signal.offset;
-        if (typeof offset !== 'number' || offset < 0) {
-          this.sendError(ws, 'Invalid offset');
-          return;
-        }
-        try {
-          await redis.set(`recording:offset:${roomId}:${userId}`, offset, { ex: 86400});
-        } catch (error) {
-          console.error('Failed to store recording track offset:', error);
-          this.sendError(ws, 'Failed to store track offset');
-        }
-        return;
-      }
-
-      if (signal.type === 'admin') {
-        const action = signal.action as AdminAction;
-        if (action === 'start-recording') {
-          const allowed = await requireRole(roomId, userId, 'host');
-          if (!allowed) {
-            this.sendError(ws, 'Unauthorized');
-            return;
-          }
-          const sessionId = await this.startRoomRecording(roomId, userId);
-          if (sessionId === null) {
-            this.sendError(ws, 'Already recording');
-            return;
-          }
-          return;
-        }
-        if (action === 'stop-recording') {
-          const allowed = await requireRole(roomId, userId, 'host');
-          if (!allowed) {
-            this.sendError(ws, 'Unauthorized');
-            return;
-          }
-          const stopped = await this.stopRoomRecording(roomId);
-          if (!stopped) {
-            this.sendError(ws, 'Not recording');
-            return;
-          }
-          return;
-        }
-        if (action === 'mute-all') {
-          const allowed = await requireRole(roomId, userId, 'co-host');
-          if (!allowed) {
-            this.sendError(ws, 'Unauthorized');
-            return;
-          }
-          await setForceMuted(roomId, true);
-          this.publish(roomId, {
-            type: 'admin_mute_all',
-            from: userId,
-            roomId,
-          });
-          return;
-        }
-        if (action === 'mute-user' && signal.targetUserId) {
-          const allowed = await requireRole(roomId, userId, 'co-host');
-          if (!allowed) {
-            this.sendError(ws, 'Unauthorized');
-            return;
-          }
-          this.publish(roomId, {
-            type: 'admin_mute',
-            targetId: signal.targetUserId,
-            from: userId,
-            roomId,
-          });
-          return;
-        }
-        if (action === 'remove-user' && signal.targetUserId) {
-          const allowed = await requireRole(roomId, userId, 'co-host');
-          if (!allowed) {
-            this.sendError(ws, 'Unauthorized');
-            return;
-          }
-          const roomMeta = await getRoomMeta(roomId);
-          if (!roomMeta) {
-            return;
-          }
-          if (signal.targetUserId === roomMeta.hostId) {
-            this.sendError(ws, 'Cannot kick the host');
-            return;
-          }
-          this.publish(roomId, {
-            type: 'admin_kick',
-            targetId: signal.targetUserId,
-            from: userId,
-            roomId,
-          });
-          const room = this.rooms.get(roomId);
-          const target = room?.get(signal.targetUserId);
-          if (target && this.isOpen(target)) {
-            this.send(target, { type: 'kicked' });
-            target.close();
-          }
-          this.removeFromMap(roomId, signal.targetUserId);
-          await removePeerFromRoom(roomId, signal.targetUserId);
-          await addToKickedList(roomId, signal.targetUserId);
-          return;
-        }
-        if (action === 'promote' && signal.targetUserId) {
-          const allowed = await requireRole(roomId, userId, 'host');
-          if (!allowed) {
-            this.sendError(ws, 'Unauthorized');
-            return;
-          }
-          await setPeerRole(roomId, signal.targetUserId, 'co-host');
-          await db
-            .update(roomParticipants)
-            .set({ role: 'co-host' })
-            .where(
-              and(eq(roomParticipants.roomId, roomId), eq(roomParticipants.userId, signal.targetUserId)),
-            );
-          this.publish(roomId, {
-            type: 'admin_promote',
-            targetId: signal.targetUserId,
-            from: userId,
-            roomId,
-          });
-          return;
-        }
-      }
-
-      if (signal.type === 'waiting') {
-        const role = await getPeerRole(roomId, userId);
-        if (role !== 'host' && role !== 'co-host') {
-          this.sendError(ws, 'Unauthorized');
-          return;
-        }
-        await removeFromWaitingRoom(roomId, signal.userId);
-        this.publish(roomId, { ...signal, from: userId, roomId });
-        return;
-      }
-
-      this.sendError(ws, 'Unknown message type');
     } catch (err) {
-      console.error('[WS] Handle message error', err);
+      logger.error('Handle message error', { err: String(err) });
       this.sendError(ws, 'Invalid message');
     }
   }
 
+  private buildHandlerContext(
+    ws: ExtendedWebSocket,
+    signal: Signal,
+    userId: string,
+    roomId: string,
+  ): import('./handlers/types').HandlerContext {
+    return {
+      ws: ws as import('./handlers/types').ExtendedWebSocket,
+      signal: signal as Record<string, any>, // eslint-disable-line @typescript-eslint/no-explicit-any
+      userId,
+      roomId,
+      handler: {
+        send: (s, msg) => this.send(s, msg),
+        sendError: (s, msg) => this.sendError(s, msg),
+        publish: (room, payload) => this.publish(room, payload),
+        isOpen: (s) => this.isOpen(s),
+        bufferChat: (entry) => this.chatBuffer.push(entry),
+        flushChatBuffer: () => this.flushChatBuffer(),
+        getChatBufferFlushSize: () => CHAT_BUFFER_SIZE,
+        getChatBufferSize: () => this.chatBuffer.length,
+        getRoomSocket: (roomId, userId) => this.rooms.get(roomId)?.get(userId),
+        removeFromMap: (roomId, userId) => this.removeFromMap(roomId, userId),
+        startRoomRecording: (roomId, userId) => this.startRoomRecording(roomId, userId),
+        stopRoomRecording: (roomId) => this.stopRoomRecording(roomId),
+        persistChatToRedis: (roomId, entry) => this.persistChatToRedis(roomId, entry),
+        drainChatRedisBuffer: (roomId) => this.drainChatRedisBuffer(roomId),
+      },
+    };
+  }
+
   private async flushChatBuffer(): Promise<void> {
-    const batch = this.chatBuffer.splice(0);
-    if (batch.length === 0) return;
+    const inMemoryBatch = this.chatBuffer.splice(0);
+
+    // Collect room IDs from both in-memory buffer and active rooms with Redis entries
+    const roomIds = new Set<string>(inMemoryBatch.map((e) => e.roomId));
+    for (const roomId of this.rooms.keys()) {
+      roomIds.add(roomId);
+    }
+
+    // Drain Redis chat buffers for all known rooms
+    const redisBatches = await Promise.all(
+      Array.from(roomIds).map((roomId) => this.drainChatRedisBuffer(roomId)),
+    );
+
+    // Merge and deduplicate by entry ID
+    const seen = new Set<string>();
+    const allEntries: ChatBufferEntry[] = [];
+    for (const entry of [...inMemoryBatch, ...redisBatches.flat()]) {
+      if (!seen.has(entry.id)) {
+        seen.add(entry.id);
+        allEntries.push(entry);
+      }
+    }
+    if (allEntries.length === 0) return;
+
     try {
       await db
         .insert(messages)
         .values(
-          batch.map((e) => ({
+          allEntries.map((e) => ({
             id: e.id,
             roomId: e.roomId,
             userId: e.userId,
@@ -973,7 +573,7 @@ export class WebSocketHandler {
             type: 'text' as const,
           })),
         );
-      for (const e of batch) {
+      for (const e of allEntries) {
         this.publish(e.roomId, {
           type: 'chat',
           id: e.id,
@@ -984,8 +584,10 @@ export class WebSocketHandler {
         });
       }
     } catch (e) {
-      console.error('[WS] Chat batch insert', e);
-      for (const e of batch) {
+      logger.error('Chat batch insert failed', { err: String(e) });
+      // Re-queue ALL entries since none were persisted (seen already contains all IDs)
+      this.chatBuffer.push(...allEntries);
+      for (const e of allEntries) {
         const room = this.rooms.get(e.roomId);
         const targetWs = room?.get(e.userId);
         if (targetWs && this.isOpen(targetWs)) {
@@ -995,14 +597,90 @@ export class WebSocketHandler {
     }
   }
 
+  private async persistChatToRedis(roomId: string, entry: ChatBufferEntry): Promise<void> {
+    try {
+      await redis.rpush(`${CHAT_REDIS_KEY_PREFIX}${roomId}`, JSON.stringify(entry));
+    } catch (e) {
+      logger.error('Failed to persist chat to Redis', { roomId, err: String(e) });
+    }
+  }
+
+  /**
+   * Atomically read all entries from the Redis chat buffer for a room and delete the key.
+   * Uses a Lua script to prevent race conditions during concurrent flushes.
+   */
+  private async drainChatRedisBuffer(roomId: string): Promise<ChatBufferEntry[]> {
+    const key = `${CHAT_REDIS_KEY_PREFIX}${roomId}`;
+    try {
+      const result = await redis.eval(
+        `local items = redis.call('lrange', KEYS[1], 0, -1)
+         if #items > 0 then redis.call('del', KEYS[1]) end
+         return items`,
+        [key],
+        [],
+      );
+      if (!Array.isArray(result)) return [];
+      return result.map((item) => JSON.parse(String(item)) as ChatBufferEntry);
+    } catch (e) {
+      logger.error('Failed to drain chat Redis buffer', { roomId, err: String(e) });
+      return [];
+    }
+  }
+
+  /** On startup, drain leftover chat buffer entries from Redis and flush to Postgres. */
+  private async recoverChatBuffers(): Promise<void> {
+    // Scan for all chat buffer keys using SCAN
+    let cursor = 0;
+    do {
+      const result = await redis.scan(cursor, { match: `${CHAT_REDIS_KEY_PREFIX}*`, count: 100 });
+      cursor = Number(result[0]);
+      const keys = result[1] as string[];
+      for (const key of keys) {
+        const roomId = key.replace(CHAT_REDIS_KEY_PREFIX, '');
+        const entries = await this.drainChatRedisBuffer(roomId);
+        if (entries.length === 0) continue;
+        try {
+          await db
+            .insert(messages)
+            .values(
+              entries.map((e) => ({
+                id: e.id,
+                roomId: e.roomId,
+                userId: e.userId,
+                content: e.content,
+                type: 'text' as const,
+              })),
+            );
+          logger.info('Recovered chat buffer entries', { roomId, count: entries.length });
+        } catch (e) {
+          logger.error('Failed to recover chat buffer', { roomId, err: String(e) });
+          // Re-queue to Redis for next recovery attempt
+          for (const entry of entries) {
+            await redis.rpush(`${CHAT_REDIS_KEY_PREFIX}${roomId}`, JSON.stringify(entry));
+          }
+        }
+      }
+    } while (cursor !== 0);
+  }
+
   private handleDisconnect(ws: ExtendedWebSocket): void {
     const userId = ws.userId;
     const roomId = ws.roomId;
     if (!userId || !roomId) return;
     logger.info('WS leave', { roomId, userId });
     this.removeFromMap(roomId, userId);
-    removePeerFromRoom(roomId, userId).catch(() => {});
-    setHandRaised(roomId, userId, false).catch(() => {});
+    removePeerFromRoom(roomId, userId).catch((e) =>
+      logger.error('removePeerFromRoom failed', { roomId, userId, err: String(e) }),
+    );
+    setHandRaised(roomId, userId, false).catch((e) =>
+      logger.error('setHandRaised failed', { roomId, userId, err: String(e) }),
+    );
+    // Clear heartbeat timer
+    const timer = this.heartbeatTimers.get(userId);
+    if (timer) {
+      clearInterval(timer);
+      this.heartbeatTimers.delete(userId);
+    }
     this.publish(roomId, { type: 'leave', userId, roomId });
   }
 
@@ -1140,5 +818,28 @@ export class WebSocketHandler {
 
   private isOpen(ws: WebSocket): boolean {
     return ws.readyState === WebSocket.OPEN;
+  }
+
+  /** Per-user token bucket for exempt messages. Returns true if allowed. */
+  private checkExemptRateLimit(userId: string, maxTokensPerSec: number): boolean {
+    const now = Date.now();
+    let bucket = this.exemptRateLimits.get(userId);
+    if (!bucket) {
+      bucket = { tokens: maxTokensPerSec, lastRefill: now };
+      this.exemptRateLimits.set(userId, bucket);
+    }
+    const elapsed = now - bucket.lastRefill;
+    if (elapsed >= 1000) {
+      bucket.tokens = maxTokensPerSec;
+      bucket.lastRefill = now;
+    }
+    if (bucket.tokens <= 0) return false;
+    bucket.tokens--;
+    return true;
+  }
+
+  /** Hard cap: 500 msg/sec total per WebSocket. */
+  private checkHardRateLimit(userId: string): boolean {
+    return this.checkExemptRateLimit(userId, 500);
   }
 }

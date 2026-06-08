@@ -7,14 +7,35 @@ let iceServers: RTCIceServer[] = [];
 const peerConnections = new Map<string, RTCPeerConnection>();
 /** ICE candidates received before setRemoteDescription completes (trickle race). */
 const pendingIceCandidates = new Map<string, RTCIceCandidateInit[]>();
+const pendingIceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const iceRestartAttempts = new Map<string, number>();
+const seenTrackIds = new Map<string, Set<string>>();
+/** Screen share MediaStreams per remote peer. */
+const screenStreams = new Map<string, MediaStream>();
+/** Local screen share senders per remote peer. */
+const screenSenders = new Map<string, RTCRtpSender>();
 const MAX_ICE_RESTARTS = 3;
+const MAX_PENDING_ICE = 50;
+const PENDING_ICE_TTL_MS = 30000;
 let localStream: MediaStream | null = null;
 
 function queueIceCandidate(userId: string, candidate: RTCIceCandidateInit) {
-  const q = pendingIceCandidates.get(userId) ?? [];
+  let q = pendingIceCandidates.get(userId);
+  if (!q) {
+    q = [];
+    pendingIceCandidates.set(userId, q);
+    // Set TTL timer
+    const timer = setTimeout(() => {
+      console.warn(`[RTCManager] ICE queue timeout for peer ${userId}`);
+      pendingIceCandidates.delete(userId);
+      pendingIceTimers.delete(userId);
+    }, PENDING_ICE_TTL_MS);
+    pendingIceTimers.set(userId, timer);
+  }
+  if (q.length >= MAX_PENDING_ICE) {
+    q.shift(); // Drop oldest on overflow
+  }
   q.push(candidate);
-  pendingIceCandidates.set(userId, q);
 }
 
 async function flushPendingIceCandidates(userId: string) {
@@ -23,8 +44,15 @@ async function flushPendingIceCandidates(userId: string) {
   const queued = pendingIceCandidates.get(userId);
   if (!queued?.length) return;
   pendingIceCandidates.delete(userId);
+  const timer = pendingIceTimers.get(userId);
+  if (timer) {
+    clearTimeout(timer);
+    pendingIceTimers.delete(userId);
+  }
   for (const c of queued) {
-    await connection.addIceCandidate(new RTCIceCandidate(c)).catch(() => {});
+    await connection.addIceCandidate(new RTCIceCandidate(c)).catch((e) => {
+      console.warn(`[RTCManager] addIceCandidate failed for ${userId}:`, e);
+    });
   }
 }
 
@@ -56,18 +84,9 @@ function attachLocalTracks(connection: RTCPeerConnection, stream: MediaStream | 
   const audioTracks = stream.getAudioTracks();
   const videoTracks = stream.getVideoTracks();
   
-  // Log for debugging
-  console.log('[RTCManager] attachLocalTracks:', {
-    audioCount: audioTracks.length,
-    videoCount: videoTracks.length,
-    audioEnabled: audioTracks.map(t => t.enabled),
-    videoEnabled: videoTracks.map(t => t.enabled),
-  });
-  
   audioTracks.forEach((track) => {
     const alreadySending = connection.getSenders().some((sender) => sender.track?.id === track.id);
     if (!alreadySending) {
-      console.log('[RTCManager] Adding audio track:', track.id, 'enabled:', track.enabled);
       connection.addTrack(track, stream);
     }
   });
@@ -75,7 +94,6 @@ function attachLocalTracks(connection: RTCPeerConnection, stream: MediaStream | 
   videoTracks.forEach((track) => {
     const alreadySending = connection.getSenders().some((sender) => sender.track?.id === track.id);
     if (!alreadySending) {
-      console.log('[RTCManager] Adding video track:', track.id, 'enabled:', track.enabled);
       connection.addTrack(track, stream);
     }
   });
@@ -93,9 +111,7 @@ export const RTCManager = {
 
   setLocalStream(stream: MediaStream | null) {
     localStream = stream;
-    console.log(`[RTCManager] setLocalStream: ${stream ? 'stream set' : 'null'}, tracks=${stream?.getTracks().length ?? 0}`);
     peerConnections.forEach((connection, userId) => {
-      console.log(`[RTCManager] setLocalStream: attaching to peer ${userId}`);
       attachLocalTracks(connection, stream);
     });
   },
@@ -108,16 +124,12 @@ export const RTCManager = {
     userId: string,
     stream: MediaStream | null,
   ): Promise<{ connection: RTCPeerConnection; created: boolean }> {
-    console.log(`[RTCManager] createPeer: ${userId}, stream=${stream ? 'present' : 'null'}, tracks=${stream?.getTracks().length ?? 0}`);
-    
     if (peerConnections.has(userId)) {
       const connection = peerConnections.get(userId)!;
-      console.log(`[RTCManager] createPeer: reusing existing connection for ${userId}`);
       attachLocalTracks(connection, stream ?? localStream);
       return { connection, created: false };
     }
     const connection = new RTCPeerConnection({ iceServers });
-    console.log(`[RTCManager] createPeer: created new connection for ${userId}`);
     attachLocalTracks(connection, stream ?? localStream);
 
     connection.ontrack = (event) => {
@@ -125,6 +137,35 @@ export const RTCManager = {
       if (!peer) return;
 
       const track = event.track;
+      // Robust dedup: Safari can fire ontrack multiple times for the same track
+      let peerSeen = seenTrackIds.get(userId);
+      if (!peerSeen) {
+        peerSeen = new Set();
+        seenTrackIds.set(userId, peerSeen);
+      }
+      if (peerSeen.has(track.id)) return;
+      peerSeen.add(track.id);
+
+      // Use the peer's screen flag (set via media-state signaling) to distinguish
+      // camera from screen share. This survives renegotiation / ICE restarts unlike
+      // a track counter which would misclassify new camera tracks.
+      if (track.kind === 'video' && peer.screen) {
+        let ss = screenStreams.get(userId);
+        if (!ss) {
+          ss = new MediaStream();
+          screenStreams.set(userId, ss);
+        }
+        if (!ss.getTracks().some((t) => t.id === track.id)) {
+          ss.addTrack(track);
+        }
+        store.set(peerAtomFamily(userId), {
+          ...peer,
+          screenStream: ss,
+        });
+        return;
+      }
+
+      // Camera / audio track — merge into peer.stream as before
       const incoming = event.streams[0];
       let merged = peer.stream ?? null;
 
@@ -208,13 +249,8 @@ export const RTCManager = {
     const connection = peerConnections.get(userId);
     if (!connection) return;
     
-    // Prevent creating a new offer if we're already in the middle of negotiation
-    // This prevents double-offer collisions when a peer reconnects
     const signalingState = connection.signalingState;
-    if (signalingState !== 'stable') {
-      console.warn(`[RTC] Skipping offer - signaling state is ${signalingState}`);
-      return;
-    }
+    if (signalingState !== 'stable') return;
     
     const offer = await connection.createOffer({
       offerToReceiveAudio: true,
@@ -249,11 +285,25 @@ export const RTCManager = {
       queueIceCandidate(userId, candidate);
       return;
     }
-    void connection.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+    void connection.addIceCandidate(new RTCIceCandidate(candidate)).catch((e) => {
+      console.warn(`[RTCManager] addIceCandidate failed for ${userId}:`, e);
+    });
   },
 
   removePeer(userId: string) {
     pendingIceCandidates.delete(userId);
+    const timer = pendingIceTimers.get(userId);
+    if (timer) {
+      clearTimeout(timer);
+      pendingIceTimers.delete(userId);
+    }
+    seenTrackIds.delete(userId);
+    const ss = screenStreams.get(userId);
+    if (ss) {
+      ss.getTracks().forEach((t) => t.stop());
+      screenStreams.delete(userId);
+    }
+    screenSenders.delete(userId);
     const connection = peerConnections.get(userId);
     if (connection) {
       connection.close();
@@ -272,25 +322,16 @@ export const RTCManager = {
 
   replaceTrack(kind: 'audio' | 'video' | string, track: MediaStreamTrack | null) {
     peerConnections.forEach((connection, userId) => {
-      console.log(`[RTCManager] replaceTrack for ${userId}: kind=${kind}, track=${track?.id ?? 'null'}, enabled=${track?.enabled}`);
-      
       const transceivers = connection.getTransceivers();
       const transceiver = transceivers.find((t) => t.receiver?.track?.kind === kind || t.sender?.track?.kind === kind);
-      // In cases where we have a transceiver that was created blindly from offerToReceive*, 
-      // t.sender.track might be null, but t.receiver.track.kind is reliably what the m= line is typed as.
       
       if (!transceiver) {
-        console.log(`[RTCManager] replaceTrack: no transceiver found for ${userId}, kind=${kind}`);
-        // Fallback if not found by kind, we can rely on order: audio index 0, video index 1 usually.
-        // But the best fallback is to just addTrack and trigger negotiation.
         if (track && localStream) {
           connection.addTrack(track, localStream);
         }
         return;
       }
 
-      console.log(`[RTCManager] replaceTrack: found transceiver, direction=${transceiver.direction}, sender.track=${transceiver.sender.track?.id}`);
-      
       if (track) {
         transceiver.sender.replaceTrack(track).catch(() => {});
         
@@ -303,16 +344,48 @@ export const RTCManager = {
           }
         }
       } else {
-        // If track is null (muting), we still need to ensure the direction allows sending
         if (transceiver.direction !== 'sendrecv' && transceiver.direction !== 'sendonly') {
           try {
             transceiver.direction = 'sendrecv';
-          } catch (err){
-            console.error(err);
+          } catch {
+            // Some browsers complain if changing direction, but usually it works
           }
         }
       }
     });
+  },
+
+  /**
+   * Add a screen share track to all peer connections (separate transceiver).
+   * This does NOT replace the camera — both camera and screen are sent simultaneously.
+   */
+  addScreenTrack(track: MediaStreamTrack, stream: MediaStream) {
+    peerConnections.forEach((connection, userId) => {
+      const sender = connection.addTrack(track, stream);
+      screenSenders.set(userId, sender);
+    });
+  },
+
+  /**
+   * Remove screen share track from all peer connections and renegotiate.
+   */
+  removeScreenTrack() {
+    peerConnections.forEach((connection, userId) => {
+      const sender = screenSenders.get(userId);
+      if (sender) {
+        connection.removeTrack(sender);
+        screenSenders.delete(userId);
+      }
+    });
+    // Clear remote screen streams
+    screenStreams.forEach((ss, userId) => {
+      ss.getTracks().forEach((t) => t.stop());
+      const peer = store.get(peerAtomFamily(userId));
+      if (peer) {
+        store.set(peerAtomFamily(userId), { ...peer, screenStream: null });
+      }
+    });
+    screenStreams.clear();
   },
 
   /** Rebuild remote MediaStream from RTP receivers (replaceTrack does not fire ontrack). */

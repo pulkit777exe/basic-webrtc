@@ -288,25 +288,24 @@ export const MediaManager = {
     RTCManager.replaceTrack('audio', audioTrack);
   },
 
-  async startScreenShare() {
+  async startScreenShare(audio = false) {
     screenStream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
-      audio: { suppressLocalAudioPlayback: false } as MediaTrackConstraints,
+      audio: audio ? { suppressLocalAudioPlayback: false } as MediaTrackConstraints : false,
     });
     const [videoTrack] = screenStream.getVideoTracks();
     videoTrack.onended = () => MediaManager.stopScreenShare();
     const current = store.get(localMediaAtom);
     store.set(localMediaAtom, { ...current, screen: true });
-    RTCManager.replaceTrack('video', videoTrack);
+    RTCManager.addScreenTrack(videoTrack, screenStream);
   },
 
   stopScreenShare() {
     screenStream?.getTracks().forEach((t) => t.stop());
     screenStream = null;
     const current = store.get(localMediaAtom);
-    const videoTrack = current.stream?.getVideoTracks()[0];
     store.set(localMediaAtom, { ...current, screen: false });
-    RTCManager.replaceTrack('video', videoTrack ?? null);
+    RTCManager.removeScreenTrack();
   },
 
   stop() {

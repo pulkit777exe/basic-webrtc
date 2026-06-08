@@ -1,5 +1,5 @@
 import { atom } from "jotai";
-import { atomFamily } from "jotai/utils";
+import { atomFamily, selectAtom } from "jotai/utils";
 
 export interface WaitingParticipant {
   id: string;
@@ -45,6 +45,7 @@ export interface PeerState {
   userId: string;
   user: { id: string; name: string; avatarUrl?: string | null };
   stream: MediaStream | null;
+  screenStream: MediaStream | null;
   video: boolean;
   audio: boolean;
   screen: boolean;
@@ -125,14 +126,13 @@ export const peerListAtom = atom((get) => {
     .map((id) => get(peerAtomFamily(id)))
     .filter((p): p is PeerState => p !== null);
 });
-/** @deprecated Use peerAtomFamily / peerIdsAtom / peerListAtom instead */
-export const peersAtom = peerListAtom;
 export const localMediaAtom = atom<LocalMedia>({
   stream: null,
   video: true,
   audio: true,
   screen: false,
 });
+export const shareScreenAudioAtom = atom<boolean>(false);
 const MAX_CHAT_MESSAGES = 500;
 export const chatAtom = atom<Message[]>([]);
 export const appendChatAtom = atom(null, (get, set, update: Message) => {
@@ -208,17 +208,23 @@ export interface HandRaisedEntry {
   timestamp: number;
 }
 
+/** Derived atom family that only tracks handRaised state per peer,
+ *  avoiding full peer state recomputation on every change. */
+const handRaisedStateFamily = atomFamily((userId: string) =>
+  atom((get) => {
+    const peer = get(peerAtomFamily(userId));
+    if (!peer?.handRaised || peer.handRaisedAt == null) return null;
+    return { raised: true, at: peer.handRaisedAt, name: peer.user.name };
+  })
+);
+
 export const handRaisedQueueAtom = atom((get) => {
   const ids = get(peerIdsAtom);
   const entries: HandRaisedEntry[] = [];
   for (const id of ids) {
-    const peer = get(peerAtomFamily(id));
-    if (peer?.handRaised && peer.handRaisedAt != null) {
-      entries.push({
-        userId: peer.userId,
-        name: peer.user.name,
-        timestamp: peer.handRaisedAt,
-      });
+    const state = get(handRaisedStateFamily(id));
+    if (state) {
+      entries.push({ userId: id, name: state.name, timestamp: state.at });
     }
   }
   entries.sort((a, b) => a.timestamp - b.timestamp);
