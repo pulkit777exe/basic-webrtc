@@ -1,5 +1,4 @@
 import type { WebSocket } from 'ws';
-import type { Signal } from '../../lib/signals';
 import { getParticipant } from '../../lib/redis-rooms';
 
 export interface ExtendedWebSocket extends WebSocket {
@@ -34,11 +33,14 @@ export interface WebSocketHandlerMethods {
 
   startRoomRecording(roomId: string, userId: string): Promise<string | null>;
   stopRoomRecording(roomId: string): Promise<boolean>;
+  persistChatToRedis(roomId: string, entry: ChatBufferEntry): Promise<void>;
+  drainChatRedisBuffer(roomId: string): Promise<ChatBufferEntry[]>;
 }
 
 export interface HandlerContext {
   ws: ExtendedWebSocket;
-  signal: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- signal is dynamic JSON from WS clients; handlers validate via String()/?? defaults
+  signal: Record<string, any>;
   userId: string;
   roomId: string;
   handler: WebSocketHandlerMethods;

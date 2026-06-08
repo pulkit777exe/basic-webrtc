@@ -5,64 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1769440735340,
-      "tag": "0000_black_nighthawk",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1769440800000,
-      "tag": "0001_production_schema",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1772637563446,
-      "tag": "0002_careful_wrecking_crew",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1773119227743,
-      "tag": "0003_first_blade",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1773288000000,
-      "tag": "0004_password_reset_tokens",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1773295200000,
-      "tag": "0005_otp_code_hash_length",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1773302400000,
-      "tag": "0006_account_recovery_and_sessions",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1773313200000,
-      "tag": "0007_auth_security_and_2fa",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1773324000000,
-      "tag": "0008_profile_account_oauth",
+      "when": 1780898669644,
+      "tag": "0000_shiny_colonel_america",
       "breakpoints": true
     }
   ]

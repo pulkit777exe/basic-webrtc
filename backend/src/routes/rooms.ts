@@ -96,7 +96,7 @@ router.post('/', authenticateToken, async (req: Request, res: Response): Promise
       title = 'Meeting',
       isLocked = false,
       passcode,
-      maxParticipants = 50,
+      maxParticipants = parseInt(process.env.MAX_PARTICIPANTS || '10', 10),
       waitingRoomEnabled = false,
       muteOnJoin = false,
     } = req.body;
@@ -104,7 +104,7 @@ router.post('/', authenticateToken, async (req: Request, res: Response): Promise
     const roomId = generateRoomId();
     const normalizedTitle = String(title).slice(0, 255) || 'Meeting';
     const normalizedLocked = Boolean(isLocked);
-    const normalizedMaxParticipants = Math.min(100, Math.max(1, Number(maxParticipants) || 50));
+    const normalizedMaxParticipants = Math.min(100, Math.max(1, Number(maxParticipants) || 10));
     const normalizedMuteOnJoin = Boolean(muteOnJoin);
     const normalizedWaitingRoomEnabled = Boolean(waitingRoomEnabled);
     const passcodeHash = passcode ? await bcrypt.hash(String(passcode), SALT_ROUNDS) : null;

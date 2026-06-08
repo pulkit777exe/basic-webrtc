@@ -91,7 +91,7 @@ const OAUTH_LINK_STATE_WINDOW_SECONDS = 10 * 60;
 const cookieOptions = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
-  sameSite: 'strict' as const,
+  sameSite: 'lax' as const,
   maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 

@@ -47,38 +47,50 @@ export const rooms = pgTable('rooms', {
   title: varchar('title', { length: 255 }).notNull().default('Meeting'),
   isLocked: boolean('is_locked').notNull().default(false),
   passcodeHash: varchar('passcode_hash', { length: 255 }),
-  maxParticipants: integer('max_participants').notNull().default(50),
+  maxParticipants: integer('max_participants').notNull().default(10),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
   endedAt: timestamp('ended_at'),
   status: varchar('status', { length: 20 }).notNull().default('active'),
 });
 
-export const roomParticipants = pgTable('room_participants', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  roomId: varchar('room_id', { length: 10 })
-    .notNull()
-    .references(() => rooms.id, { onDelete: 'cascade' }),
-  userId: uuid('user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  role: roomRoleEnum('role').notNull(),
-  joinedAt: timestamp('joined_at').notNull().defaultNow(),
-  leftAt: timestamp('left_at'),
-});
+export const roomParticipants = pgTable(
+  'room_participants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    roomId: varchar('room_id', { length: 10 })
+      .notNull()
+      .references(() => rooms.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    role: roomRoleEnum('role').notNull(),
+    joinedAt: timestamp('joined_at').notNull().defaultNow(),
+    leftAt: timestamp('left_at'),
+  },
+  (table) => ({
+    roomUserIdx: index('idx_rp_room_user').on(table.roomId, table.userId),
+  }),
+);
 
-export const messages = pgTable('messages', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  roomId: varchar('room_id', { length: 10 })
-    .notNull()
-    .references(() => rooms.id, { onDelete: 'cascade' }),
-  userId: uuid('user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  content: text('content').notNull(),
-  type: messageTypeEnum('type').notNull().default('text'),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-});
+export const messages = pgTable(
+  'messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    roomId: varchar('room_id', { length: 10 })
+      .notNull()
+      .references(() => rooms.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    content: text('content').notNull(),
+    type: messageTypeEnum('type').notNull().default('text'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    roomCreatedAtIdx: index('idx_messages_room_id').on(table.roomId, desc(table.createdAt)),
+  }),
+);
 
 export const roomSettings = pgTable('room_settings', {
   roomId: varchar('room_id', { length: 10 })

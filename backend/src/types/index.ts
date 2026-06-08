@@ -47,7 +47,7 @@ export interface WSMessage {
     | 'mute-all'
     | 'lock-room'
     | 'unlock-room';
-  payload: any;
+  payload: Record<string, unknown>;
 }
 
 export interface JoinRoomPayload {

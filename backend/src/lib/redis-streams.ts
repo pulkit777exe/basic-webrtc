@@ -1,6 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { redis } from '../config/redis.js';
 
+// Upstash Redis client doesn't expose stream methods (xadd, xrange, xtrim) in its type definitions.
+// These casts are required until Upstash adds stream command types.
+
 function streamKey(roomId: string): string {
   return `signals:${roomId}`;
 }
@@ -25,11 +28,9 @@ export async function readSignals(
   count: number = 100,
 ): Promise<Array<{ id: string; payload: object }>> {
   const key = streamKey(roomId);
-  const entries = await (redis as any).xrange(key, '-', '+', count);
-  const typed = entries as any;
-  return typed.map((entry: any[]) => {
-    const [id, fields] = entry;
-    const payloadIdx = fields.findIndex((f: string) => f === 'payload');
+  const entries: Array<[string, string[]]> = await (redis as any).xrange(key, '-', '+', count);
+  return entries.map(([id, fields]) => {
+    const payloadIdx = fields.findIndex((f) => f === 'payload');
     const payload = payloadIdx >= 0 ? JSON.parse(fields[payloadIdx + 1]) : {};
     return { id, payload };
   });

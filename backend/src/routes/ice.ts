@@ -23,15 +23,15 @@ const getStunServers = (): IceServerConfig[] => {
   return customStun.map((url) => ({ urls: url.trim() }));
 };
 
-const getTurnServers = (ip: string): IceServerConfig[] => {
+const getTurnServers = (): IceServerConfig[] => {
   const turnConfigs = process.env.TURN_SERVERS?.split(',').filter(Boolean) || [];
   const turnSecret = process.env.TURN_SECRET;
 
   if (!turnConfigs.length || !turnSecret) return [];
 
-  const ttlSec = parseInt(process.env.TURN_TTL_SEC || '86400', 10);
+  const ttlSec = parseInt(process.env.TURN_TTL_SEC || '300', 10);
   const expiry = Math.floor(Date.now() / 1000) + ttlSec;
-  const username = `${expiry}:${ip || 'user'}`;
+  const username = `${expiry}:${crypto.randomUUID()}`;
 
   const hmac = createHmac('sha1', turnSecret);
   hmac.update(username);
@@ -45,12 +45,10 @@ const getTurnServers = (ip: string): IceServerConfig[] => {
   }));
 };
 
-router.get('/', (req: Request, res: Response) => {
-  const clientIp = req.ip ?? req.socket.remoteAddress ?? 'user';
-
+router.get('/', (_req: Request, res: Response) => {
   const iceServers: IceServerConfig[] = [
     ...getStunServers(),
-    ...getTurnServers(clientIp),
+    ...getTurnServers(),
   ];
 
   res.json({

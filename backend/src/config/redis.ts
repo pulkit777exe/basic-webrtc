@@ -100,7 +100,7 @@ export async function checkRateLimit(
   if (currentCount >= maxRequests) {
     const ttlResult = await redis.zrange(key, 0, 0, { withScores: true });
     const oldest =
-      ttlResult.length >= 2 ? Math.floor(parseFloat(String((ttlResult as any[])[1]))) : now;
+      ttlResult.length >= 2 ? Math.floor(parseFloat(String((ttlResult as unknown[])[1]))) : now;
     const resetIn = Math.max(0, oldest + windowSeconds - now);
     return { allowed: false, remaining: 0, resetIn };
   }

@@ -37,7 +37,12 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 4000;
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000'];
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5173', 'http://localhost:3000'];
+
+if (process.env.NODE_ENV === 'production' && !process.env.ALLOWED_ORIGINS) {
+  logger.error('ALLOWED_ORIGINS must be set in production');
+  process.exit(1);
+}
 
 configureTrustProxy(app);
 setupSecurity(app);
@@ -149,10 +154,12 @@ server.on('upgrade', (request, socket, head) => {
       userId: string;
       roomId: string;
       isWaiting?: boolean;
+      roomToken?: string;
     };
     extWs.userId = payload.userId;
     extWs.roomId = payload.roomId;
     extWs.isWaiting = payload.waiting === true;
+    extWs.roomToken = token;
     wss.emit('connection', ws, request);
   });
 });
@@ -207,18 +214,27 @@ server.listen(PORT, () => {
   startExportWorker(); // Start account export worker
   startDeletionWorker(); // Start account deletion worker
 
-  // Seed bloom filter from existing usernames in the database
+  // Seed bloom filter from existing usernames in the database (batch to avoid loading all rows at once)
   (async () => {
     try {
-      const rows = await db.select({ email: users.email }).from(users);
-      for (const row of rows) {
-        const username = row.email.split('@')[0];
-        if (username) addUsername(username);
+      let count = 0;
+      const BATCH_SIZE = 500;
+      let offset = 0;
+      while (true) {
+        const batch = await db.select({ email: users.email }).from(users).limit(BATCH_SIZE).offset(offset);
+        if (batch.length === 0) break;
+        for (const row of batch) {
+          const username = row.email.split('@')[0];
+          if (username) addUsername(username);
+        }
+        count += batch.length;
+        offset += BATCH_SIZE;
+        if (batch.length < BATCH_SIZE) break;
       }
       markSeeded();
-      console.log(`[BloomFilter] Seeded with ${rows.length} usernames`);
+      logger.info(`[BloomFilter] Seeded with ${count} usernames`);
     } catch (err) {
-      console.error('[BloomFilter] Seeding failed, login bloom check disabled', err);
+      logger.error('[BloomFilter] Seeding failed, login bloom check disabled', { err: String(err) });
     }
   })();
 });

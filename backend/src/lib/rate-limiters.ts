@@ -14,8 +14,8 @@ function createStore(prefix: string): RedisStore {
       if (cmd === 'EVALSHA') {
         try {
           return await redis.evalsha(scriptOrSha, keys, evalArgs);
-        } catch (err: any) {
-          if (err.message && err.message.includes('NOSCRIPT')) {
+        } catch (err: unknown) {
+          if (err instanceof Error && err.message && err.message.includes('NOSCRIPT')) {
             throw err;
           }
           throw err;

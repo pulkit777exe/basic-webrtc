@@ -256,7 +256,7 @@ router.get(
   async (req: Request<{ sessionId: string }>, res: Response): Promise<void> => {
     try {
       const { sessionId } = req.params;
-      const userId = (req as any).user!.id;
+      const userId = req.user!.id;
 
       const sessions = await db
         .select()
