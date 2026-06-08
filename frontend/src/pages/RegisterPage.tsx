@@ -8,6 +8,8 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { Mail, Lock, User } from 'lucide-react';
+import GoogleIcon from '@/assets/GoogleIcon';
+import { API_BASE_URL } from '@/lib/api';
 
 const VERIFY_EMAIL_STORAGE_KEY = 'pendingVerificationEmail';
 
@@ -140,6 +142,16 @@ export function RegisterPage() {
                 disabled={loading}
               >
                 {loading ? 'Creating account...' : 'Sign up'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 w-full rounded-xl"
+                onClick={() => {
+                  window.location.href = `${API_BASE_URL}/api/oauth/google`;
+                }}
+              >
+                Continue with Google <GoogleIcon className="text-white" />
               </Button>
             </form>
 

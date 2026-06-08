@@ -11,7 +11,7 @@ export function RoomCaptionsOverlay() {
 
   return (
     <div className="pointer-events-none fixed bottom-24 left-1/2 z-30 w-[min(720px,calc(100vw-2rem))] -translate-x-1/2 sm:bottom-28">
-      <div className="pointer-events-auto max-h-40 overflow-y-auto rounded-xl border border-(--room-border) bg-(--room-header)/95 px-3 py-2 backdrop-blur-md">
+      <div role="log" aria-live="polite" aria-label="Live captions" className="pointer-events-auto max-h-40 overflow-y-auto rounded-xl border border-(--room-border) bg-(--room-header)/95 px-3 py-2 backdrop-blur-md">
         {captions.length === 0 ? (
           <p className="text-center text-xs text-(--room-muted)">Listening for speech…</p>
         ) : (

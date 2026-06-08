@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -61,6 +61,9 @@ import {
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { InviteModal } from "@/components/InviteModal";
+import { VideoGridErrorBoundary } from "@/components/room/VideoGridErrorBoundary";
+import { ChatErrorBoundary } from "@/components/room/ChatErrorBoundary";
+import { ControlsErrorBoundary } from "@/components/room/ControlsErrorBoundary";
 
 function formatElapsed(seconds: number): string {
   const mins = Math.floor(seconds / 60)
@@ -239,24 +242,44 @@ export function RoomPage() {
     });
   }, [localMedia.audio, localMedia.screen, localMedia.video]);
 
+  const audioActivityRef = useRef<{
+    context: AudioContext;
+    analyser: AnalyserNode;
+    source: MediaStreamAudioSourceNode | null;
+    animationFrame: number;
+  } | null>(null);
+
   useEffect(() => {
     if (!localMedia.stream) return;
     const audioTrack = localMedia.stream.getAudioTracks()[0];
     if (!audioTrack) return;
 
+    // Create AudioContext and AnalyserNode once per session
+    if (!audioActivityRef.current) {
+      const context = new AudioContext();
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 256;
+      audioActivityRef.current = { context, analyser, source: null, animationFrame: 0 };
+    }
+
+    const { context, analyser } = audioActivityRef.current;
+
+    // Disconnect previous source if any
+    if (audioActivityRef.current.source) {
+      audioActivityRef.current.source.disconnect();
+    }
+
     const activityStream = new MediaStream([audioTrack]);
-    const context = new AudioContext();
-    const analyser = context.createAnalyser();
-    analyser.fftSize = 256;
     const source = context.createMediaStreamSource(activityStream);
     source.connect(analyser);
+    audioActivityRef.current.source = source;
+
     const levels = new Uint8Array(analyser.frequencyBinCount);
-    let animationFrame = 0;
     let previous = 0;
 
     const tick = () => {
       if (!localMedia.audio) {
-        animationFrame = requestAnimationFrame(tick);
+        audioActivityRef.current!.animationFrame = requestAnimationFrame(tick);
         return;
       }
       analyser.getByteFrequencyData(levels);
@@ -268,16 +291,20 @@ export function RoomPage() {
         previous = now;
         WSManager.send({ type: "audio-activity", level, speaking });
       }
-      animationFrame = requestAnimationFrame(tick);
+      audioActivityRef.current!.animationFrame = requestAnimationFrame(tick);
     };
 
-    animationFrame = requestAnimationFrame(tick);
+    audioActivityRef.current.animationFrame = requestAnimationFrame(tick);
 
     return () => {
-      cancelAnimationFrame(animationFrame);
+      cancelAnimationFrame(audioActivityRef.current!.animationFrame);
       source.disconnect();
-      analyser.disconnect();
-      context.close().catch(() => {});
+      // Suspend when muted, resume when unmuted — don't close the context
+      if (!localMedia.audio) {
+        context.suspend().catch(() => {});
+      } else {
+        context.resume().catch(() => {});
+      }
     };
   }, [localMedia.audio, localMedia.stream]);
 
@@ -533,7 +560,7 @@ export function RoomPage() {
   const peerList = peers;
   const participantCount = Math.max(participants.length, peerList.length + 1);
 
-  function togglePin(participantId: string) {
+  const togglePin = useCallback((participantId: string) => {
     setPinnedParticipants((current) => {
       const next = new Set(current);
       if (next.has(participantId)) {
@@ -544,7 +571,7 @@ export function RoomPage() {
       next.add(participantId);
       return next;
     });
-  }
+  }, [setPinnedParticipants]);
 
   function toggleRecording() {
     if (!isHost) return;
@@ -605,6 +632,9 @@ export function RoomPage() {
           <div className="flex items-center gap-2">
             <Badge className="rounded-full border-0 bg-(--room-elevated) text-(--room-text) hover:bg-(--room-elevated)">
               {participantCount} participant{participantCount > 1 ? "s" : ""}
+              {participantCount > 6 && (
+                <span className="ml-1 text-amber-500" title="Performance may degrade with many participants">⚠</span>
+              )}
             </Badge>
             {recording.active && (
               <Badge className="rounded-full border-0 bg-red-500/90 text-white hover:bg-red-500/90">
@@ -710,62 +740,68 @@ export function RoomPage() {
         ref={gridRef}
         className="relative flex-1 overflow-hidden px-3 pb-24 pt-3 sm:px-6 sm:pb-28 sm:pt-4"
       >
-        <RoomVideoGrid
-          localUser={user}
-          localStream={localMedia.stream}
-          localVideo={localMedia.video}
-          localAudio={localMedia.audio}
-          localScreen={localMedia.screen}
-          peers={peerList}
-          layoutMode={layoutMode}
-          selfViewMode={selfViewMode}
-          pinnedParticipants={pinnedParticipants}
-          speakingPeers={speakingPeers}
-          activeSpeakerId={activeSpeakerId}
-          audioOutputDeviceId={audioOutputDeviceId}
-          onTogglePin={togglePin}
-        />
+        <VideoGridErrorBoundary>
+          <RoomVideoGrid
+            localUser={user}
+            localStream={localMedia.stream}
+            localVideo={localMedia.video}
+            localAudio={localMedia.audio}
+            localScreen={localMedia.screen}
+            peers={peerList}
+            layoutMode={layoutMode}
+            selfViewMode={selfViewMode}
+            pinnedParticipants={pinnedParticipants}
+            speakingPeers={speakingPeers}
+            activeSpeakerId={activeSpeakerId}
+            audioOutputDeviceId={audioOutputDeviceId}
+            onTogglePin={togglePin}
+          />
+        </VideoGridErrorBoundary>
       </div>
 
       <div
         ref={controlBarRef}
         className="pointer-events-none fixed bottom-4 left-1/2 z-40 -translate-x-1/2 sm:bottom-6"
       >
-        <RoomControlBar
-          chatHasUnread={chatUnread}
-          chatOpen={ui.chatOpen}
-          participantsOpen={ui.participantsOpen}
-          layoutMode={layoutMode}
-          selfViewMode={selfViewMode}
-          isHost={isHost}
-          isRecording={recording.active}
-          captionsEnabled={captionsEnabled}
-          onToggleChat={() => {
-            const opening = !ui.chatOpen;
-            setUi({ ...ui, chatOpen: opening, participantsOpen: false });
-            if (opening) setChatUnread(false);
-          }}
-          onToggleParticipants={() =>
-            setUi({
-              ...ui,
-              participantsOpen: !ui.participantsOpen,
-              chatOpen: false,
-            })
-          }
-          onLayoutModeChange={setLayoutMode}
-          onSelfViewModeChange={setSelfViewMode}
-          onToggleCaptions={toggleCaptions}
-          onToggleRecording={toggleRecording}
-          onLeave={() => {
-            navigate("/dashboard", { replace: true });
-          }}
-        />
+        <ControlsErrorBoundary>
+          <RoomControlBar
+            chatHasUnread={chatUnread}
+            chatOpen={ui.chatOpen}
+            participantsOpen={ui.participantsOpen}
+            layoutMode={layoutMode}
+            selfViewMode={selfViewMode}
+            isHost={isHost}
+            isRecording={recording.active}
+            captionsEnabled={captionsEnabled}
+            onToggleChat={() => {
+              const opening = !ui.chatOpen;
+              setUi({ ...ui, chatOpen: opening, participantsOpen: false });
+              if (opening) setChatUnread(false);
+            }}
+            onToggleParticipants={() =>
+              setUi({
+                ...ui,
+                participantsOpen: !ui.participantsOpen,
+                chatOpen: false,
+              })
+            }
+            onLayoutModeChange={setLayoutMode}
+            onSelfViewModeChange={setSelfViewMode}
+            onToggleCaptions={toggleCaptions}
+            onToggleRecording={toggleRecording}
+            onLeave={() => {
+              navigate("/dashboard", { replace: true });
+            }}
+          />
+        </ControlsErrorBoundary>
       </div>
 
       {ui.chatOpen && (
-        <RoomChatSidebar
-          onClose={() => setUi({ ...ui, chatOpen: false })}
-        />
+        <ChatErrorBoundary>
+          <RoomChatSidebar
+            onClose={() => setUi({ ...ui, chatOpen: false })}
+          />
+        </ChatErrorBoundary>
       )}
       {ui.participantsOpen && (
         <RoomParticipantsPanel

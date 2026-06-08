@@ -125,7 +125,7 @@ export function RoomChatSidebar({ onClose }: { onClose: () => void }) {
           <p className="mt-1 text-[10px] text-(--room-muted)">by {pinnedMessage.authorName}</p>
         </div>
       )}
-      <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
+      <div ref={listRef} role="log" aria-live="polite" aria-label="Chat messages" className="flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
         {messages.map((m) => (
           <div
             key={m.id}
