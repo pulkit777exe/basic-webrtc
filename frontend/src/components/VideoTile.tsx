@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { ExternalLink, MicOff, Monitor, PictureInPicture2, Pin, PinOff, VideoOff } from 'lucide-react';
+import { ExternalLink, Fullscreen, MicOff, Monitor, PictureInPicture2, Pin, PinOff, VideoOff } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -20,6 +20,7 @@ export interface VideoTileProps {
   /** Browser PiP for this tile's video (intended for remote camera/screen). */
   onEnterPiP?: () => void;
   onPopOutScreen?: (participantId: string) => void;
+  onFullscreen?: () => void;
   registerVideoElement?: (participantId: string, element: HTMLVideoElement | null) => void;
   audioOutputDeviceId?: string | null;
   className?: string;
@@ -40,6 +41,7 @@ export function VideoTile({
   onTogglePin,
   onEnterPiP,
   onPopOutScreen,
+  onFullscreen,
   registerVideoElement,
   audioOutputDeviceId,
   className,
@@ -69,12 +71,13 @@ export function VideoTile({
 
   const streamBindKey = useMemo(() => {
     if (!stream) return '';
-    return stream
+    return `${stream.id}:${stream.getTracks().length}:${stream
       .getTracks()
       .map((t) => `${t.id}:${t.kind}:${t.readyState}:${t.enabled}`)
-      .join('|');
+      .join('|')}`;
   }, [
-    stream,
+    stream?.id,
+    stream?.getTracks().length,
   ]);
 
   useEffect(() => {
@@ -110,6 +113,8 @@ export function VideoTile({
 
   return (
     <div
+      role="group"
+      aria-label={`Video of ${name}`}
       className={cn(
         'group relative aspect-video overflow-hidden rounded-2xl border bg-(--room-strong) transition-all duration-300',
         isPinned ? 'border-cyan-400 ring-2 ring-cyan-400/45' : 'border-(--room-border)',
@@ -122,6 +127,7 @@ export function VideoTile({
         autoPlay
         playsInline
         muted={isLocal}
+        aria-label={`Video of ${name}`}
         className={cn(
           'absolute inset-0 h-full w-full',
           isScreenShare ? 'object-contain bg-black' : 'object-cover',
@@ -145,6 +151,18 @@ export function VideoTile({
               <Monitor className="mr-1 h-3.5 w-3.5" />
               Sharing
             </Badge>
+            {onFullscreen && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="h-7 w-7 rounded-full border border-white/20 bg-black/45 text-white hover:bg-black/65"
+                onClick={onFullscreen}
+                title="Fullscreen"
+              >
+                <Fullscreen className="h-3.5 w-3.5" />
+              </Button>
+            )}
             {onPopOutScreen && (
               <Button
                 type="button"

@@ -36,6 +36,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 export function RoomControlBar({
   chatOpen,
@@ -78,6 +86,7 @@ export function RoomControlBar({
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
   const [videoInputs, setVideoInputs] = useState<MediaDeviceInfo[]>([]);
   const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([]);
+  const [screenShareModalOpen, setScreenShareModalOpen] = useState(false);
 
   const selectedMicId = useMemo(() => stream?.getAudioTracks()[0]?.getSettings().deviceId ?? '', [stream]);
   const selectedCameraId = useMemo(() => stream?.getVideoTracks()[0]?.getSettings().deviceId ?? '', [stream]);
@@ -104,13 +113,23 @@ export function RoomControlBar({
         MediaManager.stopScreenShare();
         return;
       }
-      await MediaManager.startScreenShare();
+      setScreenShareModalOpen(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Unable to share screen');
+    }
+  }
+
+  async function startScreenShareWithAudio(withAudio: boolean) {
+    setScreenShareModalOpen(false);
+    try {
+      await MediaManager.startScreenShare(withAudio);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Unable to share screen');
     }
   }
 
   return (
+    <>
     <TooltipProvider>
       <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-(--room-border) bg-(--room-header) px-2 py-2 shadow-2xl backdrop-blur-xl sm:gap-2 sm:px-3">
         <Tooltip>
@@ -120,6 +139,7 @@ export function RoomControlBar({
               size="icon"
               className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${audio ? '' : 'bg-(--room-elevated)'}`}
               onClick={() => MediaManager.toggleAudio()}
+              aria-label={audio ? 'Mute microphone' : 'Unmute microphone'}
             >
               {audio ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-rose-400" />}
             </Button>
@@ -133,6 +153,7 @@ export function RoomControlBar({
               size="icon"
               className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${video ? '' : 'bg-(--room-elevated)'}`}
               onClick={() => MediaManager.toggleVideo()}
+              aria-label={video ? 'Turn off camera' : 'Turn on camera'}
             >
               {video ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4 text-rose-400" />}
             </Button>
@@ -146,6 +167,7 @@ export function RoomControlBar({
               size="icon"
               className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${screen ? 'bg-cyan-500/30 text-cyan-200' : ''}`}
               onClick={handleScreenShare}
+              aria-label={screen ? 'Stop sharing screen' : 'Share screen'}
             >
               <Monitor className="h-4 w-4" />
             </Button>
@@ -163,6 +185,7 @@ export function RoomControlBar({
                 setUi((prev) => ({ ...prev, handRaised: next }));
                 WSManager.send({ type: 'hand_raise', raised: next });
               }}
+              aria-label={ui.handRaised ? 'Lower hand' : 'Raise hand'}
             >
               <Hand className="h-4 w-4" />
             </Button>
@@ -176,7 +199,8 @@ export function RoomControlBar({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)  "
+                  className="h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)"
+                  aria-label="Device settings"
                 >
                   <Settings2 className="h-4 w-4" />
                 </Button>
@@ -301,12 +325,13 @@ export function RoomControlBar({
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
-              variant={captionsEnabled ? 'secondary' : 'ghost'}
-              size="icon"
-              className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${captionsEnabled ? 'bg-(--room-elevated)' : ''}`}
-              onClick={onToggleCaptions}
-            >
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${captionsEnabled ? 'bg-(--room-elevated)' : ''}`}
+                  onClick={onToggleCaptions}
+                  aria-label={captionsEnabled ? 'Hide captions' : 'Show live captions'}
+                >
               <Captions className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
@@ -319,6 +344,7 @@ export function RoomControlBar({
               size="icon"
               className={`relative h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${chatOpen ? 'bg-(--room-elevated)' : ''}`}
               onClick={onToggleChat}
+              aria-label="Toggle chat"
             >
               <MessageSquare className="h-4 w-4" />
               {chatHasUnread && !chatOpen ? (
@@ -341,6 +367,7 @@ export function RoomControlBar({
               size="icon"
               className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${participantsOpen ? 'bg-(--room-elevated)' : ''}`}
               onClick={onToggleParticipants}
+              aria-label="Toggle participants panel"
             >
               <Users className="h-4 w-4" />
             </Button>
@@ -355,6 +382,7 @@ export function RoomControlBar({
                 size="icon"
                 className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${isRecording ? 'animate-pulse bg-red-500 text-white hover:bg-red-600 hover:text-white' : ''}`}
                 onClick={onToggleRecording}
+                aria-label={isRecording ? 'Stop recording' : 'Start recording'}
               >
                 <Circle className="h-4 w-4" />
               </Button>
@@ -369,6 +397,7 @@ export function RoomControlBar({
               size="icon"
               className="h-10 w-10 rounded-full bg-rose-500 text-white hover:bg-rose-600"
               onClick={onLeave}
+              aria-label="Leave call"
             >
               <PhoneOff className="h-4 w-4" />
             </Button>
@@ -377,5 +406,26 @@ export function RoomControlBar({
         </Tooltip>
       </div>
     </TooltipProvider>
+
+    <Dialog open={screenShareModalOpen} onOpenChange={setScreenShareModalOpen}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Share Screen</DialogTitle>
+          <DialogDescription>
+            Do you want to share system audio with your screen?
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex-row gap-2 sm:justify-end">
+          <Button variant="outline" onClick={() => startScreenShareWithAudio(false)}>
+            Without audio
+          </Button>
+          <Button onClick={() => startScreenShareWithAudio(true)}>
+            <Volume2 className="mr-1.5 h-4 w-4" />
+            With audio
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

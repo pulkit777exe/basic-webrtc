@@ -8,6 +8,7 @@ interface GridParticipant {
   id: string;
   name: string;
   stream: MediaStream | null;
+  screenStream: MediaStream | null;
   audio: boolean;
   video: boolean;
   screen: boolean;
@@ -76,6 +77,7 @@ export function RoomVideoGrid({
       id: localUser?.id ?? 'local',
       name: localUser?.name ?? 'You',
       stream: localStream,
+      screenStream: null,
       audio: localAudio,
       video: localVideo,
       screen: localScreen,
@@ -91,6 +93,7 @@ export function RoomVideoGrid({
         id: peer.userId,
         name: peer.user.name,
         stream: peer.stream,
+        screenStream: peer.screenStream ?? null,
         audio: peer.audio,
         video: peer.video,
         screen: peer.screen,
@@ -101,8 +104,23 @@ export function RoomVideoGrid({
   );
 
   const visibleParticipants = useMemo(() => {
-    const all = selfViewMode === 'grid' ? [localParticipant, ...remoteParticipants] : remoteParticipants;
-    return [...all].sort((a, b) => Number(pinnedParticipants.has(b.id)) - Number(pinnedParticipants.has(a.id)));
+    const base = selfViewMode === 'grid' ? [localParticipant, ...remoteParticipants] : remoteParticipants;
+    // Expand peers with screen share into two tiles: camera + screen
+    const expanded: GridParticipant[] = [];
+    for (const p of base) {
+      expanded.push(p);
+      if (p.screen && p.screenStream && !p.isLocal) {
+        expanded.push({
+          ...p,
+          id: `${p.id}__screen`,
+          name: `${p.name} (Screen)`,
+          stream: p.screenStream,
+          screenStream: null,
+          screen: true,
+        });
+      }
+    }
+    return [...expanded].sort((a, b) => Number(pinnedParticipants.has(b.id)) - Number(pinnedParticipants.has(a.id)));
   }, [localParticipant, pinnedParticipants, remoteParticipants, selfViewMode]);
 
   useEffect(() => {
@@ -238,13 +256,23 @@ export function RoomVideoGrid({
           ? () => void enterPiPForParticipant(participant.id)
           : undefined
       }
+      onFullscreen={
+        participant.screen && participant.stream
+          ? () => {
+              const el = videoElementsRef.current.get(participant.id);
+              if (el && el.requestFullscreen) {
+                el.requestFullscreen().catch(() => {});
+              }
+            }
+          : undefined
+      }
       onPopOutScreen={
         participant.screen && participant.stream
           ? () => {
               const popup = window.open('', '_blank', 'width=960,height=540');
               if (!popup) return;
               popup.document.write(
-                '<!doctype html><html><head><title>Shared screen</title><style>html,body{margin:0;background:#000;height:100%}video{width:100%;height:100%;object-fit:contain;background:#000}</style></head><body><video id="screen" autoplay playsinline controls></video></body></html>'
+                '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src \'self\' \'unsafe-inline\'; media-src blob: mediastream:;"><title>Shared screen</title><style>html,body{margin:0;background:#000;height:100%}video{width:100%;height:100%;object-fit:contain;background:#000}</style></head><body><video id="screen" autoplay playsinline controls></video></body></html>'
               );
               popup.document.close();
               const video = popup.document.getElementById('screen') as HTMLVideoElement | null;
