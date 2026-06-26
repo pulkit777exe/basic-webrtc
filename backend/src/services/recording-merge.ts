@@ -3,20 +3,22 @@ import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import { execSync } from 'child_process';
 
-// Configure FFmpeg path
+let ffmpegAvailable = false;
+
+// Configure FFmpeg path lazily
 try {
   const ffmpegPath = process.env.FFMPEG_PATH || (process.platform === 'win32' ? 'ffmpeg' : '');
   if (ffmpegPath) {
     ffmpeg.setFfmpegPath(ffmpegPath);
+    ffmpegAvailable = true;
   } else {
-    // Linux/macOS: Try to find FFmpeg in PATH
     execSync('which ffmpeg');
+    ffmpegAvailable = true;
   }
-} catch (error) {
-  console.error(
-    'FFmpeg not found. Please install FFmpeg and ensure it is in PATH or set FFMPEG_PATH environment variable.',
+} catch {
+  console.warn(
+    'FFmpeg not found. Recording merge will be unavailable. Install FFmpeg or set FFMPEG_PATH to enable.',
   );
-  throw new Error('FFmpeg is required for recording merge functionality');
 }
 
 export interface TrackInfo {
@@ -113,6 +115,9 @@ export async function mergeRecordings(
   sessionId: string,
   tracks: TrackInfo[],
 ): Promise<string> {
+  if (!ffmpegAvailable) {
+    throw new Error('FFmpeg is required for recording merge functionality');
+  }
   // Validate track paths to prevent FFmpeg command injection
   const RECORDINGS_DIR = process.env.RECORDINGS_DIR || 'recordings';
   const expectedDir = path.join(RECORDINGS_DIR, roomId, sessionId);
