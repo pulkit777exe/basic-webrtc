@@ -14,7 +14,6 @@ import {
   isHostAtom,
   layoutModeAtom,
   recordingAtom,
-  recordingUploadsAtom,
   roomAtom,
   roomLockedAtom,
   roomTokenAtom,
@@ -50,6 +49,7 @@ import { Button } from "@/components/ui/button";
 import {
   ChevronLeft,
   Clock,
+  Download,
   Lock,
   MessageSquare,
   Unlock,
@@ -107,19 +107,21 @@ export function RoomPage() {
   const setChatReactions = useSetAtom(chatReactionsAtom);
   const setPinnedChatMessage = useSetAtom(pinnedChatMessageAtom);
   const setCaptions = useSetAtom(captionsAtom);
-  const setRecordingUploads = useSetAtom(recordingUploadsAtom);
   const recordingManagerRef = useRef<{
-    startRecording: (stream: MediaStream) => void;
-    stopAndUpload: (
-      roomId: string,
-      participantId: string,
-      roomToken: string,
-      sessionId: string,
-      onProgress?: (progressPercent: number) => void,
-    ) => Promise<void>;
+    startRecording: (stream: MediaStream, key: string) => void;
+    stopAndSave: () => Promise<{
+      key: string;
+      blob: Blob;
+      mimeType: string;
+      size: number;
+      createdAt: number;
+    } | null>;
   } | null>(null);
   const localRecordingRef = useRef(false);
-  const recordingUploadInFlightRef = useRef(false);
+  const [completedRecording, setCompletedRecording] = useState<{
+    key: string;
+    size: number;
+  } | null>(null);
   const pushToTalkRef = useRef(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const slateRef = useRef<HTMLDivElement>(null);
@@ -198,13 +200,13 @@ export function RoomPage() {
       RTCManager.disconnectAll();
       MediaManager.stop();
       setPinnedParticipants(new Set());
-      setRecordingUploads(new Map());
       setRecording({
         active: false,
         startedAt: null,
         uploading: false,
         sessionId: null,
       });
+      setCompletedRecording(null);
       setParticipants([]);
       setChat([]);
       setChatUnread(false);
@@ -226,7 +228,6 @@ export function RoomPage() {
     setPinnedChatMessage,
     setPinnedParticipants,
     setRecording,
-    setRecordingUploads,
   ]);
 
   useEffect(() => {
@@ -456,6 +457,7 @@ export function RoomPage() {
 
   useEffect(() => {
     if (!recording.active || !localMedia.stream) return;
+    setCompletedRecording(null);
     let cancelled = false;
     (async () => {
       if (!recordingManagerRef.current) {
@@ -465,7 +467,8 @@ export function RoomPage() {
       }
       if (cancelled) return;
       try {
-        recordingManagerRef.current!.startRecording(localMedia.stream!);
+        const key = `recording-${roomId}-${user?.id}-${Date.now()}`;
+        recordingManagerRef.current!.startRecording(localMedia.stream!, key);
         localRecordingRef.current = true;
       } catch (error: unknown) {
         toast.error(
@@ -479,62 +482,30 @@ export function RoomPage() {
     return () => {
       cancelled = true;
     };
-  }, [localMedia.stream, recording.active]);
+  }, [localMedia.stream, recording.active, roomId, user?.id]);
 
   useEffect(() => {
     if (
       recording.active ||
       !localRecordingRef.current ||
-      recordingUploadInFlightRef.current
-    )
-      return;
-    if (
-      !roomId ||
-      !roomToken ||
-      !user?.id ||
-      !recording.sessionId ||
       !recordingManagerRef.current
     )
       return;
-    recordingUploadInFlightRef.current = true;
-    setRecording((current) => ({ ...current, uploading: true }));
+    localRecordingRef.current = false;
     recordingManagerRef.current
-      .stopAndUpload(roomId, user.id, roomToken, recording.sessionId, (progressPercent) => {
-        WSManager.send({
-          type: "recording_upload_progress",
-          participantId: user.id,
-          progress: progressPercent,
-        });
-      })
-      .then(() => {
-        WSManager.send({
-          type: "recording_upload_progress",
-          participantId: user.id,
-          progress: 100,
-        });
+      .stopAndSave()
+      .then((result) => {
+        if (result) {
+          setCompletedRecording({ key: result.key, size: result.size });
+          toast.success("Recording saved. Click download to save it to your device.");
+        }
       })
       .catch((error: unknown) => {
         toast.error(
-          error instanceof Error ? error.message : "Recording upload failed",
+          error instanceof Error ? error.message : "Recording save failed",
         );
-      })
-      .finally(() => {
-        localRecordingRef.current = false;
-        recordingUploadInFlightRef.current = false;
-        setRecording((current) => ({
-          ...current,
-          uploading: false,
-          sessionId: null,
-        }));
       });
-  }, [
-    recording.active,
-    recording.sessionId,
-    roomId,
-    roomToken,
-    setRecording,
-    user?.id,
-  ]);
+  }, [recording.active]);
 
   useGSAP(
     () => {
@@ -579,7 +550,6 @@ export function RoomPage() {
       WSManager.send({ type: "recording_stop" });
       return;
     }
-    setRecordingUploads(new Map());
     WSManager.send({ type: "recording_start", startedAt: Date.now() });
   }
 
@@ -641,6 +611,23 @@ export function RoomPage() {
                 <span className="mr-1.5 inline-block h-2 w-2 animate-pulse rounded-full bg-white" />
                 REC {formatElapsed(recordingSeconds)}
               </Badge>
+            )}
+            {completedRecording && !recording.active && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 rounded-full bg-emerald-500/90 text-white hover:bg-emerald-600/90"
+                onClick={async () => {
+                  const { RecordingManager } = await import("@/lib/RecordingManager");
+                  const ok = await RecordingManager.downloadRecording(
+                    completedRecording.key,
+                  );
+                  if (!ok) toast.error("Recording not found");
+                }}
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download
+              </Button>
             )}
             {isHost && (
               <Button

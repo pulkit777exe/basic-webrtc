@@ -1,15 +1,14 @@
-const CHUNK_SIZE = 5 * 1024 * 1024;
-const MAX_UPLOAD_RETRIES = 3;
-const RETRY_DELAYS_MS = [800, 1500, 3000];
-const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+const DB_NAME = 'webrtc-recordings';
+const DB_VERSION = 1;
+const STORE_NAME = 'recordings';
 
-function openRecordingsDb(): Promise<IDBDatabase> {
+function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('webrtc-recordings', 1);
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains('chunks')) {
-        db.createObjectStore('chunks');
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -17,38 +16,54 @@ function openRecordingsDb(): Promise<IDBDatabase> {
   });
 }
 
-async function saveChunkBackup(key: string, chunk: Blob): Promise<void> {
-  const db = await openRecordingsDb();
+async function saveRecording(key: string, blob: Blob): Promise<void> {
+  const db = await openDb();
   await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction('chunks', 'readwrite');
-    const store = tx.objectStore('chunks');
-    store.put(chunk, key);
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(blob, key);
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error('Failed to store chunk backup'));
+    tx.onerror = () => reject(tx.error ?? new Error('Failed to save recording'));
   });
   db.close();
 }
 
-async function removeChunkBackup(key: string): Promise<void> {
-  const db = await openRecordingsDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction('chunks', 'readwrite');
-    const store = tx.objectStore('chunks');
-    store.delete(key);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error('Failed to cleanup chunk backup'));
+async function getRecording(key: string): Promise<Blob | null> {
+  const db = await openDb();
+  const result = await new Promise<Blob | null>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).get(key);
+    req.onsuccess = () => resolve(req.result ?? null);
+    req.onerror = () => reject(req.error ?? new Error('Failed to get recording'));
   });
   db.close();
+  return result;
+}
+
+async function deleteRecording(key: string): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error('Failed to delete recording'));
+  });
+  db.close();
+}
+
+export interface RecordingResult {
+  key: string;
+  blob: Blob;
+  mimeType: string;
+  size: number;
+  createdAt: number;
 }
 
 export class RecordingManager {
   private mediaRecorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
-  private recordingPromise: Promise<void> | null = null;
+  private recordingPromise: Promise<RecordingResult | null> | null = null;
+  private currentKey: string | null = null;
 
-  /**
-   * Stop the recorder without uploading (e.g. swap to a new MediaStream while the room is still recording).
-   */
   discardAndStop(): void {
     if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') {
       this.mediaRecorder = null;
@@ -66,26 +81,34 @@ export class RecordingManager {
     this.chunks = [];
   }
 
-  startRecording(stream: MediaStream) {
+  startRecording(stream: MediaStream, key: string) {
     this.discardAndStop();
     this.chunks = [];
+    this.currentKey = key;
 
     const hasVideo = stream.getVideoTracks().length > 0;
     const hasAudio = stream.getAudioTracks().length > 0;
-    const mimeCandidates = hasVideo
-      ? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
-      : ['audio/webm;codecs=opus', 'audio/webm'];
-    const mimeType = mimeCandidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? '';
 
-    const options: MediaRecorderOptions = {
-      ...(mimeType ? { mimeType } : {}),
-    };
-    if (hasVideo) {
-      options.videoBitsPerSecond = 8_000_000;
-    }
-    if (hasAudio) {
-      options.audioBitsPerSecond = 128_000;
-    }
+    // Safari only supports mp4; Chrome/Firefox support webm
+    const mimeCandidates = hasVideo
+      ? [
+          'video/webm;codecs=vp9,opus',
+          'video/webm;codecs=vp8,opus',
+          'video/webm',
+          'video/mp4',
+        ]
+      : [
+          'audio/webm;codecs=opus',
+          'audio/webm',
+          'audio/mp4',
+        ];
+
+    const mimeType = mimeCandidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? '';
+
+    const options: MediaRecorderOptions = {};
+    if (mimeType) options.mimeType = mimeType;
+    if (hasVideo) options.videoBitsPerSecond = 8_000_000;
+    if (hasAudio) options.audioBitsPerSecond = 128_000;
 
     this.mediaRecorder = new MediaRecorder(stream, options);
 
@@ -96,30 +119,34 @@ export class RecordingManager {
     this.mediaRecorder.start(1000);
   }
 
-  async stopAndUpload(
-    roomId: string,
-    participantId: string,
-    roomToken: string,
-    sessionId: string,
-    onProgress?: (progressPercent: number) => void
-  ): Promise<void> {
-    if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') return;
+  async stopAndSave(): Promise<RecordingResult | null> {
+    if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') return null;
     if (this.recordingPromise) return this.recordingPromise;
 
     const recorder = this.mediaRecorder;
-    if (!recorder) return;
+    const key = this.currentKey;
+    if (!recorder || !key) return null;
 
-    this.recordingPromise = new Promise<void>((resolve, reject) => {
+    this.recordingPromise = new Promise<RecordingResult | null>((resolve) => {
       recorder.onstop = async () => {
         try {
           const mime = recorder.mimeType || 'video/webm';
           const blob = new Blob(this.chunks, { type: mime });
-          await this.uploadInChunks(blob, roomId, participantId, roomToken, sessionId, onProgress);
-          resolve();
+          const result: RecordingResult = {
+            key,
+            blob,
+            mimeType: mime,
+            size: blob.size,
+            createdAt: Date.now(),
+          };
+          await saveRecording(key, blob);
+          resolve(result);
         } catch (error) {
-          reject(error);
+          console.error('Failed to save recording:', error);
+          resolve(null);
         } finally {
           this.recordingPromise = null;
+          this.chunks = [];
         }
       };
       recorder.stop();
@@ -128,68 +155,25 @@ export class RecordingManager {
     return this.recordingPromise;
   }
 
-  private async uploadInChunks(
-    blob: Blob,
-    roomId: string,
-    participantId: string,
-    roomToken: string,
-    sessionId: string,
-    onProgress?: (progressPercent: number) => void
-  ) {
-    const totalChunks = Math.ceil(blob.size / CHUNK_SIZE);
-    if (!totalChunks) {
-      onProgress?.(100);
-      return;
-    }
+  static async downloadRecording(key: string, filename?: string): Promise<boolean> {
+    const blob = await getRecording(key);
+    if (!blob) return false;
 
-    for (let index = 0; index < totalChunks; index++) {
-      const chunk = blob.slice(index * CHUNK_SIZE, (index + 1) * CHUNK_SIZE);
-      const backupKey = `${roomId}:${participantId}:${index}`;
-      await saveChunkBackup(backupKey, chunk);
-      await this.uploadChunkWithRetry(chunk, roomId, participantId, roomToken, sessionId, index, totalChunks);
-      await removeChunkBackup(backupKey);
-      onProgress?.(((index + 1) / totalChunks) * 100);
-    }
+    const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+    const name = filename ?? `recording-${key}.${ext}`;
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return true;
   }
 
-  private async uploadChunkWithRetry(
-    chunk: Blob,
-    roomId: string,
-    participantId: string,
-    roomToken: string,
-    sessionId: string,
-    chunkIndex: number,
-    totalChunks: number
-  ) {
-    let attempt = 0;
-    while (attempt < MAX_UPLOAD_RETRIES) {
-      try {
-        const form = new FormData();
-        form.append('roomId', roomId);
-        form.append('sessionId', sessionId);
-        form.append('participantId', participantId);
-        form.append('chunkIndex', String(chunkIndex));
-        form.append('totalChunks', String(totalChunks));
-        form.append('chunk', chunk, `chunk_${chunkIndex}.webm`);
-        const response = await fetch(`${API_BASE}/api/recordings/chunk`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${roomToken}`,
-          },
-          credentials: 'include',
-          body: form,
-        });
-        if (!response.ok) {
-          throw new Error(`Chunk upload failed with status ${response.status}`);
-        }
-        return;
-      } catch (error) {
-        attempt++;
-        if (attempt >= MAX_UPLOAD_RETRIES) {
-          throw error;
-        }
-        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt - 1] ?? 3000));
-      }
-    }
+  static async deleteRecording(key: string): Promise<void> {
+    await deleteRecording(key);
   }
 }
