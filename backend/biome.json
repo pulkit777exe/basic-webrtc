@@ -1,0 +1,38 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.2/schema.json",
+	"files": {
+		"includes": ["**", "!**/dist", "!**/node_modules", "!**/drizzle"]
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": false,
+			"correctness": {
+				"noUnusedVariables": "warn",
+				"noUnusedImports": "warn",
+				"noUndeclaredVariables": "warn",
+				"noConstAssign": "error",
+				"noConstructorReturn": "error",
+				"noEmptyPattern": "error",
+				"noSelfAssign": "error",
+				"noSetterReturn": "error",
+				"noUnreachable": "warn",
+				"useIsNan": "error"
+			},
+			"suspicious": {
+				"noExplicitAny": "off"
+			}
+		}
+	},
+	"assist": {
+		"enabled": true,
+		"actions": {
+			"source": {
+				"organizeImports": "off"
+			}
+		}
+	},
+	"formatter": {
+		"enabled": false
+	}
+}

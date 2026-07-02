@@ -1,8 +1,11 @@
-name: Deploy to Production
+name: Deploy to Production (Self-Hosted)
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm'
+        required: true
 
 jobs:
   test:
@@ -32,7 +35,7 @@ jobs:
   deploy:
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.event.inputs.confirm == 'deploy'
     
     steps:
       - uses: actions/checkout@v3

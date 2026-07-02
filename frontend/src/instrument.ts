@@ -12,7 +12,7 @@ Sentry.init({
   environment: import.meta.env.MODE,
 
   integrations: [
-    Sentry.browserTracingIntegration({
+    Sentry.reactRouterBrowserTracingIntegration({
       useEffect: React.useEffect,
       useLocation,
       useNavigationType,

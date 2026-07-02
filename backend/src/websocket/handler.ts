@@ -5,7 +5,7 @@ import {
   messages,
   recordingSessions,
 } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { validateRoomId } from '../utils/validation';
 import {
   addPeerToRoom,
@@ -790,12 +790,16 @@ export class WebSocketHandler {
     if (!sessionId) {
       return false;
     }
-    await setRecordingState(roomId, {
-      ...currentState,
-      status: 'uploading',
-    });
+    // Mark as done immediately (recording is client-side; no server-side merge)
+    await setRecordingState(roomId, { status: 'done' });
+    await db
+      .update(recordingSessions)
+      .set({ status: 'done' })
+      .where(
+        and(eq(recordingSessions.roomId, roomId), eq(recordingSessions.sessionId, sessionId)),
+      );
     await publishSignal(roomId, {
-      type: 'recording_stop',
+      type: 'recording_done',
       sessionId,
     });
     this.publish(roomId, {

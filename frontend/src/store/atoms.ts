@@ -1,5 +1,5 @@
 import { atom } from "jotai";
-import { atomFamily, selectAtom } from "jotai/utils";
+import { atomFamily } from "jotai/utils";
 
 export interface WaitingParticipant {
   id: string;
@@ -116,7 +116,7 @@ export interface ConsentState {
 export const userAtom = atom<User | null>(null);
 export const roomAtom = atom<Room | null>(null);
 export const roomTokenAtom = atom<string | null>(null);
-export const peerAtomFamily = atomFamily((userId: string) =>
+export const peerAtomFamily = atomFamily((_userId: string) =>
   atom<PeerState | null>(null)
 );
 export const peerIdsAtom = atom<string[]>([]);

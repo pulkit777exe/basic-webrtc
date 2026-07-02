@@ -27,7 +27,6 @@ import { configureTrustProxy } from './config/scaling';
 import { closeDatabase, db } from './db';
 import { redis } from './config/redis';
 import { startCleanupJob } from './lib/cleanup-job';
-import { startRecordingWorker } from './jobs/recording-worker';
 import { startExportWorker } from './jobs/export-worker';
 import { startDeletionWorker } from './jobs/deletion-worker';
 import { addUsername, markSeeded } from './utils/bloomFilter';
@@ -210,7 +209,6 @@ server.listen(PORT, () => {
   console.log(`WebSocket server ready at ws://localhost:${PORT}/ws`);
   console.log(`Live captions (Deepgram) at ws://localhost:${PORT}/ws/live-captions`);
   startCleanupJob(); // Start stale room cleanup job
-  startRecordingWorker(); // Start recording merge worker
   startExportWorker(); // Start account export worker
   startDeletionWorker(); // Start account deletion worker
 

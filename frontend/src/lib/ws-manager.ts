@@ -215,6 +215,8 @@ function applyHostMute() {
 }
 
 let pingInterval: ReturnType<typeof setInterval> | null = null;
+let pongTimeout: ReturnType<typeof setTimeout> | null = null;
+let lastPongReceived = true;
 
 export const WSManager = {
   connect(roomToken: string) {
@@ -224,12 +226,27 @@ export const WSManager = {
 
     ws.onopen = () => {
       reconnectAttempts = 0;
-      // Start heartbeat
+      lastPongReceived = true;
+      // Start heartbeat — send ping every 25s, detect dead connection if no pong within 10s
       if (pingInterval) clearInterval(pingInterval);
+      if (pongTimeout) clearTimeout(pongTimeout);
       pingInterval = setInterval(() => {
+        if (!lastPongReceived) {
+          // Previous ping was never answered — connection is dead
+          console.warn("[WS] no pong received, connection considered dead");
+          if (ws) ws.close(4000, "pong timeout");
+          return;
+        }
+        lastPongReceived = false;
         if (ws?.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "ping" }));
         }
+        pongTimeout = setTimeout(() => {
+          if (!lastPongReceived && ws?.readyState === WebSocket.OPEN) {
+            console.warn("[WS] pong timeout after ping, closing");
+            ws.close(4000, "pong timeout");
+          }
+        }, 10000);
       }, 25000);
     };
 
@@ -241,7 +258,11 @@ export const WSManager = {
           targetUserId?: string;
         };
 
-        if (data.type === "pong") return;
+        if (data.type === "pong") {
+          lastPongReceived = true;
+          if (pongTimeout) { clearTimeout(pongTimeout); pongTimeout = null; }
+          return;
+        }
 
         if (data.type === "token_expired") {
           store.set(roomAtom, null);
@@ -578,6 +599,7 @@ export const WSManager = {
     ws.onclose = (event) => {
       ws = null;
       if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+      if (pongTimeout) { clearTimeout(pongTimeout); pongTimeout = null; }
       if (event.code !== 1000 || !event.wasClean) {
         console.error("[WS] socket closed", {
           code: event.code,
@@ -587,8 +609,18 @@ export const WSManager = {
         });
       }
       if (reconnectAttempts < MAX_RECONNECT) {
+        // Clear stale peer state so fresh join messages rebuild cleanly
+        // (handles Render cold-start where server in-memory state is wiped)
+        RTCManager.disconnectAll();
+        store.set(participantsAtom, []);
+        store.set(peerIdsAtom, []);
+        store.set(speakingPeersAtom, new Set());
+        store.set(pinnedParticipantsAtom, new Set());
+        store.set(activeSpeakerAtom, null);
+
         const delay = DELAYS[Math.min(reconnectAttempts, DELAYS.length - 1)] + Math.random() * 1000;
         reconnectAttempts++;
+        toast.info("Reconnecting to room...");
         setTimeout(() => WSManager.connect(roomToken), delay);
       } else if (!intentionalDisconnect) {
         toast.error(
@@ -615,6 +647,7 @@ export const WSManager = {
     _pendingRoomSubs.forEach((unsub) => unsub());
     _pendingRoomSubs.clear();
     if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+    if (pongTimeout) { clearTimeout(pongTimeout); pongTimeout = null; }
     if (ws) {
       ws.close();
       ws = null;
