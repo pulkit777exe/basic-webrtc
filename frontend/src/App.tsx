@@ -1,5 +1,6 @@
 import { Suspense, lazy } from 'react';
 import type { ReactElement } from 'react';
+import * as Sentry from '@sentry/react';
 import { createBrowserRouter, RouterProvider, Outlet } from 'react-router-dom';
 import { Provider as JotaiProvider } from 'jotai';
 import { store } from '@/store';
@@ -51,7 +52,8 @@ function Layout() {
   );
 }
 
-const router = createBrowserRouter([
+const sentryCreateBrowserRouter = Sentry.wrapCreateBrowserRouterV7(createBrowserRouter);
+const router = sentryCreateBrowserRouter([
   {
     errorElement: <RouteErrorPage />,
     element: (
