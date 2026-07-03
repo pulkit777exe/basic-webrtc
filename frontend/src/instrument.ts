@@ -5,14 +5,14 @@ import {
   matchRoutes,
   useLocation,
   useNavigationType,
-} from "react-router-dom";
+} from "react-router";
 
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN,
   environment: import.meta.env.MODE,
 
   integrations: [
-    Sentry.reactRouterBrowserTracingIntegration({
+    Sentry.reactRouterV7BrowserTracingIntegration({
       useEffect: React.useEffect,
       useLocation,
       useNavigationType,
