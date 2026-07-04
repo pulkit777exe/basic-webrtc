@@ -1,5 +1,6 @@
 import express from 'express';
 import { createServer } from 'http';
+import * as Sentry from '@sentry/node';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import compression from 'compression';
@@ -73,12 +74,17 @@ app.use('/api/recordings', apiLimiter, recordingsRoutes);
 
 app.use(healthRouter);
 
+app.get('/debug-sentry', (_req, _res) => {
+  throw new Error('Sentry backend test error!');
+});
+
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
 });
 
 app.use(
   (err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    Sentry.captureException(err);
     const e = err as {
       status?: number;
       statusCode?: number;
