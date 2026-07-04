@@ -69,16 +69,14 @@ export function VideoTile({
       ? (!videoMuted || hasLiveRemoteVideo)
       : !videoMuted && hasLiveRemoteVideo);
 
+  const trackCount = stream?.getTracks().length ?? 0;
   const streamBindKey = useMemo(() => {
     if (!stream) return '';
-    return `${stream.id}:${stream.getTracks().length}:${stream
+    return `${stream.id}:${trackCount}:${stream
       .getTracks()
       .map((t) => `${t.id}:${t.kind}:${t.readyState}:${t.enabled}`)
       .join('|')}`;
-  }, [
-    stream?.id,
-    stream?.getTracks().length,
-  ]);
+  }, [stream, trackCount]);
 
   useEffect(() => {
     const el = videoRef.current;

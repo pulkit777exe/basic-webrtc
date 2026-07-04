@@ -1,5 +1,5 @@
 import { refreshParticipantTTL } from '../../lib/redis-rooms';
-import type { MessageHandler, HandlerContext } from './types';
+import type { MessageHandler } from './types';
 
 export const handleOffer: MessageHandler = async (ctx) => {
   ctx.handler.publish(ctx.roomId, { ...ctx.signal, from: ctx.userId, roomId: ctx.roomId });
