@@ -28,8 +28,10 @@ describe('getFrontendBaseUrl', () => {
   });
 
   it('returns a URL-like string', () => {
+    process.env.FRONTEND_URL = 'http://localhost:3000';
     const result = getFrontendBaseUrl();
     expect(result).toMatch(/^https?:\/\//);
+    delete process.env.FRONTEND_URL;
   });
 
   it('strips trailing slash', () => {
