@@ -56,7 +56,6 @@ export function LobbyPage() {
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
   const [selectedCamera, setSelectedCamera] = useState<string>("");
   const [selectedMic, setSelectedMic] = useState<string>("");
-  const [joining, setJoining] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [mediaErrors, setMediaErrors] = useState<MediaError>({});
@@ -153,8 +152,7 @@ export function LobbyPage() {
       if (width && height) setActiveResolution(`${width}×${height}`);
     })();
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCamera]);
+  }, [selectedCamera, videoEnabled]);
 
   useEffect(() => {
     if (!selectedMic || !streamRef.current) return;
@@ -179,8 +177,7 @@ export function LobbyPage() {
       analyserRef.current = analyser;
     })();
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMic]);
+  }, [selectedMic, audioEnabled]);
 
   const rafRef = useRef<number>(0);
   useEffect(() => {
@@ -232,16 +229,11 @@ export function LobbyPage() {
     });
   }
 
-  async function handleJoinNow() {
+  function handleJoinNow() {
     if (!roomId) return;
-    setJoining(true);
-    try {
-      sessionStorage.setItem('lobby_video', videoEnabled ? '1' : '0');
-      sessionStorage.setItem('lobby_audio', audioEnabled ? '1' : '0');
-      navigate(`/room/${roomId}`);
-    } finally {
-      setJoining(false);
-    }
+    sessionStorage.setItem('lobby_video', videoEnabled ? '1' : '0');
+    sessionStorage.setItem('lobby_audio', audioEnabled ? '1' : '0');
+    navigate(`/room/${roomId}`);
   }
 
   if (!room || !roomId) return null;
@@ -297,7 +289,7 @@ export function LobbyPage() {
                 autoPlay
                 muted
                 playsInline
-                className={`h-full w-full object-cover transform:scaleX(-1) ${!videoEnabled ? 'invisible' : ''}`}
+                className={`h-full w-full object-cover -scale-x-100 ${!videoEnabled ? 'invisible' : ''}`}
               />
               {!videoEnabled && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
@@ -328,6 +320,7 @@ export function LobbyPage() {
                     audioEnabled ? 'bg-white/20 text-white hover:bg-white/30' : 'bg-red-500/90 text-white hover:bg-red-600'
                   }`}
                   title={audioEnabled ? 'Mute microphone' : 'Unmute microphone'}
+                  aria-label={audioEnabled ? 'Mute microphone' : 'Unmute microphone'}
                 >
                   {audioEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
                 </button>
@@ -339,6 +332,7 @@ export function LobbyPage() {
                     videoEnabled ? 'bg-white/20 text-white hover:bg-white/30' : 'bg-red-500/90 text-white hover:bg-red-600'
                   }`}
                   title={videoEnabled ? 'Turn off camera' : 'Turn on camera'}
+                  aria-label={videoEnabled ? 'Turn off camera' : 'Turn on camera'}
                 >
                   {videoEnabled ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
                 </button>
@@ -428,9 +422,8 @@ export function LobbyPage() {
               <Button
                 className="h-11 w-full rounded-xl bg-(--meet-accent) text-white hover:bg-blue-600"
                 onClick={handleJoinNow}
-                disabled={joining}
               >
-                {joining ? "Joining…" : "Join now"}
+                Join now
               </Button>
             )}
           </CardContent>

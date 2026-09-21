@@ -582,6 +582,7 @@ export function RoomPage() {
               size="icon-sm"
               className="rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)"
               onClick={() => navigate("/dashboard", { replace: true })}
+              aria-label="Back to dashboard"
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
@@ -644,6 +645,7 @@ export function RoomPage() {
                   })
                 }
                 title="Waiting room"
+                aria-label={waitingParticipants.length > 0 ? `Waiting room, ${waitingParticipants.length} waiting` : "Waiting room"}
               >
                 <Clock className="h-4 w-4" />
                 {waitingParticipants.length > 0 && (
@@ -659,6 +661,7 @@ export function RoomPage() {
               variant="ghost"
               size="icon-sm"
               className={`relative rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${ui.chatOpen ? "bg-(--room-elevated)" : ""}`}
+              aria-label="Toggle chat"
               onClick={() => {
                 const opening = !ui.chatOpen;
                 setUi({
@@ -685,6 +688,7 @@ export function RoomPage() {
               variant="ghost"
               size="icon-sm"
               className={`rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${ui.participantsOpen ? "bg-(--room-elevated)" : ""}`}
+              aria-label="Toggle participants panel"
               onClick={() =>
                 setUi({
                   ...ui,
@@ -702,6 +706,7 @@ export function RoomPage() {
               className="rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)"
               onClick={() => setInviteModalOpen(true)}
               title={isHost ? "Invite people to this room" : "Only the host can invite others"}
+              aria-label={isHost ? "Invite people to this room" : "Only the host can invite others"}
             >
               <Link className="h-4 w-4" />
             </Button>
@@ -710,6 +715,7 @@ export function RoomPage() {
               size="icon-sm"
               className="rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)"
               onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+              aria-label={resolvedTheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
             >
               {resolvedTheme === 'dark' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
             </Button>

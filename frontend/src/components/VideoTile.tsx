@@ -157,6 +157,7 @@ export function VideoTile({
                 className="h-7 w-7 rounded-full border border-white/20 bg-black/45 text-white hover:bg-black/65"
                 onClick={onFullscreen}
                 title="Fullscreen"
+                aria-label="View fullscreen"
               >
                 <Fullscreen className="h-3.5 w-3.5" />
               </Button>
@@ -169,6 +170,7 @@ export function VideoTile({
                 className="h-7 w-7 rounded-full border border-white/20 bg-black/45 text-white hover:bg-black/65"
                 onClick={() => onPopOutScreen(participantId)}
                 title="Pop out shared screen"
+                aria-label="Pop out shared screen"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
               </Button>
@@ -179,7 +181,7 @@ export function VideoTile({
 
       <div className="absolute right-2.5 top-2.5 flex items-center gap-1.5">
         {handRaised && (
-          <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-amber-500/90 text-sm text-white shadow-lg" title="Hand raised">
+          <span role="img" aria-label="Hand raised" className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-amber-500/90 text-sm text-white shadow-lg" title="Hand raised">
             ✋
           </span>
         )}
@@ -188,9 +190,10 @@ export function VideoTile({
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="h-7 w-7 rounded-full border border-white/20 bg-black/45 text-white opacity-0 transition-opacity hover:bg-black/65 group-hover:opacity-100"
+            className="h-7 w-7 rounded-full border border-white/20 bg-black/45 text-white opacity-0 transition-opacity hover:bg-black/65 group-hover:opacity-100 group-focus-within:opacity-100"
             onClick={onEnterPiP}
             title="Picture-in-picture"
+            aria-label="Picture-in-picture"
           >
             <PictureInPicture2 className="h-3.5 w-3.5" />
           </Button>
@@ -201,11 +204,12 @@ export function VideoTile({
             variant="ghost"
             size="icon-sm"
             className={cn(
-              'h-7 w-7 rounded-full border border-white/20 bg-black/45 text-white opacity-0 transition-opacity hover:bg-black/65 group-hover:opacity-100',
+              'h-7 w-7 rounded-full border border-white/20 bg-black/45 text-white opacity-0 transition-opacity hover:bg-black/65 group-hover:opacity-100 group-focus-within:opacity-100',
               isPinned ? 'opacity-100' : ''
             )}
             onClick={() => onTogglePin(participantId)}
             title={isPinned ? 'Unpin participant' : 'Pin participant'}
+            aria-label={isPinned ? 'Unpin participant' : 'Pin participant'}
           >
             {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
           </Button>
