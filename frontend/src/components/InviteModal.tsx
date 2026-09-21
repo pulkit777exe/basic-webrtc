@@ -29,7 +29,7 @@ export function InviteModal({ roomId, roomTitle, open, onOpenChange }: InviteMod
     expiresAt: string;
   } | null>(null);
 
-  // Use ref to cache invite token across modal open/close cycles (Fix 5)
+  // Cache the invite token across modal open/close cycles
   const cachedInviteRef = useRef<CachedInvite | null>(null);
 
   const fetchInviteToken = useCallback(async (previousToken?: string) => {
@@ -87,7 +87,7 @@ export function InviteModal({ roomId, roomTitle, open, onOpenChange }: InviteMod
     }
   };
 
-  // Handle share for mobile (Fix 6)
+  // System share sheet on mobile
   const handleShare = async () => {
     if (inviteData?.inviteUrl) {
       try {
@@ -104,12 +104,12 @@ export function InviteModal({ roomId, roomTitle, open, onOpenChange }: InviteMod
     }
   };
 
-  // Handle regenerate with previous token (Fix 5)
+  // Regenerate, invalidating the previous token
   const handleRegenerate = () => {
     fetchInviteToken(cachedInviteRef.current?.token);
   };
 
-  // Get truncated path for display (Fix 6)
+  // Truncated path for display; full URL on hover
   const displayPath = inviteData?.inviteUrl
     ? new URL(inviteData.inviteUrl).pathname
     : "";
@@ -147,13 +147,13 @@ export function InviteModal({ roomId, roomTitle, open, onOpenChange }: InviteMod
                 <Input
                   readOnly
                   value={displayPath}
-                  title={inviteData.inviteUrl} // Show full URL on hover (Fix 6)
+                  title={inviteData.inviteUrl}
                   className="font-mono text-sm"
                 />
                 <Button size="icon" variant="outline" onClick={handleCopy}>
                   <Copy className="h-4 w-4" />
                 </Button>
-                {/* Share button for mobile (Fix 6) */}
+                {/* System share sheet (mobile browsers with Web Share API) */}
                 {typeof navigator.share === "function" && (
                   <Button size="icon" variant="outline" onClick={handleShare}>
                     <Share2 className="h-4 w-4" />

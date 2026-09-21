@@ -319,28 +319,6 @@ const handleRecordingStop: MessageHandler = async (ctx) => {
   }
 };
 
-const handleRecordingUploadProgress: MessageHandler = async (ctx) => {
-  ctx.handler.publish(ctx.roomId, { ...ctx.signal, from: ctx.userId, roomId: ctx.roomId });
-};
-
-const handleRecordingTrackOffset: MessageHandler = async (ctx) => {
-  const offset = ctx.signal.offset;
-  if (typeof offset !== 'number' || offset < 0) {
-    ctx.handler.sendError(ctx.ws, 'Invalid offset');
-    return;
-  }
-  try {
-    await redis.set(`recording:offset:${ctx.roomId}:${ctx.userId}`, offset, { ex: 86400 });
-  } catch (error) {
-    logger.error('Failed to store recording track offset', {
-      roomId: ctx.roomId,
-      userId: ctx.userId,
-      err: String(error),
-    });
-    ctx.handler.sendError(ctx.ws, 'Failed to store track offset');
-  }
-};
-
 // ── Misc ─────────────────────────────────────────────────────────
 
 const handleHandRaise: MessageHandler = async (ctx) => {
@@ -411,8 +389,6 @@ export const handlerRegistry = new Map<string, MessageHandler>([
   // Recording
   ['recording_start', handleRecordingStart],
   ['recording_stop', handleRecordingStop],
-  ['recording_upload_progress', handleRecordingUploadProgress],
-  ['recording_track_offset', handleRecordingTrackOffset],
   // Misc
   ['hand_raise', handleHandRaise],
   ['waiting', handleWaiting],

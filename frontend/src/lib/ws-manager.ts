@@ -14,7 +14,6 @@ import {
   pinnedParticipantsAtom,
   reactionsEnabledAtom,
   recordingAtom,
-  recordingUploadsAtom,
   roomAtom,
   roomLockedAtom,
   speakingPeersAtom,
@@ -62,11 +61,6 @@ type Signal =
   | { type: "room_locked"; locked: boolean }
   | { type: "recording_start"; startedAt: number; sessionId?: string }
   | { type: "recording_stop"; sessionId?: string }
-  | {
-      type: "recording_upload_progress";
-      participantId: string;
-      progress: number;
-    }
   | { type: "waiting"; action: "admit" | "deny"; userId: string }
   | {
       type: "waiting_room_join";
@@ -477,10 +471,8 @@ export const WSManager = {
           store.set(recordingAtom, {
             active: true,
             startedAt: data.startedAt ?? Date.now(),
-            uploading: false,
             sessionId: data.sessionId ?? null,
           });
-          store.set(recordingUploadsAtom, new Map());
           if (!recordingNoticeShown) {
             const me = store.get(userAtom)?.id;
             const participants = store.get(participantsAtom);
@@ -496,15 +488,8 @@ export const WSManager = {
           store.set(recordingAtom, (prev) => ({
             active: false,
             startedAt: null,
-            uploading: true,
             sessionId: data.sessionId ?? prev.sessionId,
           }));
-        } else if (data.type === "recording_upload_progress") {
-          store.set(recordingUploadsAtom, (current) => {
-            const next = new Map(current);
-            next.set(data.participantId, data.progress);
-            return next;
-          });
         } else if (data.type === "caption") {
           const participants = store.get(participantsAtom);
           const participant = participants.find(

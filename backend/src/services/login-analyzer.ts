@@ -1,7 +1,6 @@
 import { createHash } from 'crypto';
 import geoip from 'geoip-lite';
 import { and, desc, eq, gt } from 'drizzle-orm';
-import { redis } from '../config/redis.js';
 import { db } from '../db/index.js';
 import { loginEvents, userSessions } from '../db/schema.js';
 
@@ -28,7 +27,6 @@ const NEW_DEVICE_RISK = 30;
 const IMPOSSIBLE_TRAVEL_RISK = 60;
 const LONG_ABSENCE_RISK = 20;
 const UNUSUAL_HOUR_RISK = 15;
-const TOR_EXIT_RISK = 35;
 
 function deviceFingerprintFor(input: Pick<LoginContext, 'browser' | 'os' | 'deviceType'>): string {
   return createHash('sha256')
@@ -186,12 +184,6 @@ export async function analyzeLogin(context: LoginContext): Promise<SuspicionResu
   ) {
     reasons.push('UNUSUAL_LOGIN_TIME');
     riskScore += UNUSUAL_HOUR_RISK;
-  }
-
-  const isTorExit = await redis.sismember('torexits', context.ipAddress);
-  if (isTorExit) {
-    reasons.push('TOR_EXIT_NODE');
-    riskScore += TOR_EXIT_RISK;
   }
 
   riskScore = Math.min(100, riskScore);

@@ -1,6 +1,7 @@
 import bcrypt from 'bcrypt';
 import { createHash, randomBytes } from 'crypto';
 import { hashToken, getFrontendBaseUrl } from '../utils/crypto.js';
+import { cookieOptions } from '../utils/cookies.js';
 import { promises as fs } from 'fs';
 import multer from 'multer';
 import path from 'path';
@@ -87,13 +88,6 @@ const APP_NAME = process.env.TOTP_APP_NAME || 'Meetour';
 const AVATAR_UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
 const AVATAR_UPLOAD_DIR = path.resolve('uploads/avatars');
 const OAUTH_LINK_STATE_WINDOW_SECONDS = 10 * 60;
-
-const cookieOptions = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'lax' as const,
-  maxAge: 7 * 24 * 60 * 60 * 1000,
-};
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -263,8 +257,6 @@ function reasonLabel(reason: string): string {
       return 'This login follows a long period of inactivity';
     case 'UNUSUAL_LOGIN_TIME':
       return 'The sign-in time is unusual for your account';
-    case 'TOR_EXIT_NODE':
-      return 'Sign-in originated from a Tor exit node';
     default:
       return reason;
   }
@@ -1871,7 +1863,7 @@ router.post('/logout', async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    res.clearCookie('refreshToken');
+    res.clearCookie('refreshToken', cookieOptions);
     res.json({ message: 'Logged out successfully' });
   } catch (error) {
     console.error('[Logout Error]', error);
@@ -1920,7 +1912,7 @@ router.post(
 
       const isCurrent = req.authTokenHash === result.tokenHash;
       if (isCurrent) {
-        res.clearCookie('refreshToken');
+        res.clearCookie('refreshToken', cookieOptions);
       }
 
       res.status(200).json({ success: true, currentSessionRevoked: isCurrent });
@@ -1946,7 +1938,7 @@ router.post(
 
       if (!exceptCurrent) {
         await deleteRefreshSession(userId);
-        res.clearCookie('refreshToken');
+        res.clearCookie('refreshToken', cookieOptions);
       }
 
       res.status(200).json({ revokedCount });

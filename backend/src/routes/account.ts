@@ -11,6 +11,7 @@ import { deletionRequests, rooms, users } from '../db/schema';
 import { cancelDeletionJob, enqueueDeletion, enqueueExport } from '../jobs/account-jobs';
 import { invalidateAllSessionsForUser } from '../services/session';
 import { queueEmail } from '../services/email';
+import { cookieOptions } from '../utils/cookies';
 
 const router = Router();
 const ACCOUNT_DELETE_CONFIRMATION = 'DELETE MY ACCOUNT';
@@ -249,7 +250,7 @@ router.post('/delete', authenticateToken, async (req: Request, res: Response): P
       .where(eq(users.id, userId));
 
     await invalidateAllSessionsForUser(userId);
-    res.clearCookie('refreshToken');
+    res.clearCookie('refreshToken', cookieOptions);
 
     await queueEmail({
       to: passwordResult.user.email,

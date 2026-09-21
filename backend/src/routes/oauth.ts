@@ -5,6 +5,7 @@ import { generateAccessToken, generateRefreshToken } from '../utils/jwt.js';
 import { setRefreshSession } from '../config/redis.js';
 import { queueEmail } from '../services/email.js';
 import { hashToken, getFrontendBaseUrl } from '../utils/crypto.js';
+import { cookieOptions } from '../utils/cookies.js';
 
 type OAuthUser = {
   id: string;
@@ -63,12 +64,7 @@ router.get('/google/callback', (req, res, next) => {
       await setRefreshSession(user.id, hashToken(refreshToken));
       await createSessionForAccessToken(user.id, accessToken, req);
 
-      res.cookie('refreshToken', refreshToken, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-      });
+      res.cookie('refreshToken', refreshToken, cookieOptions);
 
       if (info?.linkedViaState) {
         try {

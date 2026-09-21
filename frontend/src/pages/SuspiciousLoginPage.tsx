@@ -34,8 +34,6 @@ function reasonToLabel(reason: string): string {
       return 'This login follows a long period of inactivity';
     case 'UNUSUAL_LOGIN_TIME':
       return 'This sign-in time is unusual for your account';
-    case 'TOR_EXIT_NODE':
-      return 'This sign-in came from a Tor exit node';
     default:
       return reason;
   }

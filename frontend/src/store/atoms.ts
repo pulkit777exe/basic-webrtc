@@ -167,18 +167,13 @@ export const roomLockedAtom = atom<boolean>(false);
 export const recordingAtom = atom<{
   active: boolean;
   startedAt: number | null;
-  uploading: boolean;
-  /** Set when the server starts a recording session (required for uploads) */
+  /** Set when the server starts a recording session */
   sessionId: string | null;
 }>({
   active: false,
   startedAt: null,
-  uploading: false,
   sessionId: null,
 });
-export const recordingUploadsAtom = atom<Map<string, number>>(
-  new Map<string, number>(),
-);
 export const mutedByHostAtom = atom<boolean>(false);
 export const pinnedChatMessageAtom = atom<PinnedChatMessage | null>(null);
 export const captionsEnabledAtom = atom<boolean>(false);

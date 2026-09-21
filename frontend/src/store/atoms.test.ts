@@ -149,7 +149,6 @@ describe('atoms', () => {
       const rec = store.get(recordingAtom);
       expect(rec.active).toBe(false);
       expect(rec.startedAt).toBeNull();
-      expect(rec.uploading).toBe(false);
       expect(rec.sessionId).toBeNull();
     });
 

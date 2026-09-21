@@ -439,7 +439,7 @@ export class WebSocketHandler {
       // easily exceed 50/s/room and were starving chat/captions.
       const exemptFromRoomBurstLimit = new Set<string>([
         'offer', 'answer', 'ice', 'ping', 'pong',
-        'media-state', 'audio-activity', 'recording_upload_progress', 'active_speaker',
+        'media-state', 'audio-activity', 'active_speaker',
       ]);
       if (!exemptFromRoomBurstLimit.has(signal.type)) {
         const count = await redis.incr(`ratelimit:room:${roomId}:messages`);

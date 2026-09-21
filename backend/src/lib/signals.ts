@@ -24,14 +24,6 @@ export type Signal =
   | { type: 'room_locked'; locked: boolean }
   | { type: 'recording_start'; startedAt: number; sessionId?: string }
   | { type: 'recording_stop'; sessionId?: string }
-  | {
-      type: 'recording_upload_progress';
-      participantId: string;
-      progress: number;
-    }
-  | { type: 'recording_track_offset'; participantId: string; offset: number }
-  | { type: 'recording_ready'; downloadUrl: string }
-  | { type: 'recording_failed'; error: string }
   | { type: 'media-state'; video: boolean; audio: boolean; screen: boolean }
   | { type: 'audio-activity'; level: number; speaking: boolean }
   | { type: 'active_speaker' }
@@ -94,10 +86,6 @@ export function isSignal(obj: unknown): obj is Signal {
     'room_locked',
     'recording_start',
     'recording_stop',
-    'recording_upload_progress',
-    'recording_track_offset',
-    'recording_ready',
-    'recording_failed',
     'media-state',
     'audio-activity',
     'active_speaker',

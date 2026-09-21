@@ -68,8 +68,6 @@ function reasonLabel(reason: string): string {
       return 'Login after long absence';
     case 'UNUSUAL_LOGIN_TIME':
       return 'Unusual login time';
-    case 'TOR_EXIT_NODE':
-      return 'Tor exit node';
     default:
       return reason;
   }

@@ -43,7 +43,7 @@ export function JoinByInvitePage() {
   // Derived during render: true once the authenticated user is known.
   const authChecked = user !== null;
 
-  // Handle unauthenticated user - preserve invite token in sessionStorage (Fix 4)
+  // Unauthenticated users park the invite token and continue after login
   useEffect(() => {
     if (!user && token) {
       sessionStorage.setItem("pendingInvite", `/join/${token}`);
@@ -51,7 +51,7 @@ export function JoinByInvitePage() {
     }
   }, [user, token, navigate]);
 
-  // Load invite data and auto-join if no passcode needed (Fix 2)
+  // Validate the invite and auto-join when no passcode is required
   useEffect(() => {
     if (!authChecked || !token || !user) return;
 

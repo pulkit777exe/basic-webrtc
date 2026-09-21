@@ -203,7 +203,6 @@ export function RoomPage() {
       setRecording({
         active: false,
         startedAt: null,
-        uploading: false,
         sessionId: null,
       });
       setCompletedRecording(null);

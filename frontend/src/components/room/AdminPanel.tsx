@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useAtomValue } from 'jotai';
 import { toast } from 'sonner';
 import { Lock, Shield, Smile } from 'lucide-react';
@@ -7,14 +7,10 @@ import {
   isHostAtom,
   participantsAtom,
   reactionsEnabledAtom,
-  recordingAtom,
-  recordingUploadsAtom,
-  roomAtom,
   roomLockedAtom,
   userAtom,
 } from '@/store/atoms';
 import { WSManager } from '@/lib/ws-manager';
-import { api } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -74,11 +70,7 @@ export function AdminPanel() {
   const participants = useAtomValue(participantsAtom);
   const user = useAtomValue(userAtom);
   const roomLocked = useAtomValue(roomLockedAtom);
-  const room = useAtomValue(roomAtom);
   const reactionsEnabled = useAtomValue(reactionsEnabledAtom);
-  const recording = useAtomValue(recordingAtom);
-  const recordingUploads = useAtomValue(recordingUploadsAtom);
-  const [isMerging, setIsMerging] = useState(false);
 
   const others = useMemo(
     () => participants.filter((participant) => participant.userId !== user?.id),
@@ -141,52 +133,6 @@ export function AdminPanel() {
       ) : (
         <div className="rounded-lg border border-dashed border-(--room-border) p-2 text-xs text-(--room-muted)">
           Host-only moderation controls are disabled for co-hosts.
-        </div>
-      )}
-
-      {recording.uploading && (
-        <div className="space-y-1 rounded-lg bg-black/20 p-2">
-          <p className="text-[11px] text-(--room-muted)">Upload progress</p>
-          {Array.from(recordingUploads.entries()).map(([participantId, progress]) => (
-            <div key={participantId} className="flex items-center justify-between text-[11px]">
-              <span className="font-mono text-(--room-text)">{participantId.slice(0, 8)}</span>
-              <span className="text-(--room-muted)">{Math.round(progress)}%</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {isHost && room && (
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            className="h-8 rounded-lg text-xs"
-            disabled={isMerging || recording.active}
-            onClick={async () => {
-              try {
-                setIsMerging(true);
-                await api.mergeRecordings(room.id);
-                toast.success('Recording merged');
-              } catch (error) {
-                toast.error(error instanceof Error ? error.message : 'Merge failed');
-              } finally {
-                setIsMerging(false);
-              }
-            }}
-          >
-            {isMerging ? 'Finalizing…' : 'Finalize recording'}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 rounded-lg text-xs"
-            onClick={() => window.open(api.getRecordingDownloadUrl(room.id), '_blank', 'noopener,noreferrer')}
-          >
-            Download final
-          </Button>
         </div>
       )}
 

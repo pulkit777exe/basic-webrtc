@@ -279,19 +279,6 @@ export const api = {
     return request<{ iceServers: RTCIceServer[] }>("/api/ice-servers");
   },
 
-  async mergeRecordings(roomId: string) {
-    return request<{ ok: boolean; outputPath: string; skipped: string[] }>(
-      `/api/recordings/${roomId}/merge`,
-      {
-        method: "POST",
-      },
-    );
-  },
-
-  getRecordingDownloadUrl(roomId: string) {
-    return `${API_BASE_URL}/api/recordings/${roomId}/download`;
-  },
-
   async getWaitingRoom(roomId: string) {
     return request<{
       waitingRoom: Array<{

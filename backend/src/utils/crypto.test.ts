@@ -44,4 +44,16 @@ describe('getFrontendBaseUrl', () => {
       delete process.env.FRONTEND_URL;
     }
   });
+
+  it('prefers APP_URL (the documented Render env var) over ALLOWED_ORIGINS', () => {
+    const origApp = process.env.APP_URL;
+    const origAllowed = process.env.ALLOWED_ORIGINS;
+    process.env.APP_URL = 'https://app.example.com/';
+    process.env.ALLOWED_ORIGINS = 'https://other.example.com';
+    expect(getFrontendBaseUrl()).toBe('https://app.example.com');
+    if (origApp !== undefined) process.env.APP_URL = origApp;
+    else delete process.env.APP_URL;
+    if (origAllowed !== undefined) process.env.ALLOWED_ORIGINS = origAllowed;
+    else delete process.env.ALLOWED_ORIGINS;
+  });
 });
