@@ -160,10 +160,8 @@ All three are relayed to the target peer (or broadcast if no `to` field).
 
 | Type | Direction | Role Required | Description |
 |------|-----------|---------------|-------------|
-| `recording_start` | server→client | host | Recording started |
-| `recording_stop` | server→client | host | Recording stopped |
-| `recording_upload_progress` | bidirectional | any | Chunk upload progress |
-| `recording_track_offset` | client→server | any | Track start offset |
+| `recording_start` | server→client | host | Recording started (clients capture locally) |
+| `recording_stop` | server→client | host | Recording stopped (clients save locally) |
 
 **Recording start:**
 ```json
@@ -184,6 +182,8 @@ All three are relayed to the target peer (or broadcast if no `to` field).
 | `leave` | server→client | Participant left |
 | `error` | server→client | Error message |
 | `rate_limited` | server→client | Message rate limit exceeded |
+| `kicked` | server→client | You were removed; connection closes (4003) |
+| `token_expired` | server→client | Room token expired; rejoin, connection closes (4004) |
 | `ack` | server→client | Action acknowledged |
 
 **Join:**
@@ -226,7 +226,6 @@ The server enforces a per-room message burst limit of **80 messages/second**.
 - `offer`, `answer`, `ice` (high-frequency WebRTC signaling)
 - `ping`, `pong` (keep-alive)
 - `media-state`, `audio-activity` (frequent state updates)
-- `recording_upload_progress` (upload progress)
 - `active_speaker` (already rate-limited to 1 per 2s per participant)
 
 When the limit is exceeded, the server sends `{ "type": "rate_limited" }` and drops the message.
@@ -240,4 +239,5 @@ When the limit is exceeded, the server sends `{ "type": "rate_limited" }` and dr
 | 4001 | Missing or invalid authentication |
 | 4002 | Not authorized for this room |
 | 4003 | Kicked by host/co-host |
+| 4004 | Room token expired (rejoin to get a fresh token) |
 | 1001 | Server shutting down |

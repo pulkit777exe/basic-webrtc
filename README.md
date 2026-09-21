@@ -8,10 +8,10 @@ A WebRTC video chat app with a React frontend and an Express backend. Signaling 
 
 ## Features
 
-- Real-time audio/video using plain WebRTC (mesh)
-- Auth with access/refresh tokens (stored in HTTP-only cookies)
+- Real-time audio/video using plain WebRTC (mesh, up to ~8 participants)
+- Auth with short-lived access tokens plus rotating refresh tokens (HTTP-only cookies)
 - Waiting-room controls (admit/reject), room lock/passcodes, basic moderation
-- Meeting recording (client-side capture + backend merge pipeline)
+- Meeting recording captured locally per client (IndexedDB + download, no server merge)
 - Redis-backed real-time state and signaling fanout
 - Postgres persistence via Drizzle ORM
 
@@ -63,9 +63,10 @@ DATABASE_URL="postgresql://user:password@localhost:5432/webrtc_db"
 JWT_SECRET="change-me"
 JWT_REFRESH_SECRET="change-me-too"
 
-# Usually needed in dev
+# Usually needed in dev (Upstash free tier; TCP Redis only for BullMQ)
 ALLOWED_ORIGINS="http://localhost:5173"
-REDIS_URL="redis://localhost:6379"
+UPSTASH_REDIS_REST_URL="https://your-instance.upstash.io"
+UPSTASH_REDIS_REST_TOKEN="your-upstash-token"
 ```
 
 **Frontend** (`frontend/.env`):
@@ -85,7 +86,7 @@ bun install
 
 # Frontend
 cd ../frontend
-pnpm install  # or npm install
+bun install
 ```
 
 ### 4. Set up the database

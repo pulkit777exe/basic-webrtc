@@ -10,9 +10,10 @@ This service is the backend for the app. It provides:
 ## Requirements
 
 - Bun (the scripts in `package.json` use Bun)
-- PostgreSQL
-- Redis
-- FFmpeg (only if you use the recording merge pipeline)
+- PostgreSQL (local, Docker, or a free Neon/Supabase instance)
+- Upstash Redis (REST; free tier) for room state, sessions, and rate limits
+- TCP Redis (`REDIS_URL`) only if you want BullMQ background jobs — otherwise
+  exports run in-process and deletions use a DB-backed poller
 
 ## Quick start
 
@@ -45,15 +46,18 @@ Common in dev:
 ```env
 PORT=4000
 ALLOWED_ORIGINS="http://localhost:5173"
-REDIS_URL="redis://localhost:6379"
+UPSTASH_REDIS_REST_URL="https://your-instance.upstash.io"
+UPSTASH_REDIS_REST_TOKEN="your-upstash-token"
 NODE_ENV="development"
+# Optional: TCP Redis for BullMQ (exports/deletions fall back otherwise)
+# REDIS_URL="redis://localhost:6379"
 ```
 
 Optional (feature-dependent):
 
-- TURN servers: `TURN_URL`, `TURN_SECRET` (see `src/routes/ice.ts`)
+- TURN servers: `TURN_SERVERS`, `TURN_SECRET` (optional `STUN_SERVERS`, `TURN_TTL_SEC`; see `src/routes/ice.ts`)
 - Email/OTP: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `OTP_EXPIRY_MINUTES`
-- App URLs: `BASE_URL`, `FRONTEND_URL`, `CLIENT_URL` (used when generating links)
+- App URLs: `FRONTEND_URL`, `APP_URL`, `BASE_URL`, `CLIENT_URL` (used when generating links)
 - Encryption: `ENCRYPTION_KEY` (64-char hex; required for features that encrypt secrets)
 - hCaptcha: `HCAPTCHA_SECRET` (login protection)
 

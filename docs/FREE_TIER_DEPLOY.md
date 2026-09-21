@@ -50,7 +50,6 @@ Free-tier behavior to expect:
 2. Set environment variables (Production + Preview as needed):
    - `VITE_API_URL=https://<your-render-service>.onrender.com`
    - `VITE_WS_URL=wss://<your-render-service>.onrender.com/ws`
-   - `VITE_APP_URL=https://<your-vercel-app>.vercel.app`
    - Optional: `VITE_DEEPGRAM_LIVE_CAPTIONS`, `VITE_API_TIMEOUT_MS`.
    - These bake in at **build time** — redeploy after changing them.
 3. Deploy. `VITE_API_URL` missing in production fails the build fast instead

@@ -109,7 +109,7 @@ basic-webrtc-app/
 │   │   │   └── live-captions-bridge.ts # Deepgram proxy WS
 │   │   ├── db/
 │   │   │   ├── index.ts         # Postgres.js + Drizzle client
-│   │   │   └── schema.ts        # 12 tables (users, rooms, messages, etc.)
+│   │   │   └── schema.ts        # 13 tables (users, rooms, messages, etc.)
 │   │   ├── lib/
 │   │   │   ├── redis-rooms.ts   # Room state in Redis (peers, roles, settings)
 │   │   │   ├── redis-streams.ts # Redis Streams for durable signal log
@@ -123,9 +123,8 @@ basic-webrtc-app/
 │   │   │   ├── two-factor.ts    # TOTP 2FA setup/verify
 │   │   │   ├── email.ts         # Nodemailer templates
 │   │   │   ├── login-analyzer.ts # Suspicious login detection
-│   │   │   └── recording-broadcast.ts # Recording state tracking
 │   │   ├── jobs/                # Background jobs (BullMQ when REDIS_URL set, else in-process + DB poller)
-│   │   │   ├── recording-worker.ts # Recording state transitions
+│   │   │   ├── account-jobs.ts  # Queue abstraction + free-tier fallback poller
 │   │   │   ├── export-worker.ts # GDPR data export
 │   │   │   └── deletion-worker.ts # Account deletion
 │   │   ├── middleware/
@@ -220,8 +219,7 @@ Redis (Upstash) holds ephemeral/real-time state — **not** a second database. K
    → generateAccessToken({ userId, email }) + generateRefreshToken({ userId, email })
    → createSessionForAccessToken() — store session in user_sessions table + Redis
    → setRefreshSession() — Redis key user:{id}:session with 7-day TTL
-   → setRefreshSession() — Redis key user:{id}:session with 7-day TTL
-   → Set-Cookie: refresh_token (HTTP-only, secure)
+   → Set-Cookie: refreshToken (HTTP-only, secure, sameSite=lax)
    → Return { accessToken, user }
 ```
 
@@ -384,7 +382,6 @@ exports run in-process and deletions use a DB-backed poller
 **Frontend** (from `frontend/.env.sample`):
 - `VITE_API_URL` — backend REST origin
 - `VITE_WS_URL` — WebSocket origin (defaults to `VITE_API_URL` + `/ws`)
-- `VITE_APP_URL` — frontend origin
 - `VITE_SENTRY_DSN` — Sentry DSN (optional)
 - `VITE_DEEPGRAM_LIVE_CAPTIONS` — enable Deepgram live captions
 - `VITE_API_TIMEOUT_MS` — fetch timeout (default 15000)
@@ -438,15 +435,25 @@ exports run in-process and deletions use a DB-backed poller
 
 ### Unused Code / Incomplete Features
 
-1. **`recordingTracks` table** (`schema.ts:121-131`) has columns `s3Key`, `durationMs`, `fileSizeBytes`, `errorMessage` — all marked as "Unused currently" in CONTEXT.md. No code writes to these columns after the client-side recording refactor.
+1. **`recordingTracks` table is write-dead** (`backend/src/db/schema.ts:121-131`):
+   nothing ever INSERTs rows (only `deletion-worker.ts` NULLs `participantId`
+   on rows that can never exist). It is leftover from the deleted server-side
+   merge pipeline. Safe to drop via migration; the client-side flow only uses
+   `recordingSessions` metadata + Redis recording state.
 
-2. **`recording-broadcast.ts`** is still imported and called (`recording-worker.ts:4,49`) but the service was simplified. The `clearRecordingStatus` function may still operate on stale Redis keys.
+2. **Server-merge recording pipeline fully removed (2026-09):** the old
+   chunk-upload protocol (`recording_upload_progress`, `recording_track_offset`,
+   `recording_ready`, `recording_failed`), the `merge`/`download` REST endpoints,
+   and the AdminPanel finalize/download buttons are gone. Recording is local-only
+   per client (IndexedDB + header download).
 
-3. **Backend `lint` script** is `echo 'No linter configured'` (`backend/package.json:14`). No ESLint or Biome configured for backend.
+3. **Lint is enforced:** backend `biome check src/` is clean; frontend `eslint .`
+   exits 0 with `noUnusedLocals`/`noUnusedParameters` in `tsconfig.app.json`.
 
 4. **`deploy.yml`** uses `appleboy/ssh-action@master` to deploy to a self-hosted server at `/var/www/webrtc-meet` — this is a **different** deployment path from `render.yaml`. Two deployment strategies exist in the repo.
 
-5. **`docker-compose.yml`** (dev) exposes `PORT=4000` and `ALLOWED_ORIGINS=http://localhost:3000` — the frontend in dev mode runs on port 5173 (Vite default), not 3000.
+5. **`docker-compose.yml`** (dev) sets `ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000`,
+   covering both the Vite dev server (5173) and the Docker frontend (3000).
 
 ### Inconsistencies Found
 
@@ -475,9 +482,9 @@ exports run in-process and deletions use a DB-backed poller
 | JWT with three secret types | `cat backend/src/utils/jwt.ts:5-11` — JWT_SECRET, JWT_REFRESH_SECRET, JWT_ROOM_SECRET |
 | BullMQ workers (2 queues) | `ls backend/src/jobs/` — export-worker, deletion-worker (recording is inlined) |
 | Sentry with React Router v7 | `cat frontend/src/instrument.ts` — `createRoutesFromChildren`, `matchRoutes` from react-router-dom |
-| 12 database tables | `cat backend/src/db/schema.ts` — count `pgTable` definitions |
+| 13 database tables | `cat backend/src/db/schema.ts` — count `pgTable` definitions |
 | Rate limiting via Redis | `cat backend/src/lib/rate-limiters.ts` — `RedisStore` from `rate-limit-redis` |
 
 ---
 
-**Last verified**: 2026-07-02, against commit `22eda56`.
+**Last verified**: 2026-09-21 (verification table re-checked: versions, mesh, Drizzle, Upstash, client-only recording, `/ws` upgrade, JWT secrets, jobs, Sentry router integration, 13 tables, Redis rate limiting).

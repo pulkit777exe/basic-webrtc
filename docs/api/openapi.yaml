@@ -245,70 +245,34 @@ paths:
                     items:
                       $ref: "#/components/schemas/ICEServer"
 
-  /api/recordings/chunk:
-    post:
+  /api/recordings/{roomId}/status:
+    get:
       tags: [Recordings]
-      summary: Upload a recording chunk
+      summary: Get recording status for a room
       security:
         - BearerAuth: []
       parameters:
         - name: roomId
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: participantId
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: sessionId
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: chunkIndex
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: totalChunks
-          in: query
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              required: [chunk]
-              properties:
-                chunk:
-                  type: string
-                  format: binary
-      responses:
-        "200":
-          description: Chunk uploaded
-
-  /api/recordings/{sessionId}/download:
-    get:
-      tags: [Recordings]
-      summary: Download a completed recording
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: sessionId
           in: path
           required: true
           schema:
             type: string
       responses:
         "200":
-          description: Recording file (video/mp4)
+          description: Recording status (metadata only; media stays on clients)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  startedAt:
+                    type: string
+                  participantCount:
+                    type: integer
         "404":
-          description: Recording not found
+          description: No recording session for this room
 
   /api/account/export:
     post:

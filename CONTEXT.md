@@ -9,7 +9,10 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
 - **`pages/LobbyPage.tsx`**: Pre-join UI, device preview, `sessionStorage` flags `lobby_video` / `lobby_audio` for `RoomPage`.
 - **`pages/RoomPage.tsx`**: In-call lifecycle:
   - Loads media → `RTCManager.setLocalStream` → `WSManager.connect(roomToken)`.
-  - Sets **`window.__wsSignal`**: handles **offer / answer / ICE** for WebRTC (signaling is **not** fully handled inside `ws-manager`; it forwards JSON to `__wsSignal` after updating atoms).
+  - Incoming WS JSON is dispatched in `ws-manager`'s `onmessage` chain;
+    offer/answer/ICE go to `handleSignal` (`lib/signal-handler.ts`), which runs
+    `createPeer → setRemoteDescription → answer` in an `await`ed async IIFE
+    (ordering matters — parallel `void` calls break negotiation).
   - Cleanup: `WSManager.disconnect`, **`RTCManager.disconnectAll()`**, `MediaManager.stop`, clear atoms.
 
 ### WebRTC (`lib/rtc-manager.ts`)
@@ -91,7 +94,11 @@ sequenceDiagram
 - **Local capture**: `MediaRecorder` on **`localMedia.stream`** (that user’s mic/camera only—not a grid composite).
 - **Stream changes while recording**: `startRecording` calls **`discardAndStop()`** first so a **new `MediaStream`** (e.g. camera turned on) **restarts** the recorder. Earlier in-memory chunks for that segment are **discarded** (no multi-file append yet).
 - **Mime types**: Prefers **video/webm** (+ VP9/VP8) when a video track exists; falls back to **audio/webm** when audio-only. Final **`Blob`** uses the recorder’s **`mimeType`**.
-- **Upload**: Chunks POST to **`/api/recordings/chunk`** with **`Authorization: Bearer <roomToken>`**; IndexedDB backup per chunk; backend worker merges (`services/recording-merge.ts`).
+- **Upload**: none — recording is local-only. `stopAndSave()` assembles one `Blob`
+  from the in-memory chunks, persists it to IndexedDB (`webrtc-recordings`),
+  and the UI header offers a per-client download (`RecordingManager.downloadRecording`).
+  There is no `/api/recordings/chunk` endpoint and no server-side merge;
+  `recordingSessions` rows and the Redis recording state are metadata only.
 - **RoomPage effect**: Depends on **`[localMedia.stream, recording.active]`**—no `localRecordingRef` guard so **stream replacement** (e.g. `MediaManager.toggleVideo`) can restart capture while `recording.active` stays true.
 
 ## Historical fixes (regression hints)

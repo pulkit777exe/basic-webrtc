@@ -1,73 +1,51 @@
-# React + TypeScript + Vite
+# Frontend (Meetour web app)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React 19 + Vite + Tailwind CSS video-conferencing UI. Mesh WebRTC calls with
+pre-join lobby, waiting room, live captions, client-side recording, and room
+moderation. State via Jotai atoms (`src/store`); signaling over WebSocket
+(`src/lib/ws-manager.ts`); peer connections in `src/lib/rtc-manager.ts`.
 
-Currently, two official plugins are available:
+## Requirements
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- Bun (repo standard; `bun.lock` is authoritative)
+- A running backend (`VITE_API_URL`) — see `../backend/README.md`
 
-## React Compiler
+## Quick start
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+bun install
 
-## Expanding the ESLint configuration
+# Point at the backend (defaults to http://localhost:4000 + /ws in dev)
+cp .env.sample .env  # then edit values
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+bun run dev      # Vite dev server (http://localhost:5173)
+bun run build    # production build to dist/ (what Vercel runs)
+bun run test     # vitest
+bun run lint     # eslint (must exit 0)
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Environment variables
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Values bake in at **build** time — redeploy after changing them:
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```env
+VITE_API_URL=http://localhost:4000
+# Optional (defaults to VITE_API_URL with ws scheme + /ws suffix)
+VITE_WS_URL=ws://localhost:4000/ws
+VITE_DEEPGRAM_LIVE_CAPTIONS=true
+# VITE_API_TIMEOUT_MS=15000
+# VITE_SENTRY_DSN=... (error monitoring)
+# VITE_HCAPTCHA_SITE_KEY=... (bot protection on auth pages)
+# VITE_CAPTIONS_FORCE_WHISPER=true (skip browser speech + Deepgram)
 ```
+
+A production build without `VITE_API_URL` fails fast instead of silently
+pointing at localhost.
+
+## Where things live
+
+- Entry: `src/main.tsx` (Sentry init in `src/instrument.ts`)
+- Routes: `src/App.tsx` (lazy pages in `src/pages/`)
+- In-call UI: `src/components/room/` (grid, control bar, chat, captions)
+- `src/config/api.ts` — single source of truth for backend URLs
+- Deploy: `vercel.json` (Vercel Hobby, static output) + `Dockerfile` (self-host alt)
