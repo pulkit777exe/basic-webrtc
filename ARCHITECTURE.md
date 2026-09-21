@@ -62,7 +62,7 @@ A WebRTC video conferencing application with a React single-page frontend and an
 |-----------|-----------|----------|
 | Database | PostgreSQL | `backend/src/db/index.ts:6` — `DATABASE_URL` |
 | Cache / Pub-Sub | Upstash Redis (REST) | `backend/src/config/redis.ts:1-7` |
-| Queue | BullMQ over Redis | `backend/src/jobs/recording-worker.ts:1,27` |
+| Queue | BullMQ over TCP Redis when `REDIS_URL` is set, else in-process + DB poller (free tier) | `backend/src/jobs/account-jobs.ts`, `backend/src/jobs/export-worker.ts`, `backend/src/jobs/deletion-worker.ts` |
 | Container Runtime | Bun on Alpine | `backend/Dockerfile:1` — `oven/bun:1-alpine` |
 | Static Serving | Nginx | `frontend/Dockerfile:16` — `nginx:alpine` |
 | CI/CD | GitHub Actions | `.github/workflows/ci.yml`, `.github/workflows/deploy.yml` |
@@ -105,7 +105,7 @@ basic-webrtc-app/
 │   │   │   └── health.ts        # Liveness + readiness probes
 │   │   ├── websocket/
 │   │   │   ├── handler.ts       # Main WS handler: rooms, heartbeat, Redis sub
-│   │   │   ├── handlers/        # Signal dispatch (WebRTC, chat, admin, media)
+│   │   │   ├── handlers/        # Signal dispatch registry (WebRTC, chat, admin, media)
 │   │   │   └── live-captions-bridge.ts # Deepgram proxy WS
 │   │   ├── db/
 │   │   │   ├── index.ts         # Postgres.js + Drizzle client
@@ -117,14 +117,14 @@ basic-webrtc-app/
 │   │   │   ├── rate-limiters.ts # Express rate limiters (Redis-backed)
 │   │   │   └── cleanup-job.ts   # Stale room cleanup
 │   │   ├── services/            # Business logic
-│   │   │   ├── auth.ts          # Signup/login logic
+│   │   │   ├── auth.ts          # Refresh-token rotation (signup/login live in routes/auth.ts)
 │   │   │   ├── session.ts       # Session tracking (Postgres + Redis)
 │   │   │   ├── otp.ts           # OTP generation/verification
 │   │   │   ├── two-factor.ts    # TOTP 2FA setup/verify
 │   │   │   ├── email.ts         # Nodemailer templates
 │   │   │   ├── login-analyzer.ts # Suspicious login detection
 │   │   │   └── recording-broadcast.ts # Recording state tracking
-│   │   ├── jobs/                # BullMQ workers
+│   │   ├── jobs/                # Background jobs (BullMQ when REDIS_URL set, else in-process + DB poller)
 │   │   │   ├── recording-worker.ts # Recording state transitions
 │   │   │   ├── export-worker.ts # GDPR data export
 │   │   │   └── deletion-worker.ts # Account deletion
@@ -347,16 +347,26 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 **deploy.yml** — runs on push to `main`:
 - Tests, then SSH deploys to a server at `/var/www/webrtc-meet` using `docker-compose.prod.yml`
 
-### Render (`render.yaml`)
+### Render (`render.yaml`) — free-tier blueprint
 
 ```yaml
 services:
   - type: web
-    name: backend
+    name: webrtc-backend
     runtime: docker
+    plan: free
     dockerfilePath: backend/Dockerfile
     dockerContext: backend
+    healthCheckPath: /health
+    preDeployCommand: bun run db:migrate
 ```
+
+Free-tier topology: frontend is a static Vite build on **Vercel**
+(`frontend/vercel.json` — build, SPA rewrites, asset caching); the backend is
+a single Render free instance; Postgres comes from Neon/Supabase and Redis
+from Upstash (both free). `REDIS_URL` (TCP, BullMQ) is optional — without it,
+exports run in-process and deletions use a DB-backed poller
+(`backend/src/jobs/account-jobs.ts`). Full steps: `docs/FREE_TIER_DEPLOY.md`.
 
 ### Environment Variables
 
