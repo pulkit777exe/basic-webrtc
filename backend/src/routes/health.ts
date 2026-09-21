@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { sql } from 'drizzle-orm';
 import { db } from '../db';
-import { redis } from '../config/redis';
+import { isRedisConfigured, redis } from '../config/redis';
 import { logger } from '../lib/logger';
 
 export const healthRouter = Router();
@@ -12,39 +12,58 @@ healthRouter.get('/health', (_req, res) => {
 });
 
 /**
- * Readiness: Redis + Postgres reachable (use for orchestrator / rolling deploys).
- * Returns 503 when dependencies are down so traffic can drain elsewhere.
+ * Readiness: Postgres must be reachable; Redis is reported but only required
+ * when configured. This keeps Render's free-tier health check green for the
+ * liveness path while still surfacing dependency state for orchestrators.
+ * Returns 503 only when Postgres is down.
  */
 healthRouter.get('/health/ready', async (_req, res) => {
   const start = Date.now();
+  const checks: Record<string, string> = {};
+  let postgresOk = false;
+
   try {
-    const [pong] = await Promise.all([
-      redis.ping(),
-      db.execute(sql`SELECT 1`),
-    ]);
-
-    const latency = Date.now() - start;
-
-    if (pong !== 'PONG') {
-      throw new Error('redis_ping_failed');
-    }
-
-    res.json({
-      status: 'ready',
-      timestamp: new Date().toISOString(),
-      checks: { redis: 'ok', postgres: 'ok' },
-      latency: { db: latency },
-    });
+    await db.execute(sql`SELECT 1`);
+    postgresOk = true;
+    checks.postgres = 'ok';
   } catch (err) {
+    checks.postgres = 'error';
     logger.error('Readiness check failed', {
       error: err instanceof Error ? err.message : String(err),
       latency: Date.now() - start,
     });
+  }
+
+  if (!isRedisConfigured) {
+    checks.redis = 'disabled';
+  } else {
+    try {
+      const pong = await redis.ping();
+      checks.redis = pong === 'PONG' ? 'ok' : 'error';
+    } catch (err) {
+      checks.redis = 'error';
+      logger.error('Readiness check failed', {
+        error: err instanceof Error ? err.message : String(err),
+        latency: Date.now() - start,
+      });
+    }
+  }
+
+  if (!postgresOk) {
     res.status(503).json({
       status: 'not_ready',
       timestamp: new Date().toISOString(),
+      checks,
     });
+    return;
   }
+
+  res.json({
+    status: 'ready',
+    timestamp: new Date().toISOString(),
+    checks,
+    latency: { db: Date.now() - start },
+  });
 });
 
 

@@ -1,9 +1,54 @@
 import { Redis } from '@upstash/redis';
 
-export const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-  enableAutoPipelining: true,
+const REST_URL = process.env.UPSTASH_REDIS_REST_URL;
+const REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+/**
+ * Free-tier note: Upstash Redis (REST) has a generous free tier and is the only
+ * Redis this app needs on Render's free plan. It is required for room state,
+ * sessions, and rate limiting — but the client is constructed lazily so a
+ * missing/misconfigured env produces a clear runtime error instead of an
+ * import-time crash. `REDIS_URL` (TCP, BullMQ) is a separate optional concern,
+ * see `jobs/account-jobs.ts`.
+ */
+export const isRedisConfigured = Boolean(REST_URL && REST_TOKEN);
+
+if (!isRedisConfigured) {
+  console.warn(
+    '[Redis] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN not set. ' +
+      'Set them from your free Upstash instance (docs/FREE_TIER_DEPLOY.md).',
+  );
+}
+
+let client: Redis | null = null;
+
+function getClient(): Redis {
+  if (!isRedisConfigured) {
+    throw new Error(
+      'Upstash Redis is not configured (UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN missing)',
+    );
+  }
+  if (!client) {
+    client = new Redis({
+      url: REST_URL!,
+      token: REST_TOKEN!,
+      enableAutoPipelining: true,
+    });
+  }
+  return client;
+}
+
+/**
+ * Same `redis.xxx()` API as before, but construction is deferred to first use
+ * so the server can boot (and `/health` can report) even when Redis env is
+ * missing. Request paths that need Redis will throw a descriptive error.
+ */
+export const redis: Redis = new Proxy({} as Redis, {
+  get(_target, prop) {
+    const c = getClient() as unknown as Record<PropertyKey, unknown>;
+    const value = c[prop];
+    return typeof value === 'function' ? (value as (...a: never[]) => unknown).bind(c) : value;
+  },
 });
 
 let redisSub: Redis | null = null;
@@ -22,16 +67,12 @@ export function getRedisSub(): Redis | null {
 
 const REFRESH_SESSION_TTL_SEC = 7 * 24 * 60 * 60;
 
-export function userSessionKey(userId: string): string {
+function userSessionKey(userId: string): string {
   return `user:${userId}:session`;
 }
 
-export function userSessionInvalidBeforeKey(userId: string): string {
+function userSessionInvalidBeforeKey(userId: string): string {
   return `user:${userId}:session:invalid_before`;
-}
-
-export function blocklistKey(tokenOrJti: string): string {
-  return `blocklist:${tokenOrJti}`;
 }
 
 export async function setRefreshSession(userId: string, tokenHash: string): Promise<void> {
@@ -46,106 +87,9 @@ export async function deleteRefreshSession(userId: string): Promise<void> {
   await redis.del(userSessionKey(userId));
 }
 
-export async function setUserSessionInvalidBefore(
-  userId: string,
-  issuedAtSeconds: number,
-): Promise<void> {
-  await redis.set(userSessionInvalidBeforeKey(userId), String(issuedAtSeconds));
-}
-
 export async function getUserSessionInvalidBefore(userId: string): Promise<number | null> {
   const raw = await redis.get<string>(userSessionInvalidBeforeKey(userId));
   if (!raw) return null;
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-export async function invalidateAllUserSessions(userId: string): Promise<void> {
-  const nowInSeconds = Math.floor(Date.now() / 1000);
-  await Promise.all([
-    deleteRefreshSession(userId),
-    setUserSessionInvalidBefore(userId, nowInSeconds),
-  ]);
-}
-
-export async function addToBlocklist(tokenOrJti: string, ttlSeconds: number): Promise<void> {
-  if (ttlSeconds <= 0) return;
-  await redis.set(blocklistKey(tokenOrJti), '1', { ex: ttlSeconds });
-}
-
-export async function isBlocklisted(tokenOrJti: string): Promise<boolean> {
-  const redisVal = await redis.get(blocklistKey(tokenOrJti));
-  return redisVal !== null;
-}
-
-export async function checkRateLimit(
-  key: string,
-  maxRequests: number,
-  windowSeconds: number,
-): Promise<{ allowed: boolean; remaining: number; resetIn: number }> {
-  const now = Math.floor(Date.now() / 1000);
-  const windowStart = now - windowSeconds;
-
-  const pipe = redis.pipeline();
-  pipe.zremrangebyscore(key, 0, windowStart);
-  pipe.zcard(key);
-  const results = await pipe.exec();
-
-  if (!results) {
-    return { allowed: false, remaining: 0, resetIn: windowSeconds };
-  }
-
-  const currentCount = results[1] as number;
-
-  if (currentCount >= maxRequests) {
-    const ttlResult = await redis.zrange(key, 0, 0, { withScores: true });
-    const oldest =
-      ttlResult.length >= 2 ? Math.floor(parseFloat(String((ttlResult as unknown[])[1]))) : now;
-    const resetIn = Math.max(0, oldest + windowSeconds - now);
-    return { allowed: false, remaining: 0, resetIn };
-  }
-
-  await redis.zadd(key, { score: now, member: `${now}-${Math.random()}` });
-  await redis.expire(key, windowSeconds);
-
-  return {
-    allowed: true,
-    remaining: maxRequests - currentCount - 1,
-    resetIn: windowSeconds,
-  };
-}
-
-export const OTP_RATE_LIMIT_KEY_PREFIX = 'otp_rate_limit:';
-export const OTP_MAX_REQUESTS_PER_HOUR = 3;
-export const OTP_RATE_LIMIT_WINDOW = 3600;
-
-export async function checkOtpRateLimit(email: string): Promise<{
-  allowed: boolean;
-  remaining: number;
-  resetIn: number;
-}> {
-  const key = `${OTP_RATE_LIMIT_KEY_PREFIX}${email.toLowerCase()}`;
-  return checkRateLimit(key, OTP_MAX_REQUESTS_PER_HOUR, OTP_RATE_LIMIT_WINDOW);
-}
-
-export async function setSession(
-  sessionId: string,
-  data: object,
-  expirySeconds: number,
-): Promise<void> {
-  await redis.set(`session:${sessionId}`, JSON.stringify(data), { ex: expirySeconds });
-}
-
-export async function getSession<T>(sessionId: string): Promise<T | null> {
-  const raw = await redis.get<string>(`session:${sessionId}`);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
-}
-
-export async function deleteSession(sessionId: string): Promise<void> {
-  await redis.del(`session:${sessionId}`);
 }

@@ -606,21 +606,20 @@ export class WebSocketHandler {
   }
 
   /**
-   * Atomically read all entries from the Redis chat buffer for a room and delete the key.
-   * Uses a Lua script to prevent race conditions during concurrent flushes.
+   * Read all entries from the Redis chat buffer for a room, then delete the key.
+   * Uses LRANGE + DEL instead of a Lua EVAL script: Upstash's REST interface
+   * has limited/fragile Lua support on the free tier, and the tiny
+   * double-flush race this allows is harmless here — `flushChatBuffer`
+   * deduplicates by entry id before inserting into Postgres, and this app runs
+   * a single instance on Render free so concurrent flushes don't happen.
    */
   private async drainChatRedisBuffer(roomId: string): Promise<ChatBufferEntry[]> {
     const key = `${CHAT_REDIS_KEY_PREFIX}${roomId}`;
     try {
-      const result = await redis.eval(
-        `local items = redis.call('lrange', KEYS[1], 0, -1)
-         if #items > 0 then redis.call('del', KEYS[1]) end
-         return items`,
-        [key],
-        [],
-      );
-      if (!Array.isArray(result)) return [];
-      return result.map((item) => JSON.parse(String(item)) as ChatBufferEntry);
+      const items = await redis.lrange(key, 0, -1);
+      if (!items || items.length === 0) return [];
+      await redis.del(key);
+      return items.map((item) => JSON.parse(String(item)) as ChatBufferEntry);
     } catch (e) {
       logger.error('Failed to drain chat Redis buffer', { roomId, err: String(e) });
       return [];
@@ -771,7 +770,7 @@ export class WebSocketHandler {
       type: 'recording_start',
       sessionId,
       startedAt: Date.now(),
-    });
+    }).catch((e) => logger.warn('recording_start stream log skipped', { err: String(e) }));
     this.publish(roomId, {
       type: 'recording_start',
       sessionId,
@@ -801,7 +800,7 @@ export class WebSocketHandler {
     await publishSignal(roomId, {
       type: 'recording_done',
       sessionId,
-    });
+    }).catch((e) => logger.warn('recording_done stream log skipped', { err: String(e) }));
     this.publish(roomId, {
       type: 'recording_stop',
       sessionId,

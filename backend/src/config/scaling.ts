@@ -9,8 +9,10 @@ export const WS_MAX_MESSAGE_BYTES = clampInt(
 );
 
 /** Postgres.js pool size — tune under load (e.g. PgBouncer + higher app concurrency). */
+/** Free-tier default is 5: Neon/Supabase free plans cap connections and Render
+ *  free runs a single 512MB instance. Override with DATABASE_POOL_MAX. */
 export function getDatabasePoolMax(): number {
-  return clampInt(process.env.DATABASE_POOL_MAX, 1, 100, 10);
+  return clampInt(process.env.DATABASE_POOL_MAX, 1, 100, 5);
 }
 
 /**

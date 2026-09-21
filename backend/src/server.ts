@@ -26,10 +26,10 @@ import { globalLimiter, apiLimiter, authLimiter } from './lib/rate-limiters';
 import { logger } from './lib/logger';
 import { configureTrustProxy } from './config/scaling';
 import { closeDatabase, db } from './db';
-import { redis } from './config/redis';
 import { startCleanupJob } from './lib/cleanup-job';
 import { startExportWorker } from './jobs/export-worker';
 import { startDeletionWorker } from './jobs/deletion-worker';
+import { startAccountFallbackPoller } from './jobs/account-jobs';
 import { addUsername, markSeeded } from './utils/bloomFilter';
 import { users } from './db/schema';
 
@@ -211,12 +211,13 @@ process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.once('SIGINT', () => gracefulShutdown('SIGINT'));
 
 server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-  console.log(`WebSocket server ready at ws://localhost:${PORT}/ws`);
-  console.log(`Live captions (Deepgram) at ws://localhost:${PORT}/ws/live-captions`);
+  logger.info(`Server running on http://localhost:${PORT}`);
+  logger.info(`WebSocket server ready at ws://localhost:${PORT}/ws`);
+  logger.info(`Live captions (Deepgram) at ws://localhost:${PORT}/ws/live-captions`);
   startCleanupJob(); // Start stale room cleanup job
-  startExportWorker(); // Start account export worker
-  startDeletionWorker(); // Start account deletion worker
+  startExportWorker(); // BullMQ export worker (no-op without REDIS_URL)
+  startDeletionWorker(); // BullMQ deletion worker (no-op without REDIS_URL)
+  startAccountFallbackPoller(); // DB-backed jobs: required on the free tier (no BullMQ)
 
   // Seed bloom filter from existing usernames in the database (batch to avoid loading all rows at once)
   (async () => {
