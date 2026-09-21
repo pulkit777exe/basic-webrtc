@@ -1,9 +1,62 @@
 services:
+  # Backend API + WebSocket signaling server.
+  # Free-tier topology: this single Render free instance pairs with the
+  # frontend on Vercel, Postgres on Neon/Supabase (free), and Upstash Redis
+  # REST (free). No TCP Redis / BullMQ needed — see docs/FREE_TIER_DEPLOY.md.
   - type: web
-    name: backend
+    name: webrtc-backend
     runtime: docker
+    plan: free
     dockerfilePath: backend/Dockerfile
     dockerContext: backend
+    healthCheckPath: /health
+    autoDeploy: true
+    # Run Drizzle migrations before each deploy finishes.
+    preDeployCommand: bun run db:migrate
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PORT
+        value: 4000
+      - key: TRUST_PROXY
+        value: 1
+      - key: DATABASE_POOL_MAX
+        value: 5
+      # ── Required: set in the Render dashboard (sync: false) ──
+      - key: DATABASE_URL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      # ── Optional (free-tier integrations) ──
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CALLBACK_URL
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: MAX_PARTICIPANTS
+        value: 8
+      # ── Scale-up only (paid): TCP Redis for BullMQ delayed/queued jobs.
+      # Leave unset on the free tier — jobs run in-process instead.
+      - key: REDIS_URL
+        sync: false
