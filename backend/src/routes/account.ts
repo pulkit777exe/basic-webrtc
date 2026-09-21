@@ -2,14 +2,13 @@ import { createReadStream } from 'fs';
 import { unlink } from 'fs/promises';
 import path from 'path';
 import bcrypt from 'bcrypt';
-import { randomBytes } from 'crypto';
-import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { Router, Request, Response } from 'express';
 import { redis } from '../config/redis';
 import { authenticateToken } from '../middleware/auth';
 import { db } from '../db';
 import { deletionRequests, rooms, users } from '../db/schema';
-import { getExportQueue, getDeletionQueue } from '../jobs/account-jobs';
+import { cancelDeletionJob, enqueueDeletion, enqueueExport } from '../jobs/account-jobs';
 import { invalidateAllSessionsForUser } from '../services/session';
 import { queueEmail } from '../services/email';
 
@@ -93,20 +92,8 @@ router.post('/export', authenticateToken, async (req: Request, res: Response): P
       return;
     }
 
-    const exportQueue = getExportQueue();
-    if (!exportQueue) {
-      res.status(503).json({ error: 'Export service unavailable' });
-      return;
-    }
-    await exportQueue.add(
-      'export',
-      { userId },
-      {
-        attempts: 2,
-        removeOnComplete: 50,
-        removeOnFail: 20,
-      },
-    );
+    // BullMQ when REDIS_URL is set, in-process execution on the free tier.
+    await enqueueExport(userId);
 
     await queueEmail({
       to: passwordResult.user.email,
@@ -236,23 +223,10 @@ router.post('/delete', authenticateToken, async (req: Request, res: Response): P
       })
       .returning({ id: deletionRequests.id });
 
-    const deletionQueue = getDeletionQueue();
-    if (!deletionQueue) {
-      res.status(503).json({ error: 'Deletion service unavailable' });
-      return;
-    }
-    const job = await deletionQueue.add(
-      'delete',
-      {
-        userId,
-        deletionRequestId: requestRow.id,
-      },
-      {
-        delay: DELETION_GRACE_PERIOD_MS,
-        removeOnComplete: 50,
-        removeOnFail: 20,
-      },
-    );
+    // BullMQ delayed job when REDIS_URL is set; on the free tier the
+    // `scheduledFor` timestamp above is the schedule and the DB poller
+    // (startAccountFallbackPoller) executes it when due.
+    const job = await enqueueDeletion(userId, requestRow.id, DELETION_GRACE_PERIOD_MS);
 
     await db
       .update(deletionRequests)
@@ -348,15 +322,9 @@ router.post('/cancel-deletion', async (req: Request, res: Response): Promise<voi
     }
 
     if (requestRow.jobId) {
-      const deletionQueue = getDeletionQueue();
-      if (!deletionQueue) {
-        res.status(503).json({ error: 'Deletion service unavailable' });
-        return;
-      }
-      const job = await deletionQueue.getJob(requestRow.jobId);
-      if (job) {
-        await job.remove();
-      }
+      // No-op for free-tier deferred jobs; the cancelledAt update below is
+      // what the DB poller respects.
+      await cancelDeletionJob(requestRow.jobId);
     }
 
     await db.transaction(async (tx) => {

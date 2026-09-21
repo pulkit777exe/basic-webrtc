@@ -161,42 +161,45 @@ async function createExportArchive(userId: string): Promise<{ filePath: string; 
   return { filePath, token };
 }
 
+export async function runExportJob(userId: string): Promise<void> {
+  const [user] = await db
+    .select({
+      email: users.email,
+      name: users.name,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (!user) {
+    return;
+  }
+
+  const { token } = await createExportArchive(userId);
+  const downloadUrl = `${getBackendBaseUrl()}/api/account/export/download?token=${token}`;
+
+  await queueEmail({
+    to: user.email,
+    template: 'data_export_ready',
+    data: {
+      userName: user.name,
+      downloadUrl,
+      expiresInHours: 24,
+    },
+  });
+}
+
 export function startExportWorker() {
   const conn = getAccountQueueConnection();
   if (!conn) {
-    console.warn('[ExportWorker] REDIS_URL not set, export worker disabled');
+    console.warn('[ExportWorker] REDIS_URL not set, BullMQ worker disabled (in-process fallback handles exports)');
     return;
   }
 
   const worker = new Worker<ExportJobData>(
     'account-export',
     async (job) => {
-      const { userId } = job.data;
-      const [user] = await db
-        .select({
-          email: users.email,
-          name: users.name,
-        })
-        .from(users)
-        .where(eq(users.id, userId))
-        .limit(1);
-
-      if (!user) {
-        return;
-      }
-
-      const { token } = await createExportArchive(userId);
-      const downloadUrl = `${getBackendBaseUrl()}/api/account/export/download?token=${token}`;
-
-      await queueEmail({
-        to: user.email,
-        template: 'data_export_ready',
-        data: {
-          userName: user.name,
-          downloadUrl,
-          expiresInHours: 24,
-        },
-      });
+      await runExportJob(job.data.userId);
     },
     {
       connection: conn,
