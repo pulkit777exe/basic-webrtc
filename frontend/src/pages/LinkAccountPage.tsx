@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useSetAtom } from 'jotai';
 import { CheckCircle2 } from 'lucide-react';
@@ -63,7 +63,7 @@ export function LinkAccountPage() {
     };
   }, [linkToken]);
 
-  async function handleConfirm() {
+  const handleConfirm = useCallback(async () => {
     if (!linkToken || !password) {
       setErrorMessage('Password is required.');
       return;
@@ -84,7 +84,7 @@ export function LinkAccountPage() {
     } finally {
       setSubmitting(false);
     }
-  }
+  }, [linkToken, navigate, password, setUser]);
 
   const content = useMemo(() => {
     if (loading) {
@@ -157,7 +157,7 @@ export function LinkAccountPage() {
         </div>
       </div>
     );
-  }, [errorMessage, existingProfile, googleProfile, loading, password, submitting, success]);
+  }, [errorMessage, existingProfile, googleProfile, handleConfirm, loading, password, submitting, success]);
 
   return (
     <div className="relative min-h-screen overflow-hidden px-4 py-8 sm:px-6">

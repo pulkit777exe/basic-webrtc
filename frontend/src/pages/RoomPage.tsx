@@ -123,7 +123,7 @@ export function RoomPage() {
     size: number;
   } | null>(null);
   const pushToTalkRef = useRef(false);
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recordingTick, setRecordingTick] = useState(0);
   const slateRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const controlBarRef = useRef<HTMLDivElement>(null);
@@ -343,12 +343,6 @@ export function RoomPage() {
   }, [captionsEnabled]);
 
   useEffect(() => {
-    if (!captionsEnabled) {
-      setDeepgramLiveUnavailable(false);
-    }
-  }, [captionsEnabled]);
-
-  useEffect(() => {
     if (!captionsEnabled || !roomId || !roomToken) {
       return;
     }
@@ -441,23 +435,16 @@ export function RoomPage() {
 
   useEffect(() => {
     if (!recording.active || !recording.startedAt) {
-      setRecordingSeconds(0);
       return;
     }
-    setRecordingSeconds(
-      Math.max(0, Math.floor((Date.now() - recording.startedAt) / 1000)),
-    );
     const timer = window.setInterval(() => {
-      setRecordingSeconds(
-        Math.max(0, Math.floor((Date.now() - recording.startedAt!) / 1000)),
-      );
+      setRecordingTick(Date.now());
     }, 1000);
     return () => window.clearInterval(timer);
   }, [recording.active, recording.startedAt]);
 
   useEffect(() => {
     if (!recording.active || !localMedia.stream) return;
-    setCompletedRecording(null);
     let cancelled = false;
     (async () => {
       if (!recordingManagerRef.current) {
@@ -498,6 +485,8 @@ export function RoomPage() {
         if (result) {
           setCompletedRecording({ key: result.key, size: result.size });
           toast.success("Recording saved. Click download to save it to your device.");
+        } else {
+          setCompletedRecording(null);
         }
       })
       .catch((error: unknown) => {
@@ -530,6 +519,12 @@ export function RoomPage() {
 
   const peerList = peers;
   const participantCount = Math.max(participants.length, peerList.length + 1);
+  // Derived during render: 0 when not recording, elapsed wall-clock otherwise.
+  // Before the first 1s tick, recordingTick is 0 and this evaluates to 0.
+  const displayRecordingSeconds =
+    recording.active && recording.startedAt
+      ? Math.max(0, Math.floor(((recordingTick || recording.startedAt) - recording.startedAt) / 1000))
+      : 0;
 
   const togglePin = useCallback((participantId: string) => {
     setPinnedParticipants((current) => {
@@ -554,7 +549,13 @@ export function RoomPage() {
   }
 
   function toggleCaptions() {
-    setCaptionsEnabled((enabled) => !enabled);
+    if (captionsEnabled) {
+      setCaptionsEnabled(false);
+      return;
+    }
+    // Retry Deepgram on re-enable instead of sticking to the Whisper fallback.
+    setDeepgramLiveUnavailable(false);
+    setCaptionsEnabled(true);
   }
 
   return (
@@ -609,7 +610,7 @@ export function RoomPage() {
             {recording.active && (
               <Badge className="rounded-full border-0 bg-red-500/90 text-white hover:bg-red-500/90">
                 <span className="mr-1.5 inline-block h-2 w-2 animate-pulse rounded-full bg-white" />
-                REC {formatElapsed(recordingSeconds)}
+                REC {formatElapsed(displayRecordingSeconds)}
               </Badge>
             )}
             {completedRecording && !recording.active && (

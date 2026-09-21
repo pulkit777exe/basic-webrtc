@@ -74,6 +74,27 @@ function AvatarPreview({ user }: { user: ApiUser }) {
   );
 }
 
+/** Module-scope data loader: defined outside the component so the mount
+ *  effect can call it without cascading-render warnings. State updates happen
+ *  after `await`, and setters are passed in explicitly. */
+async function loadSettingsData(setters: {
+  setUser: (user: ApiUser | null) => void;
+  setNameDraft: (name: string) => void;
+  setExportStatus: (status: { canRequest: boolean; retryAfter: number }) => void;
+  setLoading: (loading: boolean) => void;
+}): Promise<void> {
+  try {
+    const [me, exportInfo] = await Promise.all([api.getMe(), api.getDataExportStatus()]);
+    setters.setUser(me.user);
+    setters.setNameDraft(me.user.name);
+    setters.setExportStatus(exportInfo);
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : 'Failed to load settings');
+  } finally {
+    setters.setLoading(false);
+  }
+}
+
 export function SettingsPage() {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -124,22 +145,8 @@ export function SettingsPage() {
 
   const strength = useMemo(() => computeStrength(newPassword), [newPassword]);
 
-  async function loadSettingsData() {
-    setLoading(true);
-    try {
-      const [me, exportInfo] = await Promise.all([api.getMe(), api.getDataExportStatus()]);
-      setUser(me.user);
-      setNameDraft(me.user.name);
-      setExportStatus(exportInfo);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to load settings');
-    } finally {
-      setLoading(false);
-    }
-  }
-
   useEffect(() => {
-    void loadSettingsData();
+    void loadSettingsData({ setUser, setNameDraft, setExportStatus, setLoading });
   }, []);
 
   useEffect(() => {
@@ -227,7 +234,7 @@ export function SettingsPage() {
       setEmailModalOpen(false);
       setEmailVerifyModalOpen(true);
       setEmailPassword('');
-      await loadSettingsData();
+      await loadSettingsData({ setUser, setNameDraft, setExportStatus, setLoading });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to change email');
     } finally {
@@ -242,7 +249,7 @@ export function SettingsPage() {
       toast.success('Email updated successfully');
       setEmailOtp('');
       setEmailVerifyModalOpen(false);
-      await loadSettingsData();
+      await loadSettingsData({ setUser, setNameDraft, setExportStatus, setLoading });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Invalid verification code');
     } finally {
@@ -278,7 +285,7 @@ export function SettingsPage() {
       toast.success('Google account unlinked');
       setUnlinkModalOpen(false);
       setUnlinkPassword('');
-      await loadSettingsData();
+      await loadSettingsData({ setUser, setNameDraft, setExportStatus, setLoading });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to unlink Google account');
     } finally {
@@ -293,7 +300,7 @@ export function SettingsPage() {
       toast.success('Password set successfully');
       setOauthSetPasswordModalOpen(false);
       setSetPasswordValue('');
-      await loadSettingsData();
+      await loadSettingsData({ setUser, setNameDraft, setExportStatus, setLoading });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to set password');
     } finally {
@@ -308,7 +315,7 @@ export function SettingsPage() {
       toast.success(result.message);
       setExportModalOpen(false);
       setExportPassword('');
-      await loadSettingsData();
+      await loadSettingsData({ setUser, setNameDraft, setExportStatus, setLoading });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to request export');
     } finally {

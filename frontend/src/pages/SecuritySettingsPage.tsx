@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -97,6 +97,65 @@ function copyAllCodes(codes: string[]) {
   toast.success('Copied all codes');
 }
 
+/** Module-scope data loaders: defined outside the component so effects can
+ *  call them without triggering cascading-render warnings. State updates
+ *  happen after `await`, and setters are passed in explicitly. */
+
+interface SecurityDataSetters {
+  setUser: (user: ApiUser | null) => void;
+  setSessions: (sessions: SessionItem[]) => void;
+  setBackupRemaining: (remaining: number) => void;
+  setBackupGeneratedAt: (value: string | null) => void;
+  setLoading: (loading: boolean) => void;
+}
+
+async function loadSecurityData(setters: SecurityDataSetters): Promise<void> {
+  try {
+    const [me, sessionResponse, backupStatus] = await Promise.all([
+      api.getMe(),
+      api.getSessions(),
+      api.getBackupCodesStatus(),
+    ]);
+    setters.setUser(me.user);
+    setters.setSessions(sessionResponse.sessions);
+    setters.setBackupRemaining(backupStatus.remaining);
+    setters.setBackupGeneratedAt(backupStatus.backupCodesGeneratedAt);
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : 'Failed to load security settings');
+  } finally {
+    setters.setLoading(false);
+  }
+}
+
+interface LoginEventsSetters {
+  setLoginEvents: (update: (prev: LoginEventItem[]) => LoginEventItem[]) => void;
+  setNextEventsOffset: (offset: number | null) => void;
+  setEventsLoading: (loading: boolean) => void;
+  setEventsLoadingMore: (loading: boolean) => void;
+}
+
+async function loadLoginEvents(input: {
+  reset: boolean;
+  offset: number | null;
+  setters: LoginEventsSetters;
+}): Promise<void> {
+  const targetOffset = input.reset ? 0 : (input.offset ?? 0);
+  if (!input.reset && input.offset === null) return;
+  try {
+    const response = await api.getLoginEvents(targetOffset);
+    input.setters.setLoginEvents((prev) => (input.reset ? response.events : [...prev, ...response.events]));
+    input.setters.setNextEventsOffset(response.nextOffset);
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : 'Failed to load login history');
+  } finally {
+    if (input.reset) {
+      input.setters.setEventsLoading(false);
+    } else {
+      input.setters.setEventsLoadingMore(false);
+    }
+  }
+}
+
 function downloadCodes(codes: string[]) {
   if (codes.length === 0) return;
   const blob = new Blob([buildBackupCodesText(codes)], { type: 'text/plain' });
@@ -152,54 +211,25 @@ export function SecuritySettingsPage() {
   const [disableTotp, setDisableTotp] = useState('');
   const [disableLoading, setDisableLoading] = useState(false);
 
-  const loadSecurityData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [me, sessionResponse, backupStatus] = await Promise.all([
-        api.getMe(),
-        api.getSessions(),
-        api.getBackupCodesStatus(),
-      ]);
-      setUser(me.user);
-      setSessions(sessionResponse.sessions);
-      setBackupRemaining(backupStatus.remaining);
-      setBackupGeneratedAt(backupStatus.backupCodesGeneratedAt);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to load security settings');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const loadLoginEvents = useCallback(async (reset: boolean) => {
-    const targetOffset = reset ? 0 : (nextEventsOffset ?? 0);
-    if (!reset && nextEventsOffset === null) return;
-
-    if (reset) {
-      setEventsLoading(true);
-    } else {
-      setEventsLoadingMore(true);
-    }
-
-    try {
-      const response = await api.getLoginEvents(targetOffset);
-      setLoginEvents((prev) => (reset ? response.events : [...prev, ...response.events]));
-      setNextEventsOffset(response.nextOffset);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to load login history');
-    } finally {
-      if (reset) {
-        setEventsLoading(false);
-      } else {
-        setEventsLoadingMore(false);
-      }
-    }
-  }, [nextEventsOffset]);
-
   useEffect(() => {
-    void loadSecurityData();
-    void loadLoginEvents(true);
-  }, [loadSecurityData, loadLoginEvents]);
+    void loadSecurityData({
+      setUser,
+      setSessions,
+      setBackupRemaining,
+      setBackupGeneratedAt,
+      setLoading,
+    });
+    void loadLoginEvents({
+      reset: true,
+      offset: 0,
+      setters: {
+        setLoginEvents,
+        setNextEventsOffset,
+        setEventsLoading,
+        setEventsLoadingMore,
+      },
+    });
+  }, []);
 
   const backupStatusText = useMemo(() => {
     if (!backupGeneratedAt && backupRemaining === 0) {
@@ -214,8 +244,10 @@ export function SecuritySettingsPage() {
   const lowBackupCodes = backupRemaining < 3;
   const noBackupCodes = backupRemaining === 0;
 
+  // "Now" is captured once at mount: sessions load asynchronously right after,
+  // so this matches the previous memo-on-sessions-change behavior for the 24h window.
+  const [now] = useState(() => Date.now());
   const suspiciousSession = useMemo(() => {
-    const now = Date.now();
     return sessions.find((session) => {
       if (session.isCurrent || !session.createdAt) return false;
       const created = new Date(session.createdAt).getTime();
@@ -223,7 +255,7 @@ export function SecuritySettingsPage() {
       const recent = now - created <= 24 * 60 * 60 * 1000;
       return recent && Boolean(session.location);
     });
-  }, [sessions]);
+  }, [now, sessions]);
 
   function closeGenerateDialog() {
     setGenerateOpen(false);
@@ -251,7 +283,13 @@ export function SecuritySettingsPage() {
       const result = await api.generateBackupCodes(confirmPassword);
       setGeneratedCodes(result.codes);
       setSavedCodes(false);
-      await loadSecurityData();
+      await loadSecurityData({
+        setUser,
+        setSessions,
+        setBackupRemaining,
+        setBackupGeneratedAt,
+        setLoading,
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to generate backup codes');
     } finally {
@@ -273,7 +311,13 @@ export function SecuritySettingsPage() {
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not revoke session');
-      await loadSecurityData();
+      await loadSecurityData({
+        setUser,
+        setSessions,
+        setBackupRemaining,
+        setBackupGeneratedAt,
+        setLoading,
+      });
     }
   }
 
@@ -284,7 +328,13 @@ export function SecuritySettingsPage() {
     try {
       await api.revokeAllSessions(true);
       toast.success('Other sessions revoked');
-      await loadSecurityData();
+      await loadSecurityData({
+        setUser,
+        setSessions,
+        setBackupRemaining,
+        setBackupGeneratedAt,
+        setLoading,
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not revoke sessions');
     }
@@ -299,7 +349,13 @@ export function SecuritySettingsPage() {
       setRecoveryEmailInput('');
       setRecoveryPasswordInput('');
       setShowRecoveryForm(false);
-      await loadSecurityData();
+      await loadSecurityData({
+        setUser,
+        setSessions,
+        setBackupRemaining,
+        setBackupGeneratedAt,
+        setLoading,
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to add recovery email');
     } finally {
@@ -317,7 +373,13 @@ export function SecuritySettingsPage() {
       await api.verifyRecoveryEmail(recoveryOtp.trim());
       toast.success('Recovery email verified');
       setRecoveryOtp('');
-      await loadSecurityData();
+      await loadSecurityData({
+        setUser,
+        setSessions,
+        setBackupRemaining,
+        setBackupGeneratedAt,
+        setLoading,
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Invalid verification code');
     } finally {
@@ -347,7 +409,13 @@ export function SecuritySettingsPage() {
       toast.success('Recovery email removed');
       setRecoveryOtp('');
       setShowRecoveryForm(false);
-      await loadSecurityData();
+      await loadSecurityData({
+        setUser,
+        setSessions,
+        setBackupRemaining,
+        setBackupGeneratedAt,
+        setLoading,
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not remove recovery email');
     } finally {
@@ -402,7 +470,13 @@ export function SecuritySettingsPage() {
       setSetupStep('backup');
       setSetupCodesSaved(false);
       toast.success('Two-factor authentication enabled');
-      await loadSecurityData();
+      await loadSecurityData({
+        setUser,
+        setSessions,
+        setBackupRemaining,
+        setBackupGeneratedAt,
+        setLoading,
+      });
     } catch (error) {
       setSetupError(error instanceof Error ? error.message : 'Invalid code');
     } finally {
@@ -418,7 +492,13 @@ export function SecuritySettingsPage() {
       setDisableOpen(false);
       setDisablePassword('');
       setDisableTotp('');
-      await loadSecurityData();
+      await loadSecurityData({
+        setUser,
+        setSessions,
+        setBackupRemaining,
+        setBackupGeneratedAt,
+        setLoading,
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not disable 2FA');
     } finally {
@@ -741,7 +821,7 @@ export function SecuritySettingsPage() {
                     })}
 
                     {nextEventsOffset !== null ? (
-                      <Button variant="outline" disabled={eventsLoadingMore} onClick={() => void loadLoginEvents(false)}>
+                      <Button variant="outline" disabled={eventsLoadingMore} onClick={() => { setEventsLoadingMore(true); void loadLoginEvents({ reset: false, offset: nextEventsOffset, setters: { setLoginEvents, setNextEventsOffset, setEventsLoading, setEventsLoadingMore } }); }}>
                         {eventsLoadingMore ? 'Loading...' : 'Load more'}
                       </Button>
                     ) : null}

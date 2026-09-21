@@ -60,7 +60,7 @@ export function SuspiciousLoginPage() {
     } catch {
       return [];
     }
-  }, [locationState?.reasons]);
+  }, [locationState]);
 
   const [method, setMethod] = useState<VerifyMethod>('email_otp');
   const [code, setCode] = useState('');

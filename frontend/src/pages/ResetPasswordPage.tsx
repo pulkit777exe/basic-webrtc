@@ -72,7 +72,12 @@ export function ResetPasswordPage() {
   const [searchParams] = useSearchParams();
   const token = searchParams.get("token") ?? "";
 
-  const [pageState, setPageState] = useState<PageState>("validating");
+  const [pageState, setPageState] = useState<PageState>(token ? "validating" : "invalid");
+  // Token that pageState was resolved for. Derived below so a changed token
+  // shows "validating" until its own validation resolves (no setState in effect).
+  const [validatedToken, setValidatedToken] = useState<string | null>(null);
+  const effectivePageState =
+    validatedToken === token ? pageState : token ? "validating" : "invalid";
   const [maskedEmail, setMaskedEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -84,28 +89,25 @@ export function ResetPasswordPage() {
   const [redirectSeconds, setRedirectSeconds] = useState(3);
 
   useEffect(() => {
+    if (!token) return;
     let cancelled = false;
-    if (!token) {
-      setPageState("invalid");
-      return () => {
-        cancelled = true;
-      };
-    }
-    setPageState("validating");
-    setErrorMessage(null);
     void api
       .validateResetPasswordToken(token)
       .then((result) => {
         if (cancelled) return;
         if (!result.valid) {
+          setValidatedToken(null);
           setPageState("invalid");
           return;
         }
         setMaskedEmail(result.email ?? "");
+        setErrorMessage(null);
+        setValidatedToken(token);
         setPageState("ready");
       })
       .catch(() => {
         if (cancelled) return;
+        setValidatedToken(null);
         setPageState("invalid");
       });
     return () => {
@@ -114,7 +116,7 @@ export function ResetPasswordPage() {
   }, [token]);
 
   useEffect(() => {
-    if (pageState !== "success") {
+    if (effectivePageState !== "success") {
       return;
     }
     if (redirectSeconds <= 0) {
@@ -125,7 +127,7 @@ export function ResetPasswordPage() {
       setRedirectSeconds((prev) => prev - 1);
     }, 1000);
     return () => window.clearTimeout(timer);
-  }, [navigate, pageState, redirectSeconds]);
+  }, [navigate, effectivePageState, redirectSeconds]);
 
   const passwordScore = useMemo(() => getPasswordScore(newPassword), [newPassword]);
   const strengthState = useMemo(() => getStrengthState(passwordScore), [passwordScore]);
@@ -180,7 +182,7 @@ export function ResetPasswordPage() {
       <div className="pointer-events-none absolute -right-24 bottom-0 h-80 w-80 rounded-full bg-cyan-400/20 blur-3xl" />
 
       <div className="relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-xl items-center">
-        {pageState === "validating" ? (
+        {effectivePageState === "validating" ? (
           <Card className="card-glow w-full rounded-3xl border-(--meet-border) bg-(--meet-surface) py-0 backdrop-blur-md">
             <CardContent className="flex flex-col items-center gap-3 p-8 text-center">
               <Loader2 className="h-8 w-8 animate-spin text-(--meet-accent)" />
@@ -189,7 +191,7 @@ export function ResetPasswordPage() {
           </Card>
         ) : null}
 
-        {pageState === "invalid" ? (
+        {effectivePageState === "invalid" ? (
           <Card className="card-glow w-full rounded-3xl border-(--meet-border) bg-(--meet-surface) py-0 backdrop-blur-md">
             <CardHeader className="p-6 sm:p-8 sm:pb-2">
               <CardTitle className="text-2xl font-semibold">Invalid or expired link</CardTitle>
@@ -214,7 +216,7 @@ export function ResetPasswordPage() {
           </Card>
         ) : null}
 
-        {pageState === "success" ? (
+        {effectivePageState === "success" ? (
           <Card className="card-glow w-full rounded-3xl border-(--meet-border) bg-(--meet-surface) py-0 backdrop-blur-md">
             <CardHeader className="p-6 sm:p-8 sm:pb-2">
               <CardTitle className="text-2xl font-semibold">Password reset complete</CardTitle>
@@ -235,7 +237,7 @@ export function ResetPasswordPage() {
           </Card>
         ) : null}
 
-        {pageState === "ready" ? (
+        {effectivePageState === "ready" ? (
           <Card className="card-glow w-full rounded-3xl border-(--meet-border) bg-(--meet-surface) py-0 backdrop-blur-md">
             <CardHeader className="p-6 sm:p-8 sm:pb-2">
               <p className="text-xs font-semibold tracking-[0.2em] text-(--meet-text-muted) uppercase">Password reset</p>

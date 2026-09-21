@@ -39,7 +39,7 @@ export function TwoFactorChallengePage() {
   const [backupCode, setBackupCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [tick, setTick] = useState(Date.now());
+  const [tick, setTick] = useState(() => Date.now());
 
   useEffect(() => {
     if (pendingToken) {

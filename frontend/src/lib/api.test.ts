@@ -135,7 +135,7 @@ describe('api module', () => {
         jsonResponse({ room: { id: 'r1', title: 'T', hostId: 'h1', isLocked: false, maxParticipants: 10, createdAt: '2025-01-01' } }),
       );
       const res = await api.createRoom({ title: 'T' });
-      expect('room' in res && (res as any).room.id).toBe('r1');
+      expect('room' in res && res.room.id).toBe('r1');
     });
   });
 

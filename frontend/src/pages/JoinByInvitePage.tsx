@@ -37,18 +37,17 @@ export function JoinByInvitePage() {
   const [step, setStep] = useState<JoinStep>("loading_invite");
   const [error, setError] = useState<string | null>(null);
   const [roomData, setRoomData] = useState<{ room: RoomInfo } | null>(null);
-  const [authChecked, setAuthChecked] = useState(false);
   const [passcode, setPasscode] = useState("");
   const [passcodeError, setPasscodeError] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
+  // Derived during render: true once the authenticated user is known.
+  const authChecked = user !== null;
 
   // Handle unauthenticated user - preserve invite token in sessionStorage (Fix 4)
   useEffect(() => {
     if (!user && token) {
       sessionStorage.setItem("pendingInvite", `/join/${token}`);
       navigate("/login", { replace: true });
-    } else if (user) {
-      setAuthChecked(true);
     }
   }, [user, token, navigate]);
 

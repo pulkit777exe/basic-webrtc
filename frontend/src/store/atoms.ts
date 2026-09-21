@@ -1,5 +1,5 @@
 import { atom } from "jotai";
-import { atomFamily } from "jotai/utils";
+import { atomFamily } from "jotai-family";
 
 export interface WaitingParticipant {
   id: string;
@@ -54,7 +54,7 @@ export interface PeerState {
   handRaisedAt: number | null;
 }
 
-export interface LocalMedia {
+interface LocalMedia {
   stream: MediaStream | null;
   video: boolean;
   audio: boolean;
@@ -71,7 +71,7 @@ export interface Message {
   createdAt?: string;
 }
 
-export interface PinnedChatMessage {
+interface PinnedChatMessage {
   messageId: string;
   text: string;
   authorName: string;
@@ -95,7 +95,7 @@ export interface Participant {
   handRaised: boolean;
 }
 
-export interface UIState {
+interface UIState {
   chatOpen: boolean;
   participantsOpen: boolean;
   waitingRoomOpen: boolean;
@@ -116,7 +116,7 @@ export interface ConsentState {
 export const userAtom = atom<User | null>(null);
 export const roomAtom = atom<Room | null>(null);
 export const roomTokenAtom = atom<string | null>(null);
-export const peerAtomFamily = atomFamily((_userId: string) =>
+export const peerAtomFamily = atomFamily(() =>
   atom<PeerState | null>(null)
 );
 export const peerIdsAtom = atom<string[]>([]);
@@ -132,7 +132,6 @@ export const localMediaAtom = atom<LocalMedia>({
   audio: true,
   screen: false,
 });
-export const shareScreenAudioAtom = atom<boolean>(false);
 const MAX_CHAT_MESSAGES = 500;
 export const chatAtom = atom<Message[]>([]);
 export const appendChatAtom = atom(null, (get, set, update: Message) => {
@@ -202,7 +201,7 @@ export const canManageAtom = atom((get) => {
   return role === "host" || role === "co-host";
 });
 
-export interface HandRaisedEntry {
+interface HandRaisedEntry {
   userId: string;
   name: string;
   timestamp: number;
