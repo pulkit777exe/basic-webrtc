@@ -9,7 +9,7 @@ import { Router, Request, Response } from 'express';
 import { and, desc, eq, gt, isNull, ne, or, sql } from 'drizzle-orm';
 import { refreshTokens } from '../services/auth.js';
 import { createAndSendOtp, verifyOtp } from '../services/otp.js';
-import { SignupPayload, LoginPayload } from '../types/index.js';
+import { SignupPayload } from '../types/index.js';
 import { redis, setRefreshSession, deleteRefreshSession } from '../config/redis.js';
 import { logoutRevoke, authenticateToken } from '../middleware/auth.js';
 import { db } from '../db/index.js';

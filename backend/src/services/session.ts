@@ -10,7 +10,7 @@ import { userSessions } from '../db/schema.js';
 const DEFAULT_SESSION_TTL_SECONDS = 24 * 60 * 60;
 const LAST_ACTIVE_DEBOUNCE_SECONDS = 5 * 60;
 
-export interface ParsedDeviceInfo {
+interface ParsedDeviceInfo {
   deviceName: string | null;
   deviceType: 'desktop' | 'mobile' | 'tablet' | 'unknown';
   browser: string | null;
@@ -20,7 +20,7 @@ export interface ParsedDeviceInfo {
   location: string | null;
 }
 
-export interface SessionListItem {
+interface SessionListItem {
   id: string;
   tokenHash: string;
   deviceName: string | null;
@@ -34,7 +34,7 @@ export interface SessionListItem {
   isCurrent: boolean;
 }
 
-export interface SessionCreationResult {
+interface SessionCreationResult {
   sessionId: string;
   tokenHash: string;
   deviceInfo: ParsedDeviceInfo;

@@ -4,18 +4,6 @@ export type PublicUser = {
   avatarUrl?: string | null;
 };
 
-export type AdminAction =
-  | 'mute-user'
-  | 'mute-all'
-  | 'remove-user'
-  | 'lock-room'
-  | 'promote'
-  | 'reactions-toggle'
-  | 'admit'
-  | 'deny'
-  | 'start-recording'
-  | 'stop-recording';
-
 export type Signal =
   | { type: 'offer'; to: string; sdp: RTCSessionDescriptionInit }
   | { type: 'answer'; to: string; sdp: RTCSessionDescriptionInit }
@@ -25,7 +13,6 @@ export type Signal =
   | { type: 'chat'; content: string; timestamp: number; id?: string }
   | { type: 'chat_pin'; messageId: string; text: string; authorName: string }
   | { type: 'chat_reaction'; messageId: string; emoji: string }
-  | { type: 'admin'; action: AdminAction; targetUserId?: string }
   | { type: 'admin_mute'; targetId: string }
   | { type: 'admin_mute_all' }
   | { type: 'admin_unmute_all' }
@@ -96,7 +83,6 @@ export function isSignal(obj: unknown): obj is Signal {
     'chat',
     'chat_pin',
     'chat_reaction',
-    'admin',
     'admin_mute',
     'admin_mute_all',
     'admin_unmute_all',

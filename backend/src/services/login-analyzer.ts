@@ -5,7 +5,7 @@ import { redis } from '../config/redis.js';
 import { db } from '../db/index.js';
 import { loginEvents, userSessions } from '../db/schema.js';
 
-export interface LoginContext {
+interface LoginContext {
   userId: string;
   ipAddress: string;
   userAgent: string;
@@ -16,7 +16,7 @@ export interface LoginContext {
   deviceType: string;
 }
 
-export interface SuspicionResult {
+interface SuspicionResult {
   isSuspicious: boolean;
   reasons: string[];
   riskScore: number;

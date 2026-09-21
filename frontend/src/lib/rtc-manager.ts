@@ -111,7 +111,7 @@ export const RTCManager = {
 
   setLocalStream(stream: MediaStream | null) {
     localStream = stream;
-    peerConnections.forEach((connection, _userId) => {
+    peerConnections.forEach((connection) => {
       attachLocalTracks(connection, stream);
     });
   },
@@ -321,7 +321,7 @@ export const RTCManager = {
   },
 
   replaceTrack(kind: 'audio' | 'video' | string, track: MediaStreamTrack | null) {
-    peerConnections.forEach((connection, _userId) => {
+    peerConnections.forEach((connection) => {
       const transceivers = connection.getTransceivers();
       const transceiver = transceivers.find((t) => t.receiver?.track?.kind === kind || t.sender?.track?.kind === kind);
       

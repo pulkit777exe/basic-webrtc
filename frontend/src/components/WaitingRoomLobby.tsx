@@ -7,7 +7,7 @@ import {
   waitingRoomPositionAtom,
 } from "@/store/atoms";
 import { Button } from "@/components/ui/button";
-import { getWsUrl } from "@/lib/ws-manager";
+import { signalingWsUrl } from "@/config/api";
 
 type WaitingSignal =
   | {
@@ -108,7 +108,7 @@ export function WaitingRoomLobby({
 
   // Waiting WebSocket
   useEffect(() => {
-    const url = `${getWsUrl()}?token=${encodeURIComponent(waitingToken)}`;
+    const url = signalingWsUrl(waitingToken);
     const ws = new WebSocket(url);
     wsRef.current = ws;
 

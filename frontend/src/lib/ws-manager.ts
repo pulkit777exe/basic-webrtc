@@ -26,16 +26,7 @@ import { toast } from "sonner";
 import { RTCManager } from "./rtc-manager";
 import { handleSignal } from "./signal-handler";
 import { playHandRaiseSound } from "./hand-raise-sound";
-
-export function getWsUrl(): string {
-  const env =
-    import.meta.env.VITE_WS_URL ||
-    import.meta.env.VITE_API_URL ||
-    "http://localhost:4000";
-  // If the env already ends with /ws, use it as-is; otherwise append /ws
-  const base = env.replace(/^http/, "ws").replace(/\/+$/, "");
-  return base.endsWith("/ws") ? base : `${base}/ws`;
-}
+import { signalingWsUrl } from "@/config/api";
 
 type Signal =
   | { type: "offer"; to: string; sdp: RTCSessionDescriptionInit; from?: string }
@@ -63,7 +54,6 @@ type Signal =
       from?: string;
     }
   | { type: "audio-activity"; level: number; speaking: boolean; from?: string }
-  | { type: "admin"; action: string; targetUserId?: string }
   | { type: "admin_mute"; targetId: string }
   | { type: "admin_mute_all" }
   | { type: "admin_kick"; targetId: string }
@@ -221,7 +211,7 @@ let lastPongReceived = true;
 export const WSManager = {
   connect(roomToken: string) {
     intentionalDisconnect = false;
-    const url = `${getWsUrl()}?token=${encodeURIComponent(roomToken)}`;
+    const url = signalingWsUrl(roomToken);
     ws = new WebSocket(url);
 
     ws.onopen = () => {

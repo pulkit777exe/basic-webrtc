@@ -1,7 +1,7 @@
-const API_BASE = (
-  import.meta.env.VITE_API_URL || "http://localhost:4000"
-).replace(/\/$/, "");
-export const API_BASE_URL = API_BASE;
+import { API_URL } from "@/config/api";
+
+/** Base REST origin. Defined in `@/config/api` (fails fast without VITE_API_URL in prod). */
+export const API_BASE_URL = API_URL;
 const parsedTimeoutMs = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15000);
 const API_TIMEOUT_MS =
   Number.isFinite(parsedTimeoutMs) && parsedTimeoutMs > 0
@@ -69,7 +69,7 @@ async function request<T>(
     (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
   }
   try {
-    const res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
       credentials: "include",
       headers,
@@ -97,7 +97,7 @@ async function request<T>(
     return data as T;
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      throw new Error(`Request timed out after ${API_TIMEOUT_MS}ms`);
+      throw new Error(`Request timed out after ${API_TIMEOUT_MS}ms`, { cause: err });
     }
     throw err;
   } finally {
@@ -289,7 +289,7 @@ export const api = {
   },
 
   getRecordingDownloadUrl(roomId: string) {
-    return `${API_BASE}/api/recordings/${roomId}/download`;
+    return `${API_BASE_URL}/api/recordings/${roomId}/download`;
   },
 
   async getWaitingRoom(roomId: string) {

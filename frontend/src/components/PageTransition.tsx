@@ -44,25 +44,3 @@ export function PageTransition({ children }: PageTransitionProps) {
 
   return <div ref={ref}>{children}</div>;
 }
-
-export function usePageExitAnimation() {
-  const ref = useRef<HTMLDivElement>(null);
-
-  const exit = () => {
-    return new Promise<void>((resolve) => {
-      if (!ref.current) {
-        resolve();
-        return;
-      }
-      gsap.to(ref.current, {
-        opacity: 0,
-        y: -8,
-        duration: 0.25,
-        ease: 'power2.in',
-        onComplete: () => resolve(),
-      });
-    });
-  };
-
-  return { ref, exit };
-}

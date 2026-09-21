@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import multer from 'multer';
 import { db } from '../db';
 import { rooms, users, roomParticipants, roomSettings, messages } from '../db/schema';
-import { authenticate, authenticateToken, optionalAuthenticate } from '../middleware/auth';
+import { authenticateToken, optionalAuthenticate } from '../middleware/auth';
 import { generateRoomId } from '../utils/validation';
 import { generateRoomToken, generateWaitingToken } from '../utils/jwt';
 import { eq, and, desc, sql } from 'drizzle-orm';
@@ -31,7 +31,6 @@ import {
 import { redis } from '../config/redis';
 import { verifyRoomToken } from '../utils/jwt';
 import { apiLimiter } from '../lib/rate-limiters';
-import { verifyAccessToken } from '../utils/jwt';
 import { globalLimiter } from '../lib/rate-limiters';
 
 async function resolveCanonicalRoomId(raw: string): Promise<string | null> {
@@ -437,12 +436,6 @@ router.get('/:id/state', authenticateToken, async (req: Request<{ id: string }>,
       res.status(404).json({ error: 'Room not found', code: 'ROOM_NOT_FOUND' });
       return;
     }
-
-    const [settings] = await db
-      .select()
-      .from(roomSettings)
-      .where(eq(roomSettings.roomId, id))
-      .limit(1);
 
     const [redisMeta, reactionsEnabled, forceMuted, activeSpeaker, participantCount] =
       await Promise.all([

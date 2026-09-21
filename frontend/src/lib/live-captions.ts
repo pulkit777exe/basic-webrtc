@@ -1,14 +1,5 @@
 import { api } from "@/lib/api";
-import { getWsUrl } from "@/lib/ws-manager";
-
-/** Room JWT — same token as signaling `/ws`. */
-export function getLiveCaptionsWsUrl(roomToken: string): string {
-  const wsBase = getWsUrl();
-  const origin = wsBase.endsWith("/ws")
-    ? wsBase.slice(0, -"/ws".length)
-    : wsBase.replace(/\/?ws\/?$/, "");
-  return `${origin}/ws/live-captions?token=${encodeURIComponent(roomToken)}`;
-}
+import { liveCaptionsWsUrl } from "@/config/api";
 
 function attachLinear16CaptionsPcm(
   stream: MediaStream,
@@ -66,7 +57,7 @@ export function startDeepgramLiveCaptions(opts: {
   const tracks = opts.stream.getAudioTracks?.() ?? [];
   if (!tracks.length) return null;
 
-  const url = getLiveCaptionsWsUrl(opts.roomToken);
+  const url = liveCaptionsWsUrl(opts.roomToken);
   const ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
 

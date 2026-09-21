@@ -85,16 +85,6 @@ export function verifyRoomToken(token: string): RoomTokenPayload | null {
   }
 }
 
-export function decodeAccessToken(token: string): AccessTokenPayload | null {
-  try {
-    const decoded = jwt.decode(token) as (AccessTokenPayload & { exp?: number }) | null;
-    if (!decoded || !decoded.exp) return null;
-    return decoded as AccessTokenPayload;
-  } catch {
-    return null;
-  }
-}
-
 export function verifyTwoFactorPendingToken(token: string): TwoFactorPendingPayload | null {
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as TwoFactorPendingPayload;
@@ -105,10 +95,4 @@ export function verifyTwoFactorPendingToken(token: string): TwoFactorPendingPayl
   } catch {
     return null;
   }
-}
-
-export function getRefreshTokenExpiry(): Date {
-  const expiry = new Date();
-  expiry.setDate(expiry.getDate() + 7);
-  return expiry;
 }

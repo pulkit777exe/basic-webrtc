@@ -18,52 +18,36 @@ export function roomParticipantsKey(roomId: string): string {
   return `room:${roomId}:participants`;
 }
 
-export function roomLockedKey(roomId: string): string {
-  return `room:${roomId}:locked`;
-}
-
-export function roomReactionsEnabledKey(roomId: string): string {
-  return `room:${roomId}:settings:reactions`;
-}
-
-export function roomPinnedMessageKey(roomId: string): string {
-  return `room:${roomId}:pinnedMessage`;
-}
-
-export function roomActiveSpeakerKey(roomId: string): string {
+function roomActiveSpeakerKey(roomId: string): string {
   return `room:${roomId}:activeSpeaker`;
 }
 
-export function roomRecordingKey(roomId: string): string {
+function roomRecordingKey(roomId: string): string {
   return `room:${roomId}:recording`;
 }
 
-export function roomKickedKey(roomId: string): string {
+function roomKickedKey(roomId: string): string {
   return `room:${roomId}:kicked`;
 }
 
-export function roomForceMutedKey(roomId: string): string {
+function roomForceMutedKey(roomId: string): string {
   return `room:${roomId}:forceMuted`;
 }
 
-export function roomKey(roomId: string): string {
+function roomKey(roomId: string): string {
   return `room:${roomId}`;
 }
 
-export function roomPeersKey(roomId: string): string {
+function roomPeersKey(roomId: string): string {
   return `room:${roomId}:peers`;
 }
 
-export function roomRolesKey(roomId: string): string {
+function roomRolesKey(roomId: string): string {
   return `room:${roomId}:roles`;
 }
 
-export function roomMediaKey(roomId: string): string {
+function roomMediaKey(roomId: string): string {
   return `room:${roomId}:media`;
-}
-
-export function waitingKey(roomId: string): string {
-  return `waiting:${roomId}`;
 }
 
 export function waitingRoomKey(roomId: string): string {
@@ -217,9 +201,11 @@ export async function refreshParticipantTTL(roomId: string): Promise<void> {
 export async function deleteAllRoomKeys(roomId: string): Promise<void> {
   let cursor = '0';
   do {
-    // @ts-ignore
-    const [newCursor, keys] = await redis.scan(cursor, { match: `room:${roomId}:*`, count: 100 });
-    cursor = newCursor as unknown as string;
+    const [newCursor, keys] = (await redis.scan(cursor, {
+      match: `room:${roomId}:*`,
+      count: 100,
+    })) as unknown as [string | number, string[]];
+    cursor = String(newCursor);
     if (Array.isArray(keys) && keys.length > 0) {
       await redis.del(...(keys as string[]));
     }
@@ -338,24 +324,6 @@ export async function setRoomPinnedMessage(
   }
 }
 
-export async function getRoomPinnedMessage(
-  roomId: string,
-): Promise<{ messageId: string; text: string; authorName: string } | null> {
-  const key = roomKey(roomId);
-  const raw = await redis.hget<string>(key, 'pinnedMessage');
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as {
-      messageId: string;
-      text: string;
-      authorName: string;
-    };
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
 export async function canPerformAdminAction(
   roomId: string,
   actorId: string,
@@ -388,12 +356,11 @@ export async function clearRoomState(roomId: string): Promise<void> {
   pipe.del(roomPeersKey(roomId));
   pipe.del(roomRolesKey(roomId));
   pipe.del(roomMediaKey(roomId));
-  pipe.del(waitingKey(roomId));
   pipe.del(waitingRoomKey(roomId));
   await pipe.exec();
 }
 
-export function roomHandRaisedKey(roomId: string): string {
+function roomHandRaisedKey(roomId: string): string {
   return `room:${roomId}:handRaised`;
 }
 
@@ -422,14 +389,6 @@ export async function getHandRaisedMap(
     result[k] = Number(v);
   }
   return result;
-}
-
-export async function isHandRaised(
-  roomId: string,
-  userId: string,
-): Promise<boolean> {
-  const val = await redis.hget(roomHandRaisedKey(roomId), userId);
-  return val != null;
 }
 
 export function roomSignalChannel(roomId: string): string {

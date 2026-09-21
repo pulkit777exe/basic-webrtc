@@ -5,13 +5,9 @@ import { BloomFilter } from 'bloom-filters';
 const EXPECTED_USERNAMES = 100000;
 const FALSE_POSITIVE_RATE = 0.01;
 
-export const usernameBloomFilter = BloomFilter.create(EXPECTED_USERNAMES, FALSE_POSITIVE_RATE);
+const usernameBloomFilter = BloomFilter.create(EXPECTED_USERNAMES, FALSE_POSITIVE_RATE);
 
 let seeded = false;
-
-export function isSeeded(): boolean {
-  return seeded;
-}
 
 export function markSeeded(): void {
   seeded = true;
