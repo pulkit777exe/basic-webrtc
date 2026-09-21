@@ -291,15 +291,6 @@ const handleAdminMute: MessageHandler = async (ctx) => {
   });
 };
 
-const handleDeprecatedAdmin: MessageHandler = async (ctx) => {
-  logger.warn('Received deprecated admin message type', {
-    roomId: ctx.roomId,
-    userId: ctx.userId,
-    action: ctx.signal.action,
-  });
-  ctx.handler.sendError(ctx.ws, 'Deprecated message type. Use specific admin actions instead.');
-};
-
 // ── Recording ────────────────────────────────────────────────────
 
 const handleRecordingStart: MessageHandler = async (ctx) => {
@@ -417,7 +408,6 @@ export const handlerRegistry = new Map<string, MessageHandler>([
   ['admin_promote', handleAdminPromote],
   ['admin_pin_message', handleAdminPinMessage],
   ['admin_mute', handleAdminMute],
-  ['admin', handleDeprecatedAdmin],
   // Recording
   ['recording_start', handleRecordingStart],
   ['recording_stop', handleRecordingStop],
