@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { db } from '../db';
-import { recordingSessions } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { recordingSessions, rooms, roomParticipants } from '../db/schema';
+import { eq, and } from 'drizzle-orm';
 import { authenticateToken } from '../middleware/auth';
 import { requireVerifiedEmail } from '../middleware/verified-email';
 import { getRecordingState } from '../lib/redis-rooms';
@@ -15,6 +15,25 @@ router.get(
   async (req: Request<{ id: string }>, res: Response): Promise<void> => {
     try {
       const { id: roomId } = req.params;
+      const userId = req.user!.id;
+
+      // Only members of the room may read its recording status.
+      const [roomRow] = await db
+        .select({ hostId: rooms.hostId })
+        .from(rooms)
+        .where(eq(rooms.id, roomId))
+        .limit(1);
+      if (roomRow?.hostId !== userId) {
+        const [participant] = await db
+          .select({ id: roomParticipants.id })
+          .from(roomParticipants)
+          .where(and(eq(roomParticipants.roomId, roomId), eq(roomParticipants.userId, userId)))
+          .limit(1);
+        if (!participant) {
+          res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
+          return;
+        }
+      }
 
       const sessions = await db
         .select()

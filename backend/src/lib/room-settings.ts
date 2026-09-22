@@ -30,6 +30,50 @@ function boolOr(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
+/**
+ * Tiny in-process TTL cache. `getRoomSettings` runs on every gated chat and
+ * media-state WS message — without this it's one Upstash HGETALL per message
+ * (free tier ≈10k commands/day). Writes go through `setRoomSetting`, which
+ * refreshes the entry, so toggles stay immediately consistent on the single
+ * free-tier instance.
+ */
+export class TtlCache<T> {
+  private readonly entries = new Map<string, { value: T; expiresAt: number }>();
+  private readonly ttlMs: number;
+  private readonly now: () => number;
+
+  constructor(ttlMs: number, now: () => number = Date.now) {
+    this.ttlMs = ttlMs;
+    this.now = now;
+  }
+
+  get(key: string): T | undefined {
+    const entry = this.entries.get(key);
+    if (!entry) return undefined;
+    if (entry.expiresAt <= this.now()) {
+      this.entries.delete(key);
+      return undefined;
+    }
+    return entry.value;
+  }
+
+  set(key: string, value: T): void {
+    this.entries.set(key, { value, expiresAt: this.now() + this.ttlMs });
+  }
+
+  invalidate(key: string): void {
+    this.entries.delete(key);
+  }
+}
+
+const SETTINGS_TTL_MS = 5_000;
+const settingsCache = new TtlCache<RoomSettingsSnapshot>(SETTINGS_TTL_MS);
+
+/** Drop a room's cached settings (call after writes that bypass `setRoomSetting`). */
+export function invalidateRoomSettings(roomId: string): void {
+  settingsCache.invalidate(roomId);
+}
+
 /** Parse the mirrored settings JSON (or a DB row) into a full snapshot. */
 export function parseRoomSettings(raw: unknown): RoomSettingsSnapshot {
   const obj =
@@ -51,10 +95,15 @@ export function parseRoomSettings(raw: unknown): RoomSettingsSnapshot {
 
 /** Settings snapshot: Redis mirror first (fast path), DB fallback, defaults. */
 export async function getRoomSettings(roomId: string): Promise<RoomSettingsSnapshot> {
+  const cached = settingsCache.get(roomId);
+  if (cached) return { ...cached };
+  let snapshot: RoomSettingsSnapshot;
   try {
     const meta = await getRoomMeta(roomId);
     if (meta?.settings) {
-      return parseRoomSettings(JSON.parse(meta.settings));
+      snapshot = parseRoomSettings(JSON.parse(meta.settings));
+      settingsCache.set(roomId, snapshot);
+      return { ...snapshot };
     }
   } catch {
     // Fall through to the database.
@@ -66,18 +115,22 @@ export async function getRoomSettings(roomId: string): Promise<RoomSettingsSnaps
       .where(eq(roomSettings.roomId, roomId))
       .limit(1);
     if (row) {
-      return {
+      snapshot = {
         allowChat: row.allowChat,
         allowScreenShare: row.allowScreenShare,
         muteOnJoin: row.muteOnJoin,
         waitingRoomEnabled: row.waitingRoomEnabled,
         maxRecordingDurationMins: row.maxRecordingDurationMins,
       };
+      settingsCache.set(roomId, snapshot);
+      return { ...snapshot };
     }
   } catch {
     // DB hiccup: fall back to permissive defaults.
   }
-  return { ...DEFAULT_ROOM_SETTINGS };
+  snapshot = { ...DEFAULT_ROOM_SETTINGS };
+  settingsCache.set(roomId, snapshot);
+  return { ...snapshot };
 }
 
 /**
@@ -97,6 +150,7 @@ export async function setRoomSetting<K extends keyof RoomSettingsSnapshot>(
 
   const current = await getRoomSettings(roomId);
   const next: RoomSettingsSnapshot = { ...current, [key]: value };
+  settingsCache.set(roomId, next);
 
   try {
     const meta = await getRoomMeta(roomId);

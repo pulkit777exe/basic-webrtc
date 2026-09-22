@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_ROOM_SETTINGS,
   parseRoomSettings,
+  TtlCache,
 } from './room-settings';
 
 describe('DEFAULT_ROOM_SETTINGS', () => {
@@ -67,5 +68,49 @@ describe('parseRoomSettings', () => {
 
   it('floors fractional caps', () => {
     expect(parseRoomSettings({ maxRecordingDurationMins: 45.9 }).maxRecordingDurationMins).toBe(45);
+  });
+});
+
+describe('TtlCache', () => {
+  it('returns the cached value within the TTL', () => {
+    let now = 1_000;
+    const cache = new TtlCache<string>(5_000, () => now);
+    cache.set('room-a', 'on');
+    now = 5_999;
+    expect(cache.get('room-a')).toBe('on');
+  });
+
+  it('expires the entry once the TTL elapses', () => {
+    let now = 1_000;
+    const cache = new TtlCache<string>(5_000, () => now);
+    cache.set('room-a', 'on');
+    now = 6_000;
+    expect(cache.get('room-a')).toBeUndefined();
+  });
+
+  it('refreshes the TTL on overwrite (write-through from setRoomSetting)', () => {
+    let now = 1_000;
+    const cache = new TtlCache<string>(5_000, () => now);
+    cache.set('room-a', 'on');
+    now = 4_000;
+    cache.set('room-a', 'off');
+    now = 8_999;
+    expect(cache.get('room-a')).toBe('off');
+    now = 9_000;
+    expect(cache.get('room-a')).toBeUndefined();
+  });
+
+  it('invalidate drops the entry immediately', () => {
+    const cache = new TtlCache<string>(5_000, () => 1_000);
+    cache.set('room-a', 'on');
+    cache.invalidate('room-a');
+    expect(cache.get('room-a')).toBeUndefined();
+  });
+
+  it('keeps rooms independent and misses unknown keys', () => {
+    const cache = new TtlCache<number>(5_000, () => 0);
+    cache.set('room-a', 1);
+    expect(cache.get('room-b')).toBeUndefined();
+    expect(cache.get('room-a')).toBe(1);
   });
 });

@@ -28,7 +28,7 @@ import {
   getActiveSpeaker,
   type WaitingParticipant,
 } from '../lib/redis-rooms';
-import { getRoomSettings } from '../lib/room-settings';
+import { getRoomSettings, invalidateRoomSettings } from '../lib/room-settings';
 import { redis } from '../config/redis';
 import { verifyRoomToken } from '../utils/jwt';
 import { apiLimiter } from '../lib/rate-limiters';
@@ -250,6 +250,7 @@ router.delete(
       await db.update(rooms).set({ endedAt: new Date() }).where(eq(rooms.id, id));
       await redis.publish(roomEndedChannel(id), JSON.stringify({ roomId: id }));
       await clearRoomState(id);
+      invalidateRoomSettings(id);
 
       res.status(204).send();
     } catch (error) {
@@ -552,9 +553,33 @@ router.get(
         res.status(401).json({ error: 'Unauthorized', code: 'UNAUTHORIZED' });
         return;
       }
-      if (roomPayload && roomPayload.roomId !== id) {
-        res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
-        return;
+      if (roomPayload) {
+        // Room tokens are roomId-scoped; waiting tokens are pre-admission and
+        // must not read chat history before being let in.
+        if (roomPayload.roomId !== id || roomPayload.waiting === true) {
+          res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
+          return;
+        }
+      } else if (userPayload) {
+        // Session-authenticated callers must actually belong to the room.
+        const [roomRow] = await db
+          .select({ hostId: rooms.hostId })
+          .from(rooms)
+          .where(eq(rooms.id, id))
+          .limit(1);
+        if (roomRow?.hostId !== userPayload.id) {
+          const [participant] = await db
+            .select({ id: roomParticipants.id })
+            .from(roomParticipants)
+            .where(
+              and(eq(roomParticipants.roomId, id), eq(roomParticipants.userId, userPayload.id)),
+            )
+            .limit(1);
+          if (!participant) {
+            res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
+            return;
+          }
+        }
       }
 
       const list = await db

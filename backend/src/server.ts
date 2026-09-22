@@ -11,6 +11,7 @@ import cookieParser from 'cookie-parser';
 import { WebSocketHandler } from './websocket/handler';
 import { attachLiveCaptionsBridge, type LiveCaptionAuth } from './websocket/live-captions-bridge';
 import { verifyRoomToken } from './utils/jwt';
+import { isAllowedOrigin } from './utils/origin';
 import authRoutes from './routes/auth';
 import oauthRoutes from './routes/oauth';
 import accountRoutes from './routes/account';
@@ -59,7 +60,8 @@ app.use((req, res, next) => {
   res.setHeader('X-Request-Id', id);
   next();
 });
-app.use(express.json({ limit: '10mb' }));
+// JSON bodies are tiny (auth, settings, invites); big uploads use multer.
+app.use(express.json({ limit: '256kb' }));
 app.use(cookieParser());
 app.use(passport.initialize());
 app.use(globalLimiter);
@@ -120,6 +122,14 @@ const wssLive = new WebSocketServer({ noServer: true });
 attachLiveCaptionsBridge(wssLive);
 
 server.on('upgrade', (request, socket, head) => {
+  // CSWSH hardening: browsers must come from an allowlisted origin. Tokens are
+  // room-scoped and carried in the URL, so a foreign page must not be able to
+  // ride one. Non-browser clients omit Origin and still need a valid token.
+  if (!isAllowedOrigin(request.headers.origin, ALLOWED_ORIGINS)) {
+    socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+    socket.destroy();
+    return;
+  }
   const path = request.url?.split('?')[0];
   const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
   const token =
