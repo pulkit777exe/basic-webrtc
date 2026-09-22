@@ -3,7 +3,7 @@ import { cookieOptions } from '../../utils/cookies.js';
 import { Router, Request, Response } from 'express';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { deleteRefreshSession } from '../../config/redis.js';
-import { authenticateToken } from '../../middleware/auth.js';
+import { authenticateToken, requireUser } from '../../middleware/auth.js';
 import { db } from '../../db/index.js';
 import { backupCodes, users } from '../../db/schema.js';
 import { listActiveSessionsForUser, revokeAllSessionsForUser, revokeSessionById } from '../../services/session.js';
@@ -13,7 +13,9 @@ const router = Router();
 
 router.get('/sessions', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = req.user!.id;
+    const authUser = requireUser(req, res);
+    if (!authUser) return;
+    const userId = authUser.id;
     const currentTokenHash = req.authTokenHash ?? null;
     const sessions = await listActiveSessionsForUser(userId, currentTokenHash);
 
@@ -42,7 +44,9 @@ router.post(
   authenticateToken,
   async (req: Request<{ sessionId: string }>, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const { sessionId } = req.params;
       const result = await revokeSessionById(userId, sessionId);
       if (!result.success || !result.tokenHash) {
@@ -68,7 +72,9 @@ router.post(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const exceptCurrent = parseBoolean(req.body?.exceptCurrent);
       const currentTokenHash = req.authTokenHash ?? null;
       const revokedCount = await revokeAllSessionsForUser(
@@ -94,7 +100,9 @@ router.get(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const [user] = await db
         .select({
           backupCodesGeneratedAt: users.backupCodesGeneratedAt,
@@ -124,7 +132,9 @@ router.post(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const password = typeof req.body?.password === 'string' ? req.body.password : '';
       const [user] = await db
         .select({

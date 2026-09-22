@@ -7,7 +7,7 @@ import { Router, Request, Response } from 'express';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { createAndSendOtp, verifyOtp } from '../../services/otp.js';
 import { redis } from '../../config/redis.js';
-import { authenticateToken } from '../../middleware/auth.js';
+import { authenticateToken, requireUser } from '../../middleware/auth.js';
 import { db } from '../../db/index.js';
 import { backupCodes, users } from '../../db/schema.js';
 import { queueEmail } from '../../services/email.js';
@@ -19,7 +19,9 @@ const router = Router();
 
 router.get('/me', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = req.user!.id;
+    const authUser = requireUser(req, res);
+    if (!authUser) return;
+    const userId = authUser.id;
     const [user] = await db
       .select({
         id: users.id,
@@ -79,7 +81,9 @@ router.get('/me', authenticateToken, async (req: Request, res: Response): Promis
 
 router.patch('/profile', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = req.user!.id;
+    const authUser = requireUser(req, res);
+    if (!authUser) return;
+    const userId = authUser.id;
     const rawName = typeof req.body?.name === 'string' ? req.body.name : '';
     const name = sanitizeProfileName(rawName);
 
@@ -143,7 +147,9 @@ router.post('/profile/avatar', authenticateToken, (req: Request, res: Response):
         .webp({ quality: 85 })
         .toBuffer();
 
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const [user] = await db
         .select({
           avatarUrl: users.avatarUrl,
@@ -179,7 +185,9 @@ router.delete(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const [user] = await db
         .select({
           avatarUrl: users.avatarUrl,
@@ -207,7 +215,9 @@ router.patch(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const currentPassword =
         typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
       const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
@@ -282,7 +292,9 @@ router.patch(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const newEmail =
         typeof req.body?.newEmail === 'string' ? normalizeEmail(req.body.newEmail) : '';
       const password = typeof req.body?.password === 'string' ? req.body.password : '';
@@ -344,7 +356,9 @@ router.get(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const pendingEmail = await redis.get(`email:pending:${req.user!.id}`);
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const pendingEmail = await redis.get(`email:pending:${authUser.id}`);
       res.status(200).json({ pendingEmail });
     } catch (error) {
       console.error('[Pending Email Error]', error);
@@ -358,7 +372,9 @@ router.post(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const otp = typeof req.body?.otp === 'string' ? req.body.otp.trim() : '';
       if (!/^\d{6}$/.test(otp)) {
         res.status(400).json({ error: 'INVALID_OR_EXPIRED_CODE' });

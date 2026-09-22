@@ -4,7 +4,7 @@ import { Router, Request, Response } from 'express';
 import { and, eq, isNull, ne, or, sql } from 'drizzle-orm';
 import { createAndSendOtp, verifyOtp } from '../../services/otp.js';
 import { redis } from '../../config/redis.js';
-import { authenticateToken } from '../../middleware/auth.js';
+import { authenticateToken, requireUser } from '../../middleware/auth.js';
 import { db } from '../../db/index.js';
 import { backupCodes, users } from '../../db/schema.js';
 import { queueEmail } from '../../services/email.js';
@@ -141,7 +141,9 @@ router.post(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const recoveryEmail =
         typeof req.body?.recoveryEmail === 'string' ? normalizeEmail(req.body.recoveryEmail) : '';
       const password = typeof req.body?.password === 'string' ? req.body.password : '';
@@ -224,7 +226,9 @@ router.post(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const [user] = await db
         .select({
           recoveryEmail: users.recoveryEmail,
@@ -266,7 +270,9 @@ router.post(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const otp = typeof req.body?.otp === 'string' ? req.body.otp.trim() : '';
       if (!/^\d{6}$/.test(otp)) {
         res.status(400).json({ error: 'INVALID_OR_EXPIRED_CODE' });
@@ -321,7 +327,9 @@ router.delete(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       await db
         .update(users)
         .set({

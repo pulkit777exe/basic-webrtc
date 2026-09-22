@@ -37,6 +37,23 @@ export interface AuthRequest extends Request {
 
 const RESTRICTED_SESSION_ALLOWED_PATHS = new Set(['/me', '/verify-suspicious-login', '/logout']);
 
+/**
+ * Handler-side guard for routes mounted behind `authenticateToken`. The
+ * middleware guarantees `req.user`, but the type can't see that — so instead
+ * of asserting `req.user!`, narrow it here. If the chain was somehow skipped,
+ * reply 401 and return null so the handler bails without touching req.user.
+ */
+export function requireUser(
+  req: Request,
+  res: Response,
+): { id: string; email: string } | null {
+  if (!req.user) {
+    res.status(401).json({ error: 'UNAUTHORIZED', code: 'UNAUTHORIZED' });
+    return null;
+  }
+  return req.user;
+}
+
 export function authenticate(req: Request, res: Response, next: NextFunction): void {
   const token = extractAccessToken(req);
 

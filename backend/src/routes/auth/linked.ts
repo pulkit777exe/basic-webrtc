@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import { Router, Request, Response } from 'express';
 import { eq } from 'drizzle-orm';
 import { redis } from '../../config/redis.js';
-import { authenticateToken } from '../../middleware/auth.js';
+import { authenticateToken, requireUser } from '../../middleware/auth.js';
 import { db } from '../../db/index.js';
 import { users } from '../../db/schema.js';
 import { queueEmail } from '../../services/email.js';
@@ -18,8 +18,10 @@ router.get(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
       const stateToken = randomBytes(16).toString('hex');
-      await redis.set(`oauth:link-state:${stateToken}`, req.user!.id, {
+      await redis.set(`oauth:link-state:${stateToken}`, authUser.id, {
         ex: OAUTH_LINK_STATE_WINDOW_SECONDS,
       });
       res.redirect(`/api/oauth/google?state=${encodeURIComponent(`link:${stateToken}`)}`);
@@ -187,7 +189,9 @@ router.delete(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const password = typeof req.body?.password === 'string' ? req.body.password : '';
       if (!password) {
         res.status(400).json({ error: 'PASSWORD_REQUIRED' });
@@ -260,7 +264,9 @@ router.post(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
       if (!newPassword) {
         res.status(400).json({ error: 'PASSWORD_REQUIRED' });

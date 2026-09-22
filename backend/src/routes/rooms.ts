@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import multer from 'multer';
 import { db } from '../db';
 import { rooms, users, roomParticipants, roomSettings, messages } from '../db/schema';
-import { authenticateToken, optionalAuthenticate } from '../middleware/auth';
+import { authenticateToken, optionalAuthenticate, requireUser } from '../middleware/auth';
 import { generateRoomId } from '../utils/validation';
 import { generateRoomToken, generateWaitingToken } from '../utils/jwt';
 import { eq, and, desc, sql, inArray } from 'drizzle-orm';
@@ -91,7 +91,9 @@ router.param('roomId', async (req, res, next, raw: string) => {
 
 router.post('/', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = req.user!.id;
+    const authUser = requireUser(req, res);
+    if (!authUser) return;
+    const userId = authUser.id;
     const {
       title = 'Meeting',
       isLocked = false,
@@ -231,7 +233,9 @@ router.delete(
   async (req: Request<{ id: string }>, res: Response): Promise<void> => {
     try {
       const { id } = req.params;
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
 
       const [room] = await db
         .select()
@@ -271,7 +275,9 @@ router.post(
   ): Promise<void> => {
     try {
       const { id } = req.params;
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const { passcode } = req.body;
       const ip = req.ip || 'unknown';
 
@@ -437,7 +443,9 @@ router.post(
  */
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = req.user!.id;
+    const authUser = requireUser(req, res);
+    if (!authUser) return;
+    const userId = authUser.id;
     const roomColumns = {
       id: rooms.id,
       hostId: rooms.hostId,
@@ -612,7 +620,9 @@ router.get(
   async (req: Request<{ id: string }>, res: Response): Promise<void> => {
     try {
       const { id: roomId } = req.params;
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
 
       const role = await getPeerRole(roomId, userId);
       if (role !== 'host' && role !== 'co-host') {
@@ -640,7 +650,9 @@ router.post(
   ): Promise<void> => {
     try {
       const { id: roomId } = req.params;
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const { participantId } = req.body;
 
       if (!participantId || typeof participantId !== 'string') {
@@ -707,7 +719,9 @@ router.post(
   ): Promise<void> => {
     try {
       const { id: roomId } = req.params;
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const { participantId } = req.body;
 
       if (!participantId || typeof participantId !== 'string') {
@@ -760,7 +774,9 @@ router.post(
   async (req: Request<{ id: string }>, res: Response): Promise<void> => {
     try {
       const { id: roomId } = req.params;
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
 
       const role = await getPeerRole(roomId, userId);
       if (role !== 'host') {
@@ -828,7 +844,9 @@ router.post(
   ): Promise<void> => {
     try {
       const { roomId } = req.params;
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const { previousToken } = req.body || {};
 
       // Validate room exists and user is host

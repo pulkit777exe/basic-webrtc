@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { db } from '../db';
 import { recordingSessions, rooms, roomParticipants } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
-import { authenticateToken } from '../middleware/auth';
+import { authenticateToken, requireUser } from '../middleware/auth';
 import { requireVerifiedEmail } from '../middleware/verified-email';
 import { getRecordingState } from '../lib/redis-rooms';
 
@@ -15,7 +15,9 @@ router.get(
   async (req: Request<{ id: string }>, res: Response): Promise<void> => {
     try {
       const { id: roomId } = req.params;
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
 
       // Only members of the room may read its recording status.
       const [roomRow] = await db

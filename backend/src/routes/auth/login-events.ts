@@ -5,7 +5,7 @@ import { Router, Request, Response } from 'express';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { createAndSendOtp, verifyOtp } from '../../services/otp.js';
 import { setRefreshSession } from '../../config/redis.js';
-import { authenticateToken } from '../../middleware/auth.js';
+import { authenticateToken, requireUser } from '../../middleware/auth.js';
 import { db } from '../../db/index.js';
 import { backupCodes, loginEvents, users } from '../../db/schema.js';
 import { generateRefreshToken } from '../../utils/jwt.js';
@@ -118,7 +118,9 @@ router.get(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const offsetRaw = typeof req.query.offset === 'string' ? Number(req.query.offset) : 0;
       const offset = Number.isFinite(offsetRaw) ? Math.max(0, offsetRaw) : 0;
       const limit = 20;
@@ -166,7 +168,9 @@ router.post(
   authenticateToken,
   async (req: Request<{ eventId: string }>, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const { eventId } = req.params;
       const [event] = await db
         .select({ id: loginEvents.id })

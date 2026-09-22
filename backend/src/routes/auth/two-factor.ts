@@ -4,7 +4,7 @@ import { hashToken } from '../../utils/crypto.js';
 import { Router, Request, Response } from 'express';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { redis } from '../../config/redis.js';
-import { authenticateToken } from '../../middleware/auth.js';
+import { authenticateToken, requireUser } from '../../middleware/auth.js';
 import { db } from '../../db/index.js';
 import { backupCodes, users } from '../../db/schema.js';
 import { queueEmail } from '../../services/email.js';
@@ -19,7 +19,9 @@ const router = Router();
 
 router.post('/2fa/setup', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = req.user!.id;
+    const authUser = requireUser(req, res);
+    if (!authUser) return;
+    const userId = authUser.id;
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
 
     const [user] = await db
@@ -79,7 +81,9 @@ router.post(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const totp = typeof req.body?.totp === 'string' ? req.body.totp.trim() : '';
       if (!/^\d{6}$/.test(totp)) {
         res.status(400).json({ error: 'INVALID_CODE' });
@@ -151,7 +155,9 @@ router.post(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const password = typeof req.body?.password === 'string' ? req.body.password : '';
       const totp = typeof req.body?.totp === 'string' ? req.body.totp.trim() : '';
       if (!password || !/^\d{6}$/.test(totp)) {

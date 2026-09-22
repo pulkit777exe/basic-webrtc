@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { requireUser } from '../middleware/auth';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { db } from '../db';
 import { meetingNotes, roomParticipants, rooms, transcriptSegments } from '../db/schema';
@@ -41,7 +42,9 @@ async function canAccess(roomId: string, userId: string, res: Response): Promise
 router.get('/:roomId/transcript', async (req: Request<{ roomId: string }>, res: Response): Promise<void> => {
   try {
     const { roomId } = req.params;
-    if (!(await canAccess(roomId, req.user!.id, res))) return;
+    const authUser = requireUser(req, res);
+    if (!authUser) return;
+    if (!(await canAccess(roomId, authUser.id, res))) return;
     const rawLimit = Number(req.query.limit);
     const limit = Number.isFinite(rawLimit)
       ? Math.min(2000, Math.max(1, Math.floor(rawLimit)))
@@ -68,7 +71,9 @@ router.get('/:roomId/transcript', async (req: Request<{ roomId: string }>, res: 
 router.get('/:roomId/notes', async (req: Request<{ roomId: string }>, res: Response): Promise<void> => {
   try {
     const { roomId } = req.params;
-    if (!(await canAccess(roomId, req.user!.id, res))) return;
+    const authUser = requireUser(req, res);
+    if (!authUser) return;
+    if (!(await canAccess(roomId, authUser.id, res))) return;
     const [latest] = await db
       .select()
       .from(meetingNotes)
@@ -110,7 +115,9 @@ router.post(
   async (req: Request<{ roomId: string }>, res: Response): Promise<void> => {
     try {
       const { roomId } = req.params;
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       if (!(await canAccess(roomId, userId, res))) return;
 
       const rows = await db

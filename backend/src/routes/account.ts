@@ -5,7 +5,7 @@ import bcrypt from 'bcrypt';
 import { and, desc, eq } from 'drizzle-orm';
 import { Router, Request, Response } from 'express';
 import { redis } from '../config/redis';
-import { authenticateToken } from '../middleware/auth';
+import { authenticateToken, requireUser } from '../middleware/auth';
 import { db } from '../db';
 import { deletionRequests, rooms, users } from '../db/schema';
 import { cancelDeletionJob, enqueueDeletion, enqueueExport } from '../jobs/account-jobs';
@@ -69,7 +69,9 @@ router.post('/export/download', (_req, res) => {
 
 router.post('/export', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = req.user!.id;
+    const authUser = requireUser(req, res);
+    if (!authUser) return;
+    const userId = authUser.id;
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
     if (!password) {
       res.status(400).json({ error: 'PASSWORD_REQUIRED' });
@@ -116,7 +118,9 @@ router.get(
   authenticateToken,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const userId = req.user!.id;
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const userId = authUser.id;
       const ttl = await redis.ttl(`export:ratelimit:${userId}`);
       res.status(200).json({
         canRequest: ttl <= 0,
@@ -177,7 +181,9 @@ router.get('/export/download', async (req: Request, res: Response): Promise<void
 
 router.post('/delete', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   try {
-    const userId = req.user!.id;
+    const authUser = requireUser(req, res);
+    if (!authUser) return;
+    const userId = authUser.id;
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
     const confirmation = typeof req.body?.confirmation === 'string' ? req.body.confirmation : '';
 
