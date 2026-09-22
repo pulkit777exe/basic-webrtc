@@ -6,7 +6,7 @@ import { rooms, users, roomParticipants, roomSettings, messages } from '../db/sc
 import { authenticateToken, optionalAuthenticate } from '../middleware/auth';
 import { generateRoomId } from '../utils/validation';
 import { generateRoomToken, generateWaitingToken } from '../utils/jwt';
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, and, desc, sql, inArray } from 'drizzle-orm';
 import bcrypt from 'bcrypt';
 import {
   setRoomMeta,
@@ -28,6 +28,7 @@ import {
   getActiveSpeaker,
   type WaitingParticipant,
 } from '../lib/redis-rooms';
+import { getRoomSettings } from '../lib/room-settings';
 import { redis } from '../config/redis';
 import { verifyRoomToken } from '../utils/jwt';
 import { apiLimiter } from '../lib/rate-limiters';
@@ -206,12 +207,14 @@ router.get('/:id', async (req: Request<{ id: string }>, res: Response): Promise<
     }
 
     const participantCount = await getRoomPeerCount(id);
+    const settings = await getRoomSettings(id);
 
     res.json({
       room: {
         ...room,
         participantCount,
         hasPasscode: Boolean(room.hasPasscode),
+        settings,
       },
     });
   } catch (error) {
@@ -426,6 +429,71 @@ router.post(
 );
 
 // Room state
+
+/**
+ * Rooms the caller hosts or has taken part in — powers the dashboard's
+ * "Recent meetings" list (Google-Meet-style homepage).
+ */
+router.get('/', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.id;
+    const roomColumns = {
+      id: rooms.id,
+      hostId: rooms.hostId,
+      title: rooms.title,
+      isLocked: rooms.isLocked,
+      maxParticipants: rooms.maxParticipants,
+      createdAt: rooms.createdAt,
+      endedAt: rooms.endedAt,
+      hostName: users.name,
+    };
+
+    const [hosted, memberships] = await Promise.all([
+      db
+        .select(roomColumns)
+        .from(rooms)
+        .leftJoin(users, eq(rooms.hostId, users.id))
+        .where(eq(rooms.hostId, userId))
+        .orderBy(desc(rooms.createdAt))
+        .limit(10),
+      db
+        .select({ roomId: roomParticipants.roomId })
+        .from(roomParticipants)
+        .where(eq(roomParticipants.userId, userId))
+        .limit(20),
+    ]);
+
+    const hostedIds = new Set(hosted.map((r) => r.id));
+    const memberRoomIds = memberships.map((m) => m.roomId).filter((id) => !hostedIds.has(id));
+    const participated =
+      memberRoomIds.length > 0
+        ? await db
+            .select(roomColumns)
+            .from(rooms)
+            .leftJoin(users, eq(rooms.hostId, users.id))
+            .where(inArray(rooms.id, memberRoomIds))
+            .orderBy(desc(rooms.createdAt))
+            .limit(10)
+        : [];
+
+    const merged = [...hosted, ...participated]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, 10);
+
+    const result = await Promise.all(
+      merged.map(async (room) => ({
+        ...room,
+        // Live peer count for active rooms; ended rooms read as 0.
+        participantCount: room.endedAt ? 0 : await getRoomPeerCount(room.id),
+      })),
+    );
+
+    res.json({ rooms: result });
+  } catch (error) {
+    console.error('[List Rooms Error]', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 router.get('/:id/state', authenticateToken, async (req: Request<{ id: string }>, res: Response): Promise<void> => {
   try {

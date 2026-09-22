@@ -6,6 +6,7 @@ import {
   setForceMuted,
   setRoomLocked,
   setRoomReactionsEnabled,
+  getRoomReactionsEnabled,
   setPeerRole,
   removePeerFromRoom,
   addToKickedList,
@@ -20,6 +21,8 @@ import {
   setHandRaised,
 } from '../../lib/redis-rooms';
 import { publishSignal } from '../../lib/redis-streams';
+import { getRoomSettings, setRoomSetting } from '../../lib/room-settings';
+import { normalizeAudienceReaction } from '../../lib/audience';
 import { redis } from '../../config/redis';
 import { sanitizeText } from '../../utils/sanitize';
 import { logger } from '../../lib/logger';
@@ -48,13 +51,21 @@ const handlePing: MessageHandler = async (ctx) => {
 // ── Chat ─────────────────────────────────────────────────────────
 
 const handleChat: MessageHandler = async (ctx) => {
+  // Host can disable chat for the room; gated here so UI hiding is cosmetic,
+  // not the control.
+  const settings = await getRoomSettings(ctx.roomId);
+  if (!settings.allowChat) {
+    ctx.handler.sendError(ctx.ws, 'Chat is disabled by the host');
+    return;
+  }
   const content = sanitizeText(String(ctx.signal.content ?? '').slice(0, 2000));
   if (!content.trim()) return;
+  const rawTs = Number(ctx.signal.timestamp);
   const entry = {
     roomId: ctx.roomId,
     userId: ctx.userId,
     content,
-    timestamp: ctx.signal.timestamp ?? Date.now(),
+    timestamp: Number.isFinite(rawTs) && rawTs > 0 ? rawTs : Date.now(),
     id: randomUUID(),
   };
   // Write-ahead: persist to Redis before in-memory buffer for crash safety
@@ -96,6 +107,10 @@ const handleChatReaction: MessageHandler = async (ctx) => {
     ctx.handler.sendError(ctx.ws, 'Invalid chat reaction');
     return;
   }
+  if (!(await getRoomReactionsEnabled(ctx.roomId))) {
+    ctx.handler.sendError(ctx.ws, 'Reactions are disabled');
+    return;
+  }
   ctx.handler.publish(ctx.roomId, {
     type: 'chat_reaction',
     messageId,
@@ -105,19 +120,48 @@ const handleChatReaction: MessageHandler = async (ctx) => {
   });
 };
 
+// ── Audience reactions (floating emoji) ─────────────────────────
+
+const handleReaction: MessageHandler = async (ctx) => {
+  const emoji = normalizeAudienceReaction(ctx.signal.emoji);
+  if (!emoji) {
+    ctx.handler.sendError(ctx.ws, 'Invalid reaction');
+    return;
+  }
+  if (!(await getRoomReactionsEnabled(ctx.roomId))) {
+    ctx.handler.sendError(ctx.ws, 'Reactions are disabled');
+    return;
+  }
+  // 1 burst / 500ms per user keeps the overlay lively without flood risk.
+  const allowed = await redis.set(
+    `ratelimit:reaction:${ctx.roomId}:${ctx.userId}`,
+    '1',
+    { ex: 1, nx: true },
+  );
+  if (!allowed) return;
+  ctx.handler.publish(ctx.roomId, {
+    type: 'reaction',
+    emoji,
+    from: ctx.userId,
+    roomId: ctx.roomId,
+  });
+};
+
 const handleCaption: MessageHandler = async (ctx) => {
   const text = sanitizeText(String(ctx.signal.text ?? '').slice(0, 2000));
   if (!text.trim()) return;
+  const rawCaptionTs = Number(ctx.signal.timestamp);
+  const captionTs = Number.isFinite(rawCaptionTs) && rawCaptionTs > 0 ? rawCaptionTs : Date.now();
   ctx.handler.publish(ctx.roomId, {
     type: 'caption',
     text,
-    timestamp: ctx.signal.timestamp ?? Date.now(),
+    timestamp: captionTs,
     from: ctx.userId,
     roomId: ctx.roomId,
   });
   // Persist finals for the meeting-notes engine (best-effort, throttled
   // in-process to 1 insert/sec/user — finals naturally arrive slower).
-  persistTranscriptSegment(ctx.roomId, ctx.userId, text, ctx.signal.timestamp);
+  persistTranscriptSegment(ctx.roomId, ctx.userId, text, captionTs);
 };
 
 const lastTranscriptPersist = new Map<string, number>();
@@ -147,12 +191,22 @@ function persistTranscriptSegment(
 // ── Media ────────────────────────────────────────────────────────
 
 const handleMediaState: MessageHandler = async (ctx) => {
+  const settings = await getRoomSettings(ctx.roomId);
+  const wantsScreen = Boolean(ctx.signal.screen) && settings.allowScreenShare;
   setPeerMedia(ctx.roomId, ctx.userId, {
-    video: ctx.signal.video,
-    audio: ctx.signal.audio,
-    screen: ctx.signal.screen,
+    video: Boolean(ctx.signal.video),
+    audio: Boolean(ctx.signal.audio),
+    screen: wantsScreen,
   }).catch((e) => logger.error('setPeerMedia failed', { roomId: ctx.roomId, userId: ctx.userId, err: String(e) }));
-  ctx.handler.publish(ctx.roomId, { ...ctx.signal, from: ctx.userId, roomId: ctx.roomId });
+  if (Boolean(ctx.signal.screen) && !wantsScreen) {
+    ctx.handler.sendError(ctx.ws, 'Screen sharing is disabled by the host');
+  }
+  ctx.handler.publish(ctx.roomId, {
+    ...ctx.signal,
+    screen: wantsScreen,
+    from: ctx.userId,
+    roomId: ctx.roomId,
+  });
 };
 
 const handleActiveSpeaker: MessageHandler = async (ctx) => {
@@ -208,7 +262,7 @@ const handleAdminLock: MessageHandler = async (ctx) => {
     ctx.ws.close(4003);
     return;
   }
-  const locked = ctx.signal.locked;
+  const locked = Boolean(ctx.signal.locked);
   await setRoomLocked(ctx.roomId, locked);
   await db.update(rooms).set({ isLocked: locked }).where(eq(rooms.id, ctx.roomId));
   ctx.handler.publish(ctx.roomId, { type: 'room_locked', locked, roomId: ctx.roomId });
@@ -221,17 +275,50 @@ const handleAdminReactionsToggle: MessageHandler = async (ctx) => {
     ctx.ws.close(4003);
     return;
   }
-  await setRoomReactionsEnabled(ctx.roomId, ctx.signal.enabled);
+  const enabled = Boolean(ctx.signal.enabled);
+  await setRoomReactionsEnabled(ctx.roomId, enabled);
   await db
     .update(roomSettings)
-    .set({ reactionsEnabled: ctx.signal.enabled })
+    .set({ reactionsEnabled: enabled })
     .where(eq(roomSettings.roomId, ctx.roomId));
   ctx.handler.publish(ctx.roomId, {
     type: 'admin_reactions_toggle',
-    enabled: ctx.signal.enabled,
+    enabled,
     roomId: ctx.roomId,
   });
   ctx.handler.send(ctx.ws, { type: 'ack', action: 'reactions_toggle' });
+};
+
+const handleAdminChatToggle: MessageHandler = async (ctx) => {
+  const allowed = await requireRole(ctx.roomId, ctx.userId, 'co-host');
+  if (!allowed) {
+    ctx.ws.close(4003);
+    return;
+  }
+  const enabled = Boolean(ctx.signal.enabled);
+  await setRoomSetting(ctx.roomId, 'allowChat', enabled);
+  ctx.handler.publish(ctx.roomId, {
+    type: 'admin_chat_toggle',
+    enabled,
+    roomId: ctx.roomId,
+  });
+  ctx.handler.send(ctx.ws, { type: 'ack', action: 'chat_toggle' });
+};
+
+const handleAdminScreenToggle: MessageHandler = async (ctx) => {
+  const allowed = await requireRole(ctx.roomId, ctx.userId, 'co-host');
+  if (!allowed) {
+    ctx.ws.close(4003);
+    return;
+  }
+  const enabled = Boolean(ctx.signal.enabled);
+  await setRoomSetting(ctx.roomId, 'allowScreenShare', enabled);
+  ctx.handler.publish(ctx.roomId, {
+    type: 'admin_screen_toggle',
+    enabled,
+    roomId: ctx.roomId,
+  });
+  ctx.handler.send(ctx.ws, { type: 'ack', action: 'screen_toggle' });
 };
 
 const handleAdminKick: MessageHandler = async (ctx) => {
@@ -240,23 +327,28 @@ const handleAdminKick: MessageHandler = async (ctx) => {
     ctx.ws.close(4003);
     return;
   }
+  const targetId = String(ctx.signal.targetId ?? '');
+  if (!targetId) {
+    ctx.handler.sendError(ctx.ws, 'Missing target user');
+    return;
+  }
   const roomMeta = await getRoomMeta(ctx.roomId);
   if (!roomMeta) return;
-  if (ctx.signal.targetId === roomMeta.hostId) {
+  if (targetId === roomMeta.hostId) {
     ctx.handler.sendError(ctx.ws, 'Cannot kick the host');
     return;
   }
-  await removePeerFromRoom(ctx.roomId, ctx.signal.targetId);
-  await addToKickedList(ctx.roomId, ctx.signal.targetId);
+  await removePeerFromRoom(ctx.roomId, targetId);
+  await addToKickedList(ctx.roomId, targetId);
   await publishSignal(ctx.roomId, {
     type: 'kicked',
-    targetId: ctx.signal.targetId,
+    targetId,
   });
-  const target = ctx.handler.getRoomSocket(ctx.roomId, ctx.signal.targetId);
+  const target = ctx.handler.getRoomSocket(ctx.roomId, targetId);
   if (target && ctx.handler.isOpen(target)) {
     target.close(4003);
   }
-  ctx.handler.removeFromMap(ctx.roomId, ctx.signal.targetId);
+  ctx.handler.removeFromMap(ctx.roomId, targetId);
   ctx.handler.send(ctx.ws, { type: 'ack', action: 'kick' });
 };
 
@@ -266,16 +358,21 @@ const handleAdminPromote: MessageHandler = async (ctx) => {
     ctx.ws.close(4003);
     return;
   }
-  await setPeerRole(ctx.roomId, ctx.signal.targetId, 'co-host');
+  const promoteTargetId = String(ctx.signal.targetId ?? '');
+  if (!promoteTargetId) {
+    ctx.handler.sendError(ctx.ws, 'Missing target user');
+    return;
+  }
+  await setPeerRole(ctx.roomId, promoteTargetId, 'co-host');
   await db
     .update(roomParticipants)
     .set({ role: 'co-host' })
     .where(
-      and(eq(roomParticipants.roomId, ctx.roomId), eq(roomParticipants.userId, ctx.signal.targetId)),
+      and(eq(roomParticipants.roomId, ctx.roomId), eq(roomParticipants.userId, promoteTargetId)),
     );
   ctx.handler.publish(ctx.roomId, {
     type: 'admin_promote',
-    targetId: ctx.signal.targetId,
+    targetId: promoteTargetId,
     roomId: ctx.roomId,
   });
   ctx.handler.send(ctx.ws, { type: 'ack', action: 'promote' });
@@ -305,14 +402,15 @@ const handleAdminPinMessage: MessageHandler = async (ctx) => {
 };
 
 const handleAdminMute: MessageHandler = async (ctx) => {
-  const allowed = await canPerformAdminAction(ctx.roomId, ctx.userId, 'mute', ctx.signal.targetId);
+  const muteTargetId = String(ctx.signal.targetId ?? '');
+  const allowed = await canPerformAdminAction(ctx.roomId, ctx.userId, 'mute', muteTargetId);
   if (!allowed) {
     ctx.handler.sendError(ctx.ws, 'Unauthorized');
     return;
   }
   ctx.handler.publish(ctx.roomId, {
     type: 'admin_mute',
-    targetId: ctx.signal.targetId,
+    targetId: muteTargetId,
     from: ctx.userId,
     roomId: ctx.roomId,
   });
@@ -349,30 +447,31 @@ const handleRecordingStop: MessageHandler = async (ctx) => {
 // ── Misc ─────────────────────────────────────────────────────────
 
 const handleHandRaise: MessageHandler = async (ctx) => {
-  const targetId = ctx.signal.targetUserId;
+  const targetId = ctx.signal.targetUserId ? String(ctx.signal.targetUserId) : undefined;
+  const raised = Boolean(ctx.signal.raised);
   if (targetId) {
     const role = await getPeerRole(ctx.roomId, ctx.userId);
     if (role !== 'host' && role !== 'co-host') {
       ctx.handler.sendError(ctx.ws, 'Unauthorized');
       return;
     }
-    await setHandRaised(ctx.roomId, targetId, ctx.signal.raised);
+    await setHandRaised(ctx.roomId, targetId, raised);
     ctx.handler.publish(ctx.roomId, {
       type: 'hand_raise',
-      raised: ctx.signal.raised,
+      raised,
       from: targetId,
       roomId: ctx.roomId,
-      timestamp: ctx.signal.raised ? Date.now() : null,
+      timestamp: raised ? Date.now() : null,
     });
     return;
   }
-  await setHandRaised(ctx.roomId, ctx.userId, ctx.signal.raised);
+  await setHandRaised(ctx.roomId, ctx.userId, raised);
   ctx.handler.publish(ctx.roomId, {
     type: 'hand_raise',
-    raised: ctx.signal.raised,
+    raised,
     from: ctx.userId,
     roomId: ctx.roomId,
-    timestamp: ctx.signal.raised ? Date.now() : null,
+    timestamp: raised ? Date.now() : null,
   });
 };
 
@@ -382,7 +481,9 @@ const handleWaiting: MessageHandler = async (ctx) => {
     ctx.handler.sendError(ctx.ws, 'Unauthorized');
     return;
   }
-  await removeFromWaitingRoom(ctx.roomId, ctx.signal.userId);
+  const waitingUserId = String(ctx.signal.userId ?? '');
+  if (!waitingUserId) return;
+  await removeFromWaitingRoom(ctx.roomId, waitingUserId);
   ctx.handler.publish(ctx.roomId, { ...ctx.signal, from: ctx.userId, roomId: ctx.roomId });
 };
 
@@ -398,6 +499,7 @@ export const handlerRegistry = new Map<string, MessageHandler>([
   ['chat', handleChat],
   ['chat_pin', handleChatPin],
   ['chat_reaction', handleChatReaction],
+  ['reaction', handleReaction],
   ['caption', handleCaption],
   // Media
   ['media-state', handleMediaState],
@@ -409,6 +511,8 @@ export const handlerRegistry = new Map<string, MessageHandler>([
   ['admin_lock', handleAdminLock],
   ['room_locked', handleAdminLock],
   ['admin_reactions_toggle', handleAdminReactionsToggle],
+  ['admin_chat_toggle', handleAdminChatToggle],
+  ['admin_screen_toggle', handleAdminScreenToggle],
   ['admin_kick', handleAdminKick],
   ['admin_promote', handleAdminPromote],
   ['admin_pin_message', handleAdminPinMessage],

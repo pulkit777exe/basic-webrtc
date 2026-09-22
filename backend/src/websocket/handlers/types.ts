@@ -1,5 +1,6 @@
 import type { WebSocket } from 'ws';
 import { getParticipant } from '../../lib/redis-rooms';
+import type { SignalJson } from '../../lib/signals';
 
 export interface ExtendedWebSocket extends WebSocket {
   userId?: string;
@@ -39,8 +40,8 @@ export interface WebSocketHandlerMethods {
 
 export interface HandlerContext {
   ws: ExtendedWebSocket;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- signal is dynamic JSON from WS clients; handlers validate via String()/?? defaults
-  signal: Record<string, any>;
+  /** Dynamic JSON from WS clients, already validated by isSignal. */
+  signal: Record<string, SignalJson>;
   userId: string;
   roomId: string;
   handler: WebSocketHandlerMethods;

@@ -29,6 +29,7 @@ import type { Redis } from '@upstash/redis';
 import type { Signal, PublicUser } from '../lib/signals';
 import { isSignal } from '../lib/signals';
 import { logger } from '../lib/logger';
+import { parseRoomSettings } from '../lib/room-settings';
 import { publishSignal } from '../lib/redis-streams';
 import { generateRoomToken, verifyRoomToken } from '../utils/jwt';
 import { nanoid } from 'nanoid';
@@ -234,6 +235,17 @@ export class WebSocketHandler {
           this.send(ext, {
             type: 'admin_reactions_toggle',
             enabled: reactionsEnabled,
+          });
+          const roomSettingsSnapshot = parseRoomSettings(
+            meta.settings ? JSON.parse(meta.settings) : {},
+          );
+          this.send(ext, {
+            type: 'admin_chat_toggle',
+            enabled: roomSettingsSnapshot.allowChat,
+          });
+          this.send(ext, {
+            type: 'admin_screen_toggle',
+            enabled: roomSettingsSnapshot.allowScreenShare,
           });
           this.send(ext, {
             type: 'room_locked',
@@ -514,7 +526,7 @@ export class WebSocketHandler {
   ): import('./handlers/types').HandlerContext {
     return {
       ws: ws as import('./handlers/types').ExtendedWebSocket,
-      signal: signal as Record<string, any>, // eslint-disable-line @typescript-eslint/no-explicit-any
+      signal: signal as unknown as Record<string, import('../lib/signals').SignalJson>,
       userId,
       roomId,
       handler: {

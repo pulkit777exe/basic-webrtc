@@ -4,6 +4,20 @@ export type PublicUser = {
   avatarUrl?: string | null;
 };
 
+/**
+ * Dynamic JSON values carried by untrusted WS messages. Handlers must coerce
+ * with String()/Number()/Boolean() before use — this replaces the old
+ * `Record<string, any>` so no eslint suppression is needed.
+ */
+export type SignalJson =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | SignalJson[]
+  | { [key: string]: SignalJson };
+
 export type Signal =
   | { type: 'offer'; to: string; sdp: RTCSessionDescriptionInit }
   | { type: 'answer'; to: string; sdp: RTCSessionDescriptionInit }
@@ -19,6 +33,9 @@ export type Signal =
   | { type: 'admin_kick'; targetId: string }
   | { type: 'admin_promote'; targetId: string }
   | { type: 'admin_reactions_toggle'; enabled: boolean }
+  | { type: 'admin_chat_toggle'; enabled: boolean }
+  | { type: 'admin_screen_toggle'; enabled: boolean }
+  | { type: 'reaction'; emoji: string }
   | { type: 'admin_lock'; locked: boolean }
   | { type: 'admin_pin_message'; id: string; text: string; authorName: string }
   | { type: 'room_locked'; locked: boolean }
@@ -85,6 +102,9 @@ export function isSignal(obj: unknown): obj is Signal {
     'admin_kick',
     'admin_promote',
     'admin_reactions_toggle',
+    'admin_chat_toggle',
+    'admin_screen_toggle',
+    'reaction',
     'admin_lock',
     'admin_pin_message',
     'room_locked',
