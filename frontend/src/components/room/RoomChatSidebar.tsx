@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
 import { useAtomValue, useSetAtom } from 'jotai';
-import { canManageAtom, chatAtom, chatReactionsAtom, pinnedChatMessageAtom, reactionsEnabledAtom } from '@/store/atoms';
+import { canManageAtom, chatAtom, chatEnabledAtom, chatReactionsAtom, pinnedChatMessageAtom, reactionsEnabledAtom } from '@/store/atoms';
 import { WSManager } from '@/lib/ws-manager';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -51,6 +51,7 @@ export function RoomChatSidebar({ onClose }: { onClose: () => void }) {
   const chatReactions = useAtomValue(chatReactionsAtom);
   const setChatReactions = useSetAtom(chatReactionsAtom);
   const reactionsEnabled = useAtomValue(reactionsEnabledAtom);
+  const chatEnabled = useAtomValue(chatEnabledAtom);
   const canManage = useAtomValue(canManageAtom);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
@@ -221,21 +222,28 @@ export function RoomChatSidebar({ onClose }: { onClose: () => void }) {
       <Separator className="bg-(--room-border)" />
       <div className="p-4 sm:p-5">
         <Textarea
-          placeholder="Type a message..."
+          placeholder={chatEnabled ? 'Type a message...' : 'Chat is disabled by the host'}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), send())}
           rows={2}
-          className="mb-2 min-h-20 resize-none rounded-xl border-(--room-border) bg-(--room-elevated) text-(--room-text) placeholder:text-(--room-muted)"
+          disabled={!chatEnabled}
+          className="mb-2 min-h-20 resize-none rounded-xl border-(--room-border) bg-(--room-elevated) text-(--room-text) placeholder:text-(--room-muted) disabled:opacity-60"
         />
         <Button
           variant="secondary"
           size="sm"
-          className="h-10 w-full rounded-xl bg-cyan-500/85 text-white hover:bg-cyan-500"
+          className="h-10 w-full rounded-xl bg-cyan-500/85 text-white hover:bg-cyan-500 disabled:opacity-50"
           onClick={send}
+          disabled={!chatEnabled}
         >
           Send
         </Button>
+        {!chatEnabled && (
+          <p className="mt-2 text-center text-xs text-(--room-muted)">
+            The host has turned off chat for this meeting.
+          </p>
+        )}
       </div>
     </div>
   );

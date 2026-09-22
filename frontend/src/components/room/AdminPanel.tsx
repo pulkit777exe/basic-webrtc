@@ -1,13 +1,15 @@
 import { useMemo } from 'react';
 import { useAtomValue } from 'jotai';
 import { toast } from 'sonner';
-import { Lock, Shield, Smile } from 'lucide-react';
+import { Lock, MessageSquare, Monitor, Shield, Smile } from 'lucide-react';
 import {
   canManageAtom,
+  chatEnabledAtom,
   isHostAtom,
   participantsAtom,
   reactionsEnabledAtom,
   roomLockedAtom,
+  screenShareEnabledAtom,
   userAtom,
 } from '@/store/atoms';
 import { WSManager } from '@/lib/ws-manager';
@@ -71,6 +73,8 @@ export function AdminPanel() {
   const user = useAtomValue(userAtom);
   const roomLocked = useAtomValue(roomLockedAtom);
   const reactionsEnabled = useAtomValue(reactionsEnabledAtom);
+  const chatEnabled = useAtomValue(chatEnabledAtom);
+  const screenShareEnabled = useAtomValue(screenShareEnabledAtom);
 
   const others = useMemo(
     () => participants.filter((participant) => participant.userId !== user?.id),
@@ -115,6 +119,32 @@ export function AdminPanel() {
           >
             <Smile className="h-3.5 w-3.5" />
             {reactionsEnabled ? 'Disable reactions' : 'Enable reactions'}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 justify-start rounded-lg text-xs"
+            onClick={() => {
+              WSManager.send({ type: 'admin_chat_toggle', enabled: !chatEnabled });
+              toast.info(!chatEnabled ? 'Chat enabled' : 'Chat disabled');
+            }}
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            {chatEnabled ? 'Disable chat' : 'Enable chat'}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 justify-start rounded-lg text-xs"
+            onClick={() => {
+              WSManager.send({ type: 'admin_screen_toggle', enabled: !screenShareEnabled });
+              toast.info(!screenShareEnabled ? 'Screen sharing enabled' : 'Screen sharing disabled');
+            }}
+          >
+            <Monitor className="h-3.5 w-3.5" />
+            {screenShareEnabled ? 'Disable screen sharing' : 'Enable screen sharing'}
           </Button>
           <Button
             type="button"

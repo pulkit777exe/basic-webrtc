@@ -198,6 +198,30 @@ body,
   }
 }
 
+/* Floating audience reactions (ReactionOverlay): rise + fade over 3s,
+   matching FLOATING_REACTION_TTL_MS so entries vanish with the animation. */
+@keyframes reaction-float-up {
+  0% {
+    transform: translateY(0) scale(0.6);
+    opacity: 0;
+  }
+  12% {
+    transform: translateY(-14px) scale(1.1);
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-150px) scale(0.95);
+    opacity: 0;
+  }
+}
+
+.reaction-float {
+  animation: reaction-float-up 3s ease-out forwards;
+}
+
 @layer base {
   * {
     @apply border-border;

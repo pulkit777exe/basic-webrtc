@@ -16,7 +16,9 @@ import {
   waitingRoomPositionAtom,
   waitingTokenAtom,
   speakingPeersAtom,
-  waitingRoomEnabledAtom,
+  chatEnabledAtom,
+  screenShareEnabledAtom,
+  floatingReactionsAtom,
   isWaitingAtom,
   layoutModeAtom,
   selfViewModeAtom,
@@ -177,9 +179,24 @@ describe('atoms', () => {
       expect(store.get(chatUnreadAtom)).toBe(false);
     });
 
-    it('waitingRoomEnabledAtom defaults to false', () => {
+    it('chatEnabledAtom defaults to true (host may disable)', () => {
       const store = createStore();
-      expect(store.get(waitingRoomEnabledAtom)).toBe(false);
+      expect(store.get(chatEnabledAtom)).toBe(true);
+    });
+
+    it('screenShareEnabledAtom defaults to true (host may disable)', () => {
+      const store = createStore();
+      expect(store.get(screenShareEnabledAtom)).toBe(true);
+    });
+
+    it('floatingReactionsAtom defaults to empty feed', () => {
+      const store = createStore();
+      expect(store.get(floatingReactionsAtom)).toEqual([]);
+    });
+
+    it('uiAtom.notesOpen defaults to false', () => {
+      const store = createStore();
+      expect(store.get(uiAtom).notesOpen).toBe(false);
     });
 
     it('isWaitingAtom defaults to false', () => {

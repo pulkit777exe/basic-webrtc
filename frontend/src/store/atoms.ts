@@ -1,5 +1,6 @@
 import { atom } from "jotai";
 import { atomFamily } from "jotai-family";
+import type { FloatingReaction } from "@/lib/reactions";
 
 export interface WaitingParticipant {
   id: string;
@@ -28,17 +29,26 @@ export interface User {
   restrictedSession?: boolean;
 }
 
+export interface RoomSettings {
+  allowChat: boolean;
+  allowScreenShare: boolean;
+  muteOnJoin: boolean;
+  waitingRoomEnabled: boolean;
+  maxRecordingDurationMins: number;
+}
+
 export interface Room {
   id: string;
   hostId: string;
   title: string;
   isLocked: boolean;
   maxParticipants: number;
-  participantCount: number;
+ participantCount: number;
   hasPasscode?: boolean;
   hostName?: string;
   createdAt: string;
   endedAt?: string | null;
+  settings?: RoomSettings;
 }
 
 export interface PeerState {
@@ -172,7 +182,6 @@ export const waitingRoomParticipantsAtom = atom<WaitingParticipant[]>([]);
 export const waitingRoomPositionAtom = atom<number>(0);
 export const waitingTokenAtom = atom<string | null>(null);
 export const speakingPeersAtom = atom<Set<string>>(new Set<string>());
-export const waitingRoomEnabledAtom = atom<boolean>(false);
 export const isWaitingAtom = atom<boolean>(false);
 export const layoutModeAtom = atom<LayoutMode>("auto");
 export const selfViewModeAtom = atom<SelfViewMode>("floating");
@@ -180,6 +189,11 @@ export const pinnedParticipantsAtom = atom<Set<string>>(new Set<string>());
 export const activeSpeakerAtom = atom<string | null>(null);
 export const reactionsEnabledAtom = atom<boolean>(true);
 export const roomLockedAtom = atom<boolean>(false);
+/** Host controls (defaults permissive; overwritten by room settings on join). */
+export const chatEnabledAtom = atom<boolean>(true);
+export const screenShareEnabledAtom = atom<boolean>(true);
+/** Live floating-emoji feed rendered over the grid. */
+export const floatingReactionsAtom = atom<FloatingReaction[]>([]);
 export const recordingAtom = atom<{
   active: boolean;
   startedAt: number | null;

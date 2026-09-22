@@ -273,4 +273,66 @@ describe('api module', () => {
       expect(headers['Content-Type']).toBe('application/json');
     });
   });
+
+  describe('api.listMyRooms', () => {
+    it('GETs /api/rooms and returns the rooms', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+        jsonResponse({
+          rooms: [
+            {
+              id: 'r1',
+              hostId: 'u1',
+              title: 'Standup',
+              isLocked: false,
+              maxParticipants: 10,
+              participantCount: 2,
+              hostName: 'Me',
+              createdAt: '2026-01-01T10:00:00.000Z',
+              endedAt: null,
+            },
+          ],
+        }),
+      );
+      const res = await api.listMyRooms();
+      expect(res.rooms).toHaveLength(1);
+      expect(res.rooms[0].id).toBe('r1');
+      expect(fetchSpy.mock.calls[0][0]).toBe(`${API_BASE_URL}/api/rooms`);
+    });
+  });
+
+  describe('api.getRoom settings', () => {
+    it('passes the room settings through (mute-on-join, chat/screen, cap)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+        jsonResponse({
+          room: {
+            id: 'r9',
+            hostId: 'h1',
+            title: 'Retro',
+            isLocked: false,
+            maxParticipants: 10,
+            participantCount: 1,
+            hostName: 'H',
+            hasPasscode: false,
+            createdAt: '2026-01-01',
+            endedAt: null,
+            settings: {
+              allowChat: false,
+              allowScreenShare: true,
+              muteOnJoin: true,
+              waitingRoomEnabled: false,
+              maxRecordingDurationMins: 60,
+            },
+          },
+        }),
+      );
+      const res = await api.getRoom('r9');
+      expect(res.room.settings).toEqual({
+        allowChat: false,
+        allowScreenShare: true,
+        muteOnJoin: true,
+        waitingRoomEnabled: false,
+        maxRecordingDurationMins: 60,
+      });
+    });
+  });
 });

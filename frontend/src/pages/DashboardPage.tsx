@@ -92,6 +92,29 @@ export function DashboardPage() {
   const [joinCode, setJoinCode] = useState("");
   const [joinPasscode, setJoinPasscode] = useState("");
   const [joinLoading, setJoinLoading] = useState(false);
+  const [myRooms, setMyRooms] = useState<
+    Awaited<ReturnType<typeof api.listMyRooms>>["rooms"]
+  >([]);
+  const [roomsLoading, setRoomsLoading] = useState(true);
+
+  // Recent meetings (Google-Meet-style homepage list).
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listMyRooms()
+      .then((res) => {
+        if (!cancelled) setMyRooms(res.rooms);
+      })
+      .catch(() => {
+        // Non-fatal: the empty state covers a failed load.
+      })
+      .finally(() => {
+        if (!cancelled) setRoomsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [passcodeModalOpen, setPasscodeModalOpen] = useState(false);
   const [modalPasscode, setModalPasscode] = useState("");
   const [pendingJoinRoomId, setPendingJoinRoomId] = useState<string | null>(
@@ -190,6 +213,7 @@ export function DashboardPage() {
           createdAt: room.createdAt,
           endedAt: room.endedAt,
           hasPasscode: room.hasPasscode,
+          settings: room.settings,
         });
         if (roomCodeRef.current) {
           gsap.fromTo(
@@ -239,6 +263,25 @@ export function DashboardPage() {
     }
   }
 
+  /** Re-open an active room from the recent-meetings list. */
+  async function openRecentRoom(roomId: string) {
+    setJoinLoading(true);
+    try {
+      const { room } = await api.getRoom(roomId);
+      if (room.hasPasscode) {
+        setPendingJoinRoomId(roomId);
+        setModalPasscode("");
+        setPasscodeModalOpen(true);
+        return;
+      }
+      await joinRoomWithPasscode(roomId, undefined, room);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to open the room");
+    } finally {
+      setJoinLoading(false);
+    }
+  }
+
   async function joinRoomWithPasscode(
     code: string,
     passcode: string | undefined,
@@ -260,6 +303,7 @@ export function DashboardPage() {
         createdAt: room.createdAt,
         endedAt: room.endedAt,
         hasPasscode: room.hasPasscode,
+        settings: room.settings,
       });
       if (res.waitingToken) setWaitingToken(res.waitingToken);
       setWaitingPosition(res.position ?? 1);
@@ -284,6 +328,7 @@ export function DashboardPage() {
         createdAt: room.createdAt,
         endedAt: room.endedAt,
         hasPasscode: room.hasPasscode,
+        settings: room.settings,
       });
       setPasscodeModalOpen(false);
       navigate(`/room/${room.id}/lobby`);
@@ -459,6 +504,85 @@ export function DashboardPage() {
             )}
           </div>
         </div>
+
+        <section className="mb-6">
+          <div className="mb-3 flex items-baseline justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-(--meet-text-muted)">
+              Recent meetings
+            </h2>
+            {!roomsLoading && myRooms.length > 0 && (
+              <span className="text-xs text-(--meet-text-muted)">
+                {myRooms.length} room{myRooms.length > 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+          {roomsLoading ? (
+            <div className="rounded-3xl border border-(--meet-border) bg-(--meet-surface) p-6 text-sm text-(--meet-text-muted)">
+              Loading meetings…
+            </div>
+          ) : myRooms.length === 0 ? (
+            <div className="rounded-3xl border border-dashed border-(--meet-border) bg-(--meet-surface) p-6 text-sm text-(--meet-text-muted)">
+              No meetings yet — create a room below or join with a code to get
+              started.
+            </div>
+          ) : (
+            <ul className="space-y-2">
+              {myRooms.map((r) => (
+                <li
+                  key={r.id}
+                  className="flex items-center justify-between gap-3 rounded-2xl border border-(--meet-border) bg-(--meet-surface) px-4 py-3"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-(--meet-text)">
+                      {r.title}
+                    </p>
+                    <p className="truncate text-xs text-(--meet-text-muted)">
+                      {new Date(r.createdAt).toLocaleString(undefined, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })}
+                      {" · "}
+                      {r.hostId === user?.id
+                        ? "Hosted by you"
+                        : `Hosted by ${r.hostName ?? "Unknown"}`}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {r.endedAt ? (
+                      <Badge
+                        variant="secondary"
+                        className="border border-(--meet-border) bg-(--meet-elevated) text-(--meet-text-muted)"
+                      >
+                        Ended
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="secondary"
+                        className="border border-emerald-500/40 bg-emerald-500/10 text-emerald-600"
+                      >
+                        {r.participantCount > 0
+                          ? `Live · ${r.participantCount}`
+                          : "Not started"}
+                      </Badge>
+                    )}
+                    {!r.endedAt && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 rounded-xl"
+                        disabled={joinLoading}
+                        onClick={() => void openRecentRoom(r.id)}
+                      >
+                        <ArrowRight className="h-3.5 w-3.5" />
+                        Open
+                      </Button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
         <div className="grid gap-6 lg:grid-cols-2">
           <Card

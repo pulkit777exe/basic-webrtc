@@ -7,6 +7,7 @@ import {
   activeSpeakerAtom,
   audioOutputDeviceIdAtom,
   chatAtom,
+  chatEnabledAtom,
   chatReactionsAtom,
   chatUnreadAtom,
   captionsAtom,
@@ -17,6 +18,7 @@ import {
   roomAtom,
   roomLockedAtom,
   roomTokenAtom,
+  screenShareEnabledAtom,
   userAtom,
   peerListAtom,
   pinnedParticipantsAtom,
@@ -45,15 +47,20 @@ import { RoomChatSidebar } from "@/components/room/RoomChatSidebar";
 import { RoomParticipantsPanel } from "@/components/room/RoomParticipantsPanel";
 import { MeetingNotesPanel } from "@/components/room/MeetingNotesPanel";
 import { RoomCaptionsOverlay } from "@/components/room/RoomCaptionsOverlay";
+import { ShortcutsOverlay } from "@/components/room/ShortcutsOverlay";
+import { ReactionOverlay } from "@/components/room/ReactionOverlay";
 import { WaitingRoomPanel } from "@/components/room/WaitingRoomPanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   ChevronLeft,
   Clock,
+  Copy,
   Download,
   Lock,
+  Maximize,
   MessageSquare,
+  Minimize,
   NotebookPen,
   Unlock,
   Users,
@@ -67,6 +74,12 @@ import { InviteModal } from "@/components/InviteModal";
 import { VideoGridErrorBoundary } from "@/components/room/VideoGridErrorBoundary";
 import { ChatErrorBoundary } from "@/components/room/ChatErrorBoundary";
 import { ControlsErrorBoundary } from "@/components/room/ControlsErrorBoundary";
+import { formatDuration } from "@/lib/time";
+import {
+  isEditableTarget,
+  isHelpKey,
+  matchesModAlt,
+} from "@/lib/shortcuts";
 
 function formatElapsed(seconds: number): string {
   const mins = Math.floor(seconds / 60)
@@ -131,6 +144,15 @@ export function RoomPage() {
   const slateRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const controlBarRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [joinedAt] = useState(() => Date.now());
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const muteOnJoinCheckedRef = useRef(false);
+  const capNotifiedForStartRef = useRef<number | null>(null);
+  const setChatEnabled = useSetAtom(chatEnabledAtom);
+  const setScreenShareEnabled = useSetAtom(screenShareEnabledAtom);
   const captionsEnabledRef = useRef(captionsEnabled);
   const cleanedUpRef = useRef(false);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
@@ -148,6 +170,7 @@ export function RoomPage() {
     sessionStorage.removeItem('lobby_audio');
 
     cleanedUpRef.current = false;
+    muteOnJoinCheckedRef.current = false;
 
     RTCManager.init().then(async () => {
       if (cleanedUpRef.current) return;
@@ -239,6 +262,57 @@ export function RoomPage() {
   useEffect(() => {
     setRoomLocked(Boolean(room?.isLocked));
   }, [room?.isLocked, setRoomLocked]);
+
+  // Host controls from the room settings: seed the atoms on room load and
+  // reset them on leave so a disabled chat/share can't leak into the next room.
+  useEffect(() => {
+    setChatEnabled(room?.settings?.allowChat ?? true);
+    setScreenShareEnabled(room?.settings?.allowScreenShare ?? true);
+    return () => {
+      setChatEnabled(true);
+      setScreenShareEnabled(true);
+    };
+  }, [
+    room?.settings?.allowChat,
+    room?.settings?.allowScreenShare,
+    setChatEnabled,
+    setScreenShareEnabled,
+  ]);
+
+  // Enforce the room's "mute participants on join" setting once local media
+  // is up (previously stored but never applied — a fake toggle).
+  useEffect(() => {
+    if (!room || muteOnJoinCheckedRef.current || !localMedia.stream) return;
+    muteOnJoinCheckedRef.current = true;
+    if (room.settings?.muteOnJoin && localMedia.audio) {
+      MediaManager.muteAudio();
+      toast.info("You joined with your microphone muted");
+    }
+  }, [room, localMedia.stream, localMedia.audio]);
+
+  // Header elapsed timer (Google Meet shows time-in-call).
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // Fullscreen state mirror for the header toggle.
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+      return;
+    }
+    if (!rootRef.current) return;
+    rootRef.current.requestFullscreen().catch(() => {
+      toast.error("Fullscreen was blocked by the browser");
+    });
+  }, []);
 
   useEffect(() => {
     WSManager.send({
@@ -343,6 +417,62 @@ export function RoomPage() {
       window.removeEventListener("keyup", onKeyUp);
     };
   }, [localMedia.audio, mutedByHost]);
+
+  // Keyboard shortcuts (Google Meet parity): Ctrl/Cmd+Alt+{M,E,H,C,F,D} plus
+  // "?" for the help overlay. Pure matchers live in @/lib/shortcuts.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (isHelpKey(event)) {
+        if (event.repeat || isEditableTarget(target)) return;
+        setShortcutsOpen((open) => !open);
+        return;
+      }
+      if (event.repeat) return;
+      if (matchesModAlt(event, "m")) {
+        void MediaManager.toggleAudio();
+        return;
+      }
+      if (matchesModAlt(event, "e")) {
+        void MediaManager.toggleVideo();
+        return;
+      }
+      if (matchesModAlt(event, "h")) {
+        const uiState = store.get(uiAtom);
+        const raised = !uiState.handRaised;
+        store.set(uiAtom, { ...uiState, handRaised: raised });
+        WSManager.send({ type: "hand_raise", raised });
+        return;
+      }
+      if (matchesModAlt(event, "c")) {
+        const uiState = store.get(uiAtom);
+        const opening = !uiState.chatOpen;
+        store.set(uiAtom, {
+          ...uiState,
+          chatOpen: opening,
+          participantsOpen: false,
+          waitingRoomOpen: false,
+          notesOpen: false,
+        });
+        if (opening) store.set(chatUnreadAtom, false);
+        return;
+      }
+      if (matchesModAlt(event, "f")) {
+        toggleFullscreen();
+        return;
+      }
+      if (matchesModAlt(event, "d")) {
+        if (captionsEnabled) {
+          setCaptionsEnabled(false);
+        } else {
+          setDeepgramLiveUnavailable(false);
+          setCaptionsEnabled(true);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [captionsEnabled, setCaptionsEnabled, setDeepgramLiveUnavailable, toggleFullscreen]);
 
   useEffect(() => {
     captionsEnabledRef.current = captionsEnabled;
@@ -532,6 +662,23 @@ export function RoomPage() {
       ? Math.max(0, Math.floor(((recordingTick || recording.startedAt) - recording.startedAt) / 1000))
       : 0;
 
+  // Enforce the room's recording time cap (column existed but nothing read it).
+  const recordingCapMs =
+    (room?.settings?.maxRecordingDurationMins ?? 120) * 60_000;
+  useEffect(() => {
+    if (!recording.active || !recording.startedAt) return;
+    if (capNotifiedForStartRef.current === recording.startedAt) return;
+    if (displayRecordingSeconds * 1000 < recordingCapMs) return;
+    capNotifiedForStartRef.current = recording.startedAt;
+    WSManager.send({ type: "recording_stop" });
+    toast.info("Recording stopped at the room's time limit");
+  }, [
+    recording.active,
+    recording.startedAt,
+    displayRecordingSeconds,
+    recordingCapMs,
+  ]);
+
   const togglePin = useCallback((participantId: string) => {
     setPinnedParticipants((current) => {
       const next = new Set(current);
@@ -564,8 +711,16 @@ export function RoomPage() {
     setCaptionsEnabled(true);
   }
 
+  function copyRoomLink() {
+    const url = `${window.location.origin}/room/${roomId}/lobby`;
+    navigator.clipboard
+      .writeText(url)
+      .then(() => toast.success("Room link copied"))
+      .catch(() => toast.error("Could not copy the link"));
+  }
+
   return (
-    <div className="relative flex h-screen flex-col overflow-hidden bg-(--room-bg)">
+    <div ref={rootRef} className="relative flex h-screen flex-col overflow-hidden bg-(--room-bg)">
       {/* Entry slate */}
       <div
         ref={slateRef}
@@ -608,6 +763,10 @@ export function RoomPage() {
             </Badge>
           </div>
           <div className="flex items-center gap-2">
+            <Badge className="rounded-full border-0 bg-(--room-elevated) text-(--room-text) hover:bg-(--room-elevated)">
+              <Clock className="mr-1 h-3.5 w-3.5 text-(--room-muted)" />
+              {formatDuration(nowMs - joinedAt)}
+            </Badge>
             <Badge className="rounded-full border-0 bg-(--room-elevated) text-(--room-text) hover:bg-(--room-elevated)">
               {participantCount} participant{participantCount > 1 ? "s" : ""}
               {participantCount > 6 && (
@@ -741,6 +900,30 @@ export function RoomPage() {
               variant="ghost"
               size="icon-sm"
               className="rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)"
+              onClick={copyRoomLink}
+              title="Copy room link"
+              aria-label="Copy room link"
+            >
+              <Copy className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)"
+              onClick={toggleFullscreen}
+              title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+            >
+              {isFullscreen ? (
+                <Minimize className="h-4 w-4" />
+              ) : (
+                <Maximize className="h-4 w-4" />
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)"
               onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
               aria-label={resolvedTheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
             >
@@ -755,6 +938,10 @@ export function RoomPage() {
         roomTitle={room?.title ?? "Meeting Room"}
         open={inviteModalOpen}
         onOpenChange={setInviteModalOpen}
+      />
+      <ShortcutsOverlay
+        open={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
       />
 
       <div
@@ -778,6 +965,7 @@ export function RoomPage() {
             onTogglePin={togglePin}
           />
         </VideoGridErrorBoundary>
+        <ReactionOverlay />
       </div>
 
       <div
@@ -816,6 +1004,7 @@ export function RoomPage() {
             onSelfViewModeChange={setSelfViewMode}
             onToggleCaptions={toggleCaptions}
             onToggleRecording={toggleRecording}
+            onShowShortcuts={() => setShortcutsOpen(true)}
             onLeave={() => {
               navigate("/dashboard", { replace: true });
             }}

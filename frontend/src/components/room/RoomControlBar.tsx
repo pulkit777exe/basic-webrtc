@@ -17,18 +17,28 @@ import {
   VideoOff,
   Volume2,
   Settings2,
+  Smile,
 } from 'lucide-react';
 import { useAtomValue, useAtom } from 'jotai';
 import { useEffect, useMemo, useState } from 'react';
 import type { LayoutMode, SelfViewMode } from '@/store/atoms';
-import { audioOutputDeviceIdAtom, localMediaAtom, mutedByHostAtom, uiAtom } from '@/store/atoms';
+import {
+  audioOutputDeviceIdAtom,
+  localMediaAtom,
+  mutedByHostAtom,
+  reactionsEnabledAtom,
+  screenShareEnabledAtom,
+  uiAtom,
+} from '@/store/atoms';
 import { MediaManager, type VideoQualityCap } from '@/lib/media-manager';
+import { AUDIENCE_REACTIONS } from '@/lib/reactions';
 import { WSManager } from '@/lib/ws-manager';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -60,6 +70,7 @@ export function RoomControlBar({
   onToggleCaptions,
   onToggleRecording,
   onLeave,
+  onShowShortcuts,
   chatHasUnread = false,
 }: {
   chatHasUnread?: boolean;
@@ -77,10 +88,13 @@ export function RoomControlBar({
   onToggleCaptions: () => void;
   onToggleRecording: () => void;
   onLeave: () => void;
+  onShowShortcuts: () => void;
 }) {
   const localMedia = useAtomValue(localMediaAtom);
   const { stream, video, audio, screen } = localMedia;
   const mutedByHost = useAtomValue(mutedByHostAtom);
+  const reactionsEnabled = useAtomValue(reactionsEnabledAtom);
+  const screenShareEnabled = useAtomValue(screenShareEnabledAtom);
   const [ui, setUi] = useAtom(uiAtom);
   const [audioOutputDeviceId, setAudioOutputDeviceId] = useAtom(audioOutputDeviceIdAtom);
   const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
@@ -114,6 +128,10 @@ export function RoomControlBar({
     try {
       if (screen) {
         MediaManager.stopScreenShare();
+        return;
+      }
+      if (!screenShareEnabled) {
+        toast.error('Screen sharing is disabled by the host');
         return;
       }
       setScreenShareModalOpen(true);
@@ -168,14 +186,17 @@ export function RoomControlBar({
             <Button
               variant={screen ? 'secondary' : 'ghost'}
               size="icon"
-              className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${screen ? 'bg-cyan-500/30 text-cyan-200' : ''}`}
+              className={`h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${screen ? 'bg-cyan-500/30 text-cyan-200' : ''} ${!screenShareEnabled && !screen ? 'opacity-40' : ''}`}
               onClick={handleScreenShare}
+              disabled={!screenShareEnabled && !screen}
               aria-label={screen ? 'Stop sharing screen' : 'Share screen'}
             >
               <Monitor className="h-4 w-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>{screen ? 'Stop sharing' : 'Share screen'}</TooltipContent>
+          <TooltipContent>
+            {screen ? 'Stop sharing' : !screenShareEnabled ? 'Screen sharing disabled by host' : 'Share screen'}
+          </TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -195,6 +216,41 @@ export function RoomControlBar({
           </TooltipTrigger>
           <TooltipContent>{ui.handRaised ? 'Lower hand' : 'Raise hand'}</TooltipContent>
         </Tooltip>
+        {reactionsEnabled && (
+          <Tooltip>
+            <DropdownMenu>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)"
+                    aria-label="Send a reaction"
+                  >
+                    <Smile className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <DropdownMenuContent align="center" className="w-40">
+                <DropdownMenuLabel>Reactions</DropdownMenuLabel>
+                <div className="grid grid-cols-4 gap-1 p-2">
+                  {AUDIENCE_REACTIONS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      className="rounded-lg p-1.5 text-xl transition-colors hover:bg-(--room-elevated)"
+                      onClick={() => WSManager.send({ type: 'reaction', emoji })}
+                      aria-label={`React with ${emoji}`}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <TooltipContent>Reactions</TooltipContent>
+          </Tooltip>
+        )}
         <Tooltip>
           <DropdownMenu>
             <TooltipTrigger asChild>
@@ -286,6 +342,10 @@ export function RoomControlBar({
                   </DropdownMenuRadioItem>
                 ))}
               </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={onShowShortcuts}>
+                Keyboard shortcuts <span className="ml-auto opacity-60">?</span>
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           <TooltipContent>Device settings</TooltipContent>

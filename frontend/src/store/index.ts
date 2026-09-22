@@ -37,7 +37,9 @@ import {
   waitingRoomPositionAtom,
   waitingTokenAtom,
   isWaitingAtom,
-  waitingRoomEnabledAtom,
+  chatEnabledAtom,
+  screenShareEnabledAtom,
+  floatingReactionsAtom,
 } from "./atoms";
 
 export const store = createStore();
@@ -73,7 +75,9 @@ export {
   waitingRoomPositionAtom,
   waitingTokenAtom,
   isWaitingAtom,
-  waitingRoomEnabledAtom,
+  chatEnabledAtom,
+  screenShareEnabledAtom,
+  floatingReactionsAtom,
 };
 
 export type { Message, PeerState, Participant, WaitingParticipant, MeetingNotes };

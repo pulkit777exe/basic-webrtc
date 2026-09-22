@@ -1,4 +1,5 @@
 import { API_URL } from "@/config/api";
+import type { RoomSettings } from "@/store/atoms";
 
 /** Base REST origin. Defined in `@/config/api` (fails fast without VITE_API_URL in prod). */
 export const API_BASE_URL = API_URL;
@@ -233,8 +234,26 @@ export const api = {
         hasPasscode: boolean;
         createdAt: string;
         endedAt: string | null;
+        settings?: RoomSettings;
       };
     }>(`/api/rooms/${id}`);
+  },
+
+  /** Rooms the current user hosts or has participated in (dashboard list). */
+  async listMyRooms() {
+    return request<{
+      rooms: Array<{
+        id: string;
+        hostId: string;
+        title: string;
+        isLocked: boolean;
+        maxParticipants: number;
+        participantCount: number;
+        hostName: string | null;
+        createdAt: string;
+        endedAt: string | null;
+      }>;
+    }>("/api/rooms");
   },
 
   async joinRoom(id: string, passcode?: string) {

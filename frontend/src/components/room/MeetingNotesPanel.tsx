@@ -5,6 +5,7 @@ import {
   Camera,
   Check,
   ClipboardCopy,
+  Download,
   FileText,
   HelpCircle,
   Sparkles,
@@ -123,6 +124,35 @@ export function MeetingNotesPanel({ onClose }: { onClose: () => void }) {
     }
   }
 
+  /** Google-Meet parity: download the full transcript as a .txt file. */
+  async function handleDownloadTranscript() {
+    try {
+      const res = await api.getRoomTranscript(roomId, 5000);
+      if (res.segments.length === 0) {
+        toast.error(
+          "No transcript yet — turn on live captions during the meeting",
+        );
+        return;
+      }
+      const lines = res.segments.map(
+        (s) => `[${new Date(s.occurredAt).toLocaleTimeString()}] ${s.text}`,
+      );
+      const header = `Transcript — ${room?.title ?? roomId}\n\n`;
+      const blob = new Blob([header + lines.join("\n")], {
+        type: "text/plain;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `transcript-${roomId}.txt`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      toast.success("Transcript downloaded");
+    } catch {
+      toast.error("Could not download the transcript");
+    }
+  }
+
   async function handleGenerate() {
     if (!roomId || generating) return;
     setGenerating(true);
@@ -215,6 +245,16 @@ export function MeetingNotesPanel({ onClose }: { onClose: () => void }) {
         >
           <Camera className="mr-1 h-3.5 w-3.5" />
           Capture slide
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 rounded-lg text-xs"
+          onClick={() => void handleDownloadTranscript()}
+        >
+          <Download className="mr-1 h-3.5 w-3.5" />
+          Download transcript
         </Button>
         <Button
           type="button"

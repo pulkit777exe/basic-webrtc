@@ -3,8 +3,10 @@ import {
   activeSpeakerAtom,
   appendChatAtom,
   captionsAtom,
+  chatEnabledAtom,
   chatReactionsAtom,
   chatUnreadAtom,
+  floatingReactionsAtom,
   localMediaAtom,
   meetingNotesAtom,
   mutedByHostAtom,
@@ -17,6 +19,7 @@ import {
   recordingAtom,
   roomAtom,
   roomLockedAtom,
+  screenShareEnabledAtom,
   speakingPeersAtom,
   uiAtom,
   userAtom,
@@ -26,6 +29,7 @@ import { toast } from "sonner";
 import { RTCManager } from "./rtc-manager";
 import { handleSignal } from "./signal-handler";
 import { playHandRaiseSound } from "./hand-raise-sound";
+import { appendFloatingReaction } from "./reactions";
 import { signalingWsUrl } from "@/config/api";
 
 type Signal =
@@ -59,6 +63,9 @@ type Signal =
   | { type: "admin_kick"; targetId: string }
   | { type: "admin_promote"; targetId: string }
   | { type: "admin_reactions_toggle"; enabled: boolean }
+  | { type: "admin_chat_toggle"; enabled: boolean }
+  | { type: "admin_screen_toggle"; enabled: boolean }
+  | { type: "reaction"; emoji: string; from?: string; roomId?: string }
   | { type: "room_locked"; locked: boolean }
   | { type: "recording_start"; startedAt: number; sessionId?: string }
   | { type: "recording_stop"; sessionId?: string }
@@ -439,6 +446,21 @@ export const WSManager = {
           }
         } else if (data.type === "admin_reactions_toggle") {
           store.set(reactionsEnabledAtom, data.enabled);
+        } else if (data.type === "admin_chat_toggle") {
+          store.set(chatEnabledAtom, data.enabled);
+          if (!data.enabled) toast.info("Host disabled chat");
+        } else if (data.type === "admin_screen_toggle") {
+          store.set(screenShareEnabledAtom, data.enabled);
+          if (!data.enabled) toast.info("Host disabled screen sharing");
+        } else if (data.type === "reaction") {
+          store.set(floatingReactionsAtom, (current) =>
+            appendFloatingReaction(current, {
+              id: `${data.from ?? "?"}-${Date.now()}-${current.length}`,
+              emoji: data.emoji,
+              from: data.from ?? "?",
+              spawnedAt: Date.now(),
+            }),
+          );
         } else if (data.type === "admin_mute_all") {
           applyHostMute();
           toast.info("Host muted everyone");
