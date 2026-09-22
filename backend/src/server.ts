@@ -12,7 +12,7 @@ import { WebSocketHandler } from './websocket/handler';
 import { attachLiveCaptionsBridge, type LiveCaptionAuth } from './websocket/live-captions-bridge';
 import { verifyRoomToken } from './utils/jwt';
 import { isAllowedOrigin } from './utils/origin';
-import authRoutes from './routes/auth';
+import authRoutes from './routes/auth/index.js';
 import oauthRoutes from './routes/oauth';
 import accountRoutes from './routes/account';
 import roomRoutes from './routes/rooms';
