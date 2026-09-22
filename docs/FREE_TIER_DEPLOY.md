@@ -70,6 +70,30 @@ places (Render env vars, local `backend/.env`) — never in code, this file,
 Resend's *response* body only, never request headers, so the key can't leak
 through failed-send logs.
 
+### TURN (recommended — real-world connectivity)
+
+By default `GET /api/ice-servers` returns STUN only (Google's public
+servers). That is enough for most direct connections, but peers behind
+symmetric NAT or restrictive corporate/cellular networks need a TURN relay —
+without one, an estimated **15–40% of real-world calls fail to connect**
+(ICE ends in `failed`; the peer tile shows a red "Reconnecting" chip).
+
+Render's free web service can't host TURN itself (the relay needs a public
+UDP/TCP listener), so use an external relay. Anything that exposes a
+**TURN REST API secret** works — hosted TURN providers generally offer a
+free tier, and coturn's `use-auth-secret` mode is the standard self-host
+option on an always-free VM:
+
+- `TURN_SERVERS` — comma-separated relay URLs, e.g.
+  `turn:turn.example.com:3478,turns:turn.example.com:5349?transport=tcp`
+- `TURN_SECRET` — the TURN REST API shared secret (HMAC-SHA1).
+
+Both are required together: the server ignores `TURN_SERVERS` unless
+`TURN_SECRET` is set. Credentials are minted per request (`expiry:random`
+signed with the secret; `TURN_TTL_SEC` default 300 s), so the shared secret
+itself never reaches a browser. Left unset → STUN-only ICE: most calls
+connect, but symmetric-NAT peers never will.
+
 ## 2. Frontend on Vercel
 
 1. Vercel dashboard → **Add New → Project**, import the repo, set **Root

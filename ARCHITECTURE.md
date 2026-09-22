@@ -27,34 +27,33 @@ A WebRTC video conferencing application with a React single-page frontend and an
 
 | Library | Version | Source |
 |---------|---------|--------|
-| Express | `^5.2.1` | `backend/package.json:63` |
-| Bun | `^1.3.14` (types) | `backend/package.json:26` |
-| TypeScript | `^6.0.3` (peer) | `backend/package.json:43` |
-| Drizzle ORM | `^0.45.2` | `backend/package.json:61` |
-| Drizzle Kit | `^0.31.10` | `backend/package.json:60` |
+| Express | `^5.2.1` | `backend/package.json:65` |
+| Bun | `^1.3.14` (types) | `backend/package.json:29` |
+| TypeScript | `^6.0.3` (peer) | `backend/package.json:45` |
+| Drizzle ORM | `^0.45.2` | `backend/package.json:64` |
+| Drizzle Kit | `^0.31.10` | `backend/package.json:63` |
 | postgres.js | `^3.4.9` | `backend/package.json:76` |
-| Upstash Redis | `^1.38.0` | `backend/package.json:52` |
-| ws (WebSocket) | `^8.21.0` | `backend/package.json:79` |
-| jsonwebtoken | `^9.0.3` | `backend/package.json:67` |
-| Passport | `^0.7.0` | `backend/package.json:73` |
-| Passport Google OAuth | `^2.0.0` | `backend/package.json:74` |
-| bcrypt | `^6.0.0` | `backend/package.json:53` |
-| BullMQ | `^5.78.0` | `backend/package.json:55` |
-| Deepgram SDK | `^5.4.0` | `backend/package.json:46` |
-| Nodemailer | `^8.0.10` | `backend/package.json:72` |
+| Upstash Redis | `^1.38.0` | `backend/package.json:54` |
+| ws (WebSocket) | `^8.21.0` | `backend/package.json:81` |
+| jsonwebtoken | `^9.0.3` | `backend/package.json:70` |
+| Passport | `^0.7.0` | `backend/package.json:74` |
+| Passport Google OAuth | `^2.0.0` | `backend/package.json:75` |
+| bcrypt | `^6.0.0` | `backend/package.json:56` |
+| BullMQ | `^5.78.0` | `backend/package.json:58` |
+| Deepgram SDK | `^5.4.0` | `backend/package.json:48` |
 | Helmet | `^8.2.0` | `backend/package.json:68` |
-| express-rate-limit | `^8.5.2` | `backend/package.json:64` |
-| rate-limit-redis | `^4.3.1` | `backend/package.json:77` |
-| sharp | `^0.34.5` | `backend/package.json:78` |
-| Multer | `^2.1.1` | `backend/package.json:69` |
-| Bloom Filters | `^3.0.4` | `backend/package.json:54` |
-| OTPLib | `^13.4.1` | `backend/package.json:70` |
-| QRCode | `^1.5.4` | `backend/package.json:75` |
-| Archiver | `^7.0.1` | `backend/package.json:51` |
+| express-rate-limit | `^8.5.2` | `backend/package.json:66` |
+| rate-limit-redis | `^4.3.1` | `backend/package.json:78` |
+| sharp | `0.35.4` (pinned) | `backend/package.json:79` |
+| Multer | `^2.1.1` | `backend/package.json:71` |
+| Bloom Filters | `^3.0.4` | `backend/package.json:57` |
+| OTPLib | `^13.4.1` | `backend/package.json:73` |
+| QRCode | `^1.5.4` | `backend/package.json:77` |
+| Archiver | `^7.0.1` | `backend/package.json:55` |
 | isomorphic-dompurify | `^3.16.0` | `backend/package.json:69` |
-| geoip-lite | `^2.0.2` | `backend/package.json:65` |
-| ua-parser-js | `^2.0.10` | `backend/package.json:79` |
-| dotenv | `^17.4.2` | `backend/package.json:59` |
+| geoip-lite | `^2.0.2` | `backend/package.json:67` |
+| ua-parser-js | `^2.0.10` | `backend/package.json:80` |
+| dotenv | `^17.4.2` | `backend/package.json:62` |
 
 ### Infrastructure
 
@@ -103,7 +102,7 @@ basic-webrtc-app/
 │   ├── src/
 │   │   ├── server.ts            # Entry: Express, HTTP upgrade, WS servers
 │   │   ├── routes/              # REST API handlers
-│   │   │   ├── auth.ts          # Signup/login/logout/2FA (2938 lines)
+│   │   │   ├── auth/            # Signup/login/2FA/recovery/sessions (10 files, facade index.ts)
 │   │   │   ├── rooms.ts         # Room CRUD, join/leave, invitations
 │   │   │   ├── notes.ts         # AI workspace: transcript + meeting notes
 │   │   │   ├── account.ts       # Profile, sessions, data export, deletion
@@ -128,11 +127,11 @@ basic-webrtc-app/
 │   │   │   ├── rate-limiters.ts # Express rate limiters (Redis-backed)
 │   │   │   └── cleanup-job.ts   # Stale room cleanup
 │   │   ├── services/            # Business logic
-│   │   │   ├── auth.ts          # Refresh-token rotation (signup/login live in routes/auth.ts)
+│   │   │   ├── auth.ts          # Refresh-token rotation (signup lives in routes/auth/credentials.ts, login in session.ts)
 │   │   │   ├── session.ts       # Session tracking (Postgres + Redis)
 │   │   │   ├── otp.ts           # OTP generation/verification
 │   │   │   ├── two-factor.ts    # TOTP 2FA setup/verify
-│   │   │   ├── email.ts         # Nodemailer templates
+│   │   │   ├── email.ts         # Resend API mail (templates + send)
 │   │   │   ├── login-analyzer.ts # Suspicious login detection
 │   │   ├── jobs/                # Background jobs (BullMQ when REDIS_URL set, else in-process + DB poller)
 │   │   │   ├── account-jobs.ts  # Queue abstraction + free-tier fallback poller
@@ -236,7 +235,7 @@ Redis (Upstash) holds ephemeral/real-time state — **not** a second database. K
    → Return { accessToken, user }
 ```
 
-**CONFIRMED** — traced through `backend/src/routes/auth.ts` lines 80-300 and `backend/src/services/auth.ts`.
+**CONFIRMED** — traced through `backend/src/routes/auth/session.ts` (login/refresh/logout) and `routes/auth/shared.ts` (cookie + session helpers), plus `backend/src/services/auth.ts` and `backend/src/services/session.ts`.
 
 ### Flow 2: Join a Room and Start WebRTC
 
@@ -305,7 +304,7 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 
 ### Refresh Token Flow
 
-1. Stored as HTTP-only cookie (set by `auth.ts` route handler)
+1. Stored as HTTP-only cookie (set by the `routes/auth/` handlers — signup/login/refresh — and `routes/oauth.ts` for Google sign-in)
 2. Hash stored in Redis at `user:{userId}:session` with 7-day TTL
 3. On refresh: verify JWT → compare hash with Redis → rotate both tokens
 4. On logout: `logoutRevoke()` deletes Redis key + revokes session in DB
@@ -328,7 +327,7 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 - **WS origin check**: WebSocket upgrades from non-`ALLOWED_ORIGINS` browser origins are rejected with 403 (CSWSH hardening) — `backend/src/utils/origin.ts`
 - **Body limits**: JSON request bodies capped at 256 KB; multipart uploads capped per-route via multer (avatars 5 MB, transcription 4 MB)
 - **IDOR guards**: `GET /api/rooms/{id}/messages` requires session auth plus room membership — host, live peer (Redis role), or persisted `room_participants` row (`backend/src/lib/room-access.ts`); `GET /api/recordings/{roomId}/status` requires membership
-- **Settings cache**: `getRoomSettings` is memoized for 5s in-process (invalidated on toggle and room end) to keep per-message WS gating off the Upstash free-tier quota — `backend/src/lib/room-settings.ts`
+- **Settings cache**: `getRoomSettings` is memoized for 5s in-process (invalidated on toggle and room end) to keep per-message WS gating off the Upstash free-tier quota — `backend/src/lib/room-settings.ts`. The Redis mirror and the per-process TTL cache both assume the **single free-tier Render instance** (`render.yaml` runs one): cross-instance invalidation is not implemented, and not needed on this plan.
 
 ## 7. EXTERNAL DEPENDENCIES & INTEGRATIONS
 
@@ -340,7 +339,7 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 | Sentry | `@sentry/react` `^10.63.0` | Error monitoring + session replay | `frontend/src/instrument.ts` |
 | hCaptcha | `@hcaptcha/react-hcaptcha` `^2.0.2` | Bot protection | Used in frontend auth pages |
 | GeoIP | `geoip-lite` `^2.0.2` | IP geolocation for login analysis | `backend/src/services/session.ts`, `login-analyzer.ts` |
-| Sharp | `sharp` `^0.34.5` | Avatar image processing | `backend/src/routes/auth.ts` |
+| Sharp | `sharp` `^0.35.4` | Avatar image processing | `backend/src/routes/auth/profile.ts` |
 
 **All external API keys are env-var driven** — no hardcoded secrets found in source. Confirmed by reading `.env.example` and route files.
 
