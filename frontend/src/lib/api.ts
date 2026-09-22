@@ -279,6 +279,48 @@ export const api = {
     return request<{ iceServers: RTCIceServer[] }>("/api/ice-servers");
   },
 
+  async getRoomTranscript(roomId: string, limit = 1000) {
+    return request<{
+      segments: Array<{ id: string; userId: string; text: string; occurredAt: number }>;
+    }>(`/api/rooms/${roomId}/transcript?limit=${limit}`);
+  },
+
+  async getMeetingNotes(roomId: string) {
+    return request<{
+      notes: {
+        id: string;
+        summary: string[];
+        actionItems: string[];
+        decisions: string[];
+        keyPoints: string[];
+        screenshots: Array<{ key: string; capturedAt: number }>;
+        segmentCount: number;
+        createdAt: string;
+      } | null;
+    }>(`/api/rooms/${roomId}/notes`);
+  },
+
+  async generateMeetingNotes(
+    roomId: string,
+    screenshots: Array<{ key: string; capturedAt: number }> = [],
+  ) {
+    return request<{
+      notes: {
+        id: string;
+        summary: string[];
+        actionItems: string[];
+        decisions: string[];
+        keyPoints: string[];
+        screenshots: Array<{ key: string; capturedAt: number }>;
+        segmentCount: number;
+        createdAt: string;
+      };
+    }>(`/api/rooms/${roomId}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ screenshots }),
+    });
+  },
+
   async getWaitingRoom(roomId: string) {
     return request<{
       waitingRoom: Array<{

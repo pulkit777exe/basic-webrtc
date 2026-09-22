@@ -22,6 +22,7 @@ import {
   pinnedParticipantsAtom,
   pinnedChatMessageAtom,
   localMediaAtom,
+  meetingNotesAtom,
   mutedByHostAtom,
   participantsAtom,
   selfViewModeAtom,
@@ -42,6 +43,7 @@ import { RoomVideoGrid } from "@/components/room/RoomVideoGrid";
 import { RoomControlBar } from "@/components/room/RoomControlBar";
 import { RoomChatSidebar } from "@/components/room/RoomChatSidebar";
 import { RoomParticipantsPanel } from "@/components/room/RoomParticipantsPanel";
+import { MeetingNotesPanel } from "@/components/room/MeetingNotesPanel";
 import { RoomCaptionsOverlay } from "@/components/room/RoomCaptionsOverlay";
 import { WaitingRoomPanel } from "@/components/room/WaitingRoomPanel";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +54,7 @@ import {
   Download,
   Lock,
   MessageSquare,
+  NotebookPen,
   Unlock,
   Users,
   Link,
@@ -107,6 +110,7 @@ export function RoomPage() {
   const setChatReactions = useSetAtom(chatReactionsAtom);
   const setPinnedChatMessage = useSetAtom(pinnedChatMessageAtom);
   const setCaptions = useSetAtom(captionsAtom);
+  const setMeetingNotes = useSetAtom(meetingNotesAtom);
   const recordingManagerRef = useRef<{
     startRecording: (stream: MediaStream, key: string) => void;
     stopAndSave: () => Promise<{
@@ -193,6 +197,7 @@ export function RoomPage() {
     setChatReactions({});
     setPinnedChatMessage(null);
     setCaptions([]);
+    setMeetingNotes(null);
 
     return () => {
       cleanedUpRef.current = true;
@@ -212,6 +217,7 @@ export function RoomPage() {
       setChatReactions({});
       setPinnedChatMessage(null);
       setCaptions([]);
+      setMeetingNotes(null);
     };
   }, [
     room?.hostId,
@@ -223,6 +229,7 @@ export function RoomPage() {
     setChat,
     setChatUnread,
     setChatReactions,
+    setMeetingNotes,
     setParticipants,
     setPinnedChatMessage,
     setPinnedParticipants,
@@ -641,6 +648,7 @@ export function RoomPage() {
                     waitingRoomOpen: !ui.waitingRoomOpen,
                     chatOpen: false,
                     participantsOpen: false,
+                    notesOpen: false,
                   })
                 }
                 title="Waiting room"
@@ -668,6 +676,7 @@ export function RoomPage() {
                   chatOpen: opening,
                   participantsOpen: false,
                   waitingRoomOpen: false,
+                  notesOpen: false,
                 });
                 if (opening) setChatUnread(false);
               }}
@@ -694,10 +703,29 @@ export function RoomPage() {
                   participantsOpen: !ui.participantsOpen,
                   chatOpen: false,
                   waitingRoomOpen: false,
+                  notesOpen: false,
                 })
               }
             >
               <Users className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className={`rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text) ${ui.notesOpen ? "bg-(--room-elevated)" : ""}`}
+              aria-label="Toggle meeting notes"
+              title="Meeting notes"
+              onClick={() =>
+                setUi({
+                  ...ui,
+                  notesOpen: !ui.notesOpen,
+                  chatOpen: false,
+                  participantsOpen: false,
+                  waitingRoomOpen: false,
+                })
+              }
+            >
+              <NotebookPen className="h-4 w-4" />
             </Button>
             <Button
               variant="ghost"
@@ -768,7 +796,12 @@ export function RoomPage() {
             captionsEnabled={captionsEnabled}
             onToggleChat={() => {
               const opening = !ui.chatOpen;
-              setUi({ ...ui, chatOpen: opening, participantsOpen: false });
+              setUi({
+                ...ui,
+                chatOpen: opening,
+                participantsOpen: false,
+                notesOpen: false,
+              });
               if (opening) setChatUnread(false);
             }}
             onToggleParticipants={() =>
@@ -776,6 +809,7 @@ export function RoomPage() {
                 ...ui,
                 participantsOpen: !ui.participantsOpen,
                 chatOpen: false,
+                notesOpen: false,
               })
             }
             onLayoutModeChange={setLayoutMode}
@@ -804,6 +838,11 @@ export function RoomPage() {
       {ui.waitingRoomOpen && isHost && (
         <WaitingRoomPanel
           onClose={() => setUi({ ...ui, waitingRoomOpen: false })}
+        />
+      )}
+      {ui.notesOpen && (
+        <MeetingNotesPanel
+          onClose={() => setUi({ ...ui, notesOpen: false })}
         />
       )}
       <RoomCaptionsOverlay />

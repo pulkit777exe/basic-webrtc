@@ -99,6 +99,7 @@ interface UIState {
   chatOpen: boolean;
   participantsOpen: boolean;
   waitingRoomOpen: boolean;
+  notesOpen: boolean;
   pinnedPeer: string | null;
   handRaised: boolean;
 }
@@ -148,9 +149,24 @@ export const uiAtom = atom<UIState>({
   chatOpen: false,
   participantsOpen: false,
   waitingRoomOpen: false,
+  notesOpen: false,
   pinnedPeer: null,
   handRaised: false,
 });
+
+/** AI workspace: extractive meeting notes generated from the transcript. */
+export interface MeetingNotes {
+  id?: string;
+  summary: string[];
+  actionItems: string[];
+  decisions: string[];
+  keyPoints: string[];
+  screenshots: Array<{ key: string; capturedAt: number }>;
+  segmentCount: number;
+  createdAt?: string;
+}
+
+export const meetingNotesAtom = atom<MeetingNotes | null>(null);
 export const consentAtom = atom<ConsentState | null>(null);
 export const waitingRoomParticipantsAtom = atom<WaitingParticipant[]>([]);
 export const waitingRoomPositionAtom = atom<number>(0);

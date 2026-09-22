@@ -6,6 +6,7 @@ import {
   chatReactionsAtom,
   chatUnreadAtom,
   localMediaAtom,
+  meetingNotesAtom,
   mutedByHostAtom,
   pinnedChatMessageAtom,
   participantsAtom,
@@ -95,7 +96,13 @@ type Signal =
   | { type: "token_expired" }
   | { type: "error"; message: string }
   | { type: "kicked" }
-  | { type: "rate_limited" };
+  | { type: "rate_limited" }
+  | {
+      type: "notes_ready";
+      notes: import("@/store/atoms").MeetingNotes;
+      from?: string;
+      roomId?: string;
+    };
 
 let ws: WebSocket | null = null;
 let reconnectAttempts = 0;
@@ -562,7 +569,10 @@ export const WSManager = {
             ...ui,
             chatOpen: false,
             participantsOpen: false,
+            notesOpen: false,
           }));
+        } else if (data.type === "notes_ready" && data.notes) {
+          store.set(meetingNotesAtom, data.notes);
         }
 
         handleSignal(data as Signal);

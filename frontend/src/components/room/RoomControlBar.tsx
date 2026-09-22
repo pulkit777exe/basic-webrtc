@@ -22,7 +22,7 @@ import { useAtomValue, useAtom } from 'jotai';
 import { useEffect, useMemo, useState } from 'react';
 import type { LayoutMode, SelfViewMode } from '@/store/atoms';
 import { audioOutputDeviceIdAtom, localMediaAtom, mutedByHostAtom, uiAtom } from '@/store/atoms';
-import { MediaManager } from '@/lib/media-manager';
+import { MediaManager, type VideoQualityCap } from '@/lib/media-manager';
 import { WSManager } from '@/lib/ws-manager';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
@@ -87,6 +87,9 @@ export function RoomControlBar({
   const [videoInputs, setVideoInputs] = useState<MediaDeviceInfo[]>([]);
   const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([]);
   const [screenShareModalOpen, setScreenShareModalOpen] = useState(false);
+  const [qualityCap, setQualityCapState] = useState<VideoQualityCap>(() =>
+    MediaManager.getVideoQualityCap(),
+  );
 
   const selectedMicId = useMemo(() => stream?.getAudioTracks()[0]?.getSettings().deviceId ?? '', [stream]);
   const selectedCameraId = useMemo(() => stream?.getVideoTracks()[0]?.getSettings().deviceId ?? '', [stream]);
@@ -239,6 +242,29 @@ export function RoomControlBar({
                     {device.label || `Camera ${device.deviceId.slice(0, 6)}`}
                   </DropdownMenuRadioItem>
                 ))}
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Video Quality</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={qualityCap}
+                onValueChange={(value) => {
+                  const cap = value as VideoQualityCap;
+                  MediaManager.setVideoQualityCap(cap);
+                  // Re-negotiate the active camera at the new cap (no-op when off).
+                  if (selectedCameraId) {
+                    void MediaManager.switchVideoInput(selectedCameraId).catch((error) => {
+                      toast.error(
+                        error instanceof Error ? error.message : 'Unable to apply video quality',
+                      );
+                    });
+                  }
+                  setQualityCapState(cap);
+                }}
+              >
+                <DropdownMenuRadioItem value="auto">Auto (best available)</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="1080">1080p HD</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="720">720p</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="480">480p (save bandwidth)</DropdownMenuRadioItem>
               </DropdownMenuRadioGroup>
               <DropdownMenuSeparator />
               <DropdownMenuLabel>Audio Output</DropdownMenuLabel>

@@ -13,6 +13,33 @@ const VIDEO_RESOLUTION_LADDER: Array<{ width: number; height: number }> = [
   { width: 640,  height: 360 },
 ];
 
+/** User-selected cap on outbound resolution (saves uplink bandwidth). */
+export type VideoQualityCap = 'auto' | '1080' | '720' | '480';
+
+const CAP_MAX_HEIGHT: Record<VideoQualityCap, number> = {
+  auto: Number.POSITIVE_INFINITY,
+  '1080': 1080,
+  '720': 720,
+  '480': 480,
+};
+
+let qualityCap: VideoQualityCap = 'auto';
+
+export function setVideoQualityCap(cap: VideoQualityCap): void {
+  qualityCap = cap;
+}
+
+export function getVideoQualityCap(): VideoQualityCap {
+  return qualityCap;
+}
+
+function effectiveVideoLadder(): Array<{ width: number; height: number }> {
+  const maxHeight = CAP_MAX_HEIGHT[qualityCap];
+  const capped = VIDEO_RESOLUTION_LADDER.filter((r) => r.height <= maxHeight);
+  // Never an empty ladder: below 360p, settle for the smallest entry.
+  return capped.length > 0 ? capped : VIDEO_RESOLUTION_LADDER.slice(-1);
+}
+
 const PREFERRED_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   noiseSuppression: true,
   echoCancellation: true,
@@ -25,7 +52,7 @@ export async function negotiateBestVideoTrack(
   const baseConstraints = deviceId ? { deviceId: { exact: deviceId } } : {};
   const failures: Array<{ width: number; height: number; error: string }> = [];
 
-  for (const { width, height } of VIDEO_RESOLUTION_LADDER) {
+  for (const { width, height } of effectiveVideoLadder()) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
@@ -92,6 +119,9 @@ export async function negotiateBestAudioTrack(
 }
 
 export const MediaManager = {
+  setVideoQualityCap,
+  getVideoQualityCap,
+
   async getStream(video: boolean, audio: boolean) {
     if (!video && !audio) {
       localStream = new MediaStream();

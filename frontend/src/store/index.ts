@@ -4,6 +4,7 @@ import type {
   PeerState,
   Participant,
   WaitingParticipant,
+  MeetingNotes,
 } from "./atoms";
 import {
   userAtom,
@@ -16,6 +17,7 @@ import {
   chatAtom,
   participantsAtom,
   uiAtom,
+  meetingNotesAtom,
   consentAtom,
   speakingPeersAtom,
   layoutModeAtom,
@@ -51,6 +53,7 @@ export {
   chatAtom,
   participantsAtom,
   uiAtom,
+  meetingNotesAtom,
   consentAtom,
   speakingPeersAtom,
   layoutModeAtom,
@@ -73,4 +76,4 @@ export {
   waitingRoomEnabledAtom,
 };
 
-export type { Message, PeerState, Participant, WaitingParticipant };
+export type { Message, PeerState, Participant, WaitingParticipant, MeetingNotes };
