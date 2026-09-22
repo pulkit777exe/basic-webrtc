@@ -16,6 +16,7 @@ paths:
     post:
       tags: [Auth]
       summary: Create a new account
+      security: []
       requestBody:
         required: true
         content:
@@ -35,8 +36,29 @@ paths:
                   type: string
                   minLength: 8
       responses:
-        "201":
-          description: Account created, verification email sent
+        "200":
+          description: Verification email sent (account is pending until the OTP is confirmed)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [verification_required]
+                  message:
+                    type: string
+        "400":
+          description: Validation errors
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      type: string
         "409":
           description: Email already registered
 
@@ -44,6 +66,7 @@ paths:
     post:
       tags: [Auth]
       summary: Sign in
+      security: []
       requestBody:
         required: true
         content:
@@ -56,17 +79,28 @@ paths:
                   type: string
                 password:
                   type: string
+                captchaToken:
+                  type: string
+                  description: Required only after repeated failures (hCaptcha)
       responses:
         "200":
-          description: Login successful
+          description: >-
+            Login successful. Variants — `{ requires2FA, pendingToken }` when 2FA is
+            enabled (continue at /api/auth/2fa/validate), or
+            `{ requiresSuspiciousLoginVerification, reasons, accessToken }` when the
+            login looks risky and needs a second check.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Invalid credentials, or CAPTCHA_REQUIRED
         "401":
           description: Invalid credentials
         "403":
-          description: Email not verified
+          description: Email not verified, or account scheduled for deletion
+        "423":
+          description: Account locked after repeated failures (lockedUntil, remainingSeconds)
 
   /api/auth/refresh:
     post:
@@ -106,6 +140,7 @@ paths:
     post:
       tags: [Auth]
       summary: Request password reset email
+      security: []
       requestBody:
         required: true
         content:
@@ -119,28 +154,865 @@ paths:
       responses:
         "200":
           description: Reset email sent (if account exists)
+        "429":
+          description: Too many requests for this address
 
   /api/auth/reset-password:
     post:
       tags: [Auth]
       summary: Reset password with token
+      security: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [token, password]
+              required: [token, newPassword]
               properties:
                 token:
+                  type: string
+                newPassword:
+                  type: string
+                  minLength: 8
+      responses:
+        "200":
+          description: Password reset (all other sessions are revoked)
+        "400":
+          description: Invalid or expired token, or WEAK_PASSWORD with `requirements`
+
+  /api/auth/reset-password/validate:
+    get:
+      tags: [Auth]
+      summary: Check whether a password reset token is still usable
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Token validity (masked email is returned when valid)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                  email:
+                    type: string
+                    description: Masked address, present only when valid
+
+  /api/auth/resend-verification:
+    post:
+      tags: [Auth]
+      summary: Resend the email verification code
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+      responses:
+        "200":
+          description: Verification email sent (message is identical for unknown/verified accounts)
+        "429":
+          description: Too many resend attempts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  retryAfter:
+                    type: integer
+
+  /api/auth/verify-email:
+    post:
+      tags: [Auth]
+      summary: Confirm the 6-digit signup OTP and sign in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, otp]
+              properties:
+                email:
+                  type: string
+                otp:
+                  type: string
+                  pattern: "^[0-9]{6}$"
+      responses:
+        "200":
+          description: Email verified — access token issued and session cookies set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: INVALID_OR_EXPIRED_CODE, or INVALID_CODE with `attemptsLeft`
+        "404":
+          description: USER_NOT_FOUND
+        "429":
+          description: Too many attempts
+
+  /api/auth/profile:
+    patch:
+      tags: [Auth]
+      summary: Update display name
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 2
+                  maxLength: 100
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: "#/components/schemas/UserProfile"
+        "400":
+          description: INVALID_NAME
+
+  /api/auth/profile/avatar:
+    post:
+      tags: [Auth]
+      summary: Upload an avatar image (re-encoded to 400x400 WebP)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [avatar]
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Avatar stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  avatarUrl:
+                    type: string
+        "400":
+          description: FILE_TOO_LARGE, INVALID_IMAGE_CONTENT, or AVATAR_FILE_REQUIRED
+    delete:
+      tags: [Auth]
+      summary: Remove the avatar
+      responses:
+        "200":
+          description: Avatar cleared
+
+  /api/auth/profile/password:
+    patch:
+      tags: [Auth]
+      summary: Change password (revokes other sessions)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword:
+                  type: string
+                newPassword:
+                  type: string
+      responses:
+        "200":
+          description: Password changed
+        "400":
+          description: WEAK_PASSWORD, NEW_PASSWORD_MUST_BE_DIFFERENT, or PASSWORD_AUTH_NOT_AVAILABLE
+        "401":
+          description: INVALID_CURRENT_PASSWORD
+
+  /api/auth/profile/email:
+    patch:
+      tags: [Auth]
+      summary: Start an email change (OTP sent to the new address)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newEmail, password]
+              properties:
+                newEmail:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Verification code sent to the new address
+        "400":
+          description: INVALID_INPUT or EMAIL_UNCHANGED
+        "401":
+          description: INVALID_PASSWORD
+        "409":
+          description: EMAIL_EXISTS
+
+  /api/auth/profile/email/pending:
+    get:
+      tags: [Auth]
+      summary: Get the address awaiting verification for an email change
+      responses:
+        "200":
+          description: Pending address (null when none)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pendingEmail:
+                    type: string
+                    nullable: true
+
+  /api/auth/profile/email/verify:
+    post:
+      tags: [Auth]
+      summary: Confirm the pending email change
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [otp]
+              properties:
+                otp:
+                  type: string
+                  pattern: "^[0-9]{6}$"
+      responses:
+        "200":
+          description: Email changed and verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  email:
+                    type: string
+        "400":
+          description: INVALID_OR_EXPIRED_CODE or NO_PENDING_EMAIL_CHANGE
+
+  /api/auth/link-google:
+    get:
+      tags: [Auth]
+      summary: Start linking Google to the signed-in account
+      responses:
+        "302":
+          description: Redirects to /api/oauth/google with a link-state token
+
+  /api/auth/link-google/pending:
+    get:
+      tags: [Auth]
+      summary: Inspect a pending Google link before confirming it
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Google account and the local account it will be linked to
+        "400":
+          description: LINK_TOKEN_REQUIRED or INVALID_OR_EXPIRED_LINK_TOKEN
+
+  /api/auth/link-google/confirm:
+    post:
+      tags: [Auth]
+      summary: Confirm the Google link by re-entering the account password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [linkToken, password]
+              properties:
+                linkToken:
                   type: string
                 password:
                   type: string
       responses:
         "200":
-          description: Password reset
+          description: Google linked — session cookies set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
         "400":
-          description: Invalid or expired token
+          description: INVALID_OR_EXPIRED_LINK_TOKEN or PASSWORD_REQUIRED_FOR_LINKING
+        "401":
+          description: INVALID_PASSWORD
+
+  /api/auth/unlink-google:
+    delete:
+      tags: [Auth]
+      summary: Unlink Google from the account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Google unlinked
+        "400":
+          description: PASSWORD_REQUIRED, NO_PASSWORD_SET, or GOOGLE_NOT_LINKED
+        "401":
+          description: INVALID_PASSWORD
+
+  /api/auth/set-password:
+    post:
+      tags: [Auth]
+      summary: Set a password for a Google-only account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newPassword]
+              properties:
+                newPassword:
+                  type: string
+      responses:
+        "200":
+          description: Password set
+        "400":
+          description: PASSWORD_ALREADY_SET or WEAK_PASSWORD with `requirements`
+
+  /api/auth/sessions:
+    get:
+      tags: [Auth]
+      summary: List active sessions for the current user
+      responses:
+        "200":
+          description: Sessions, newest activity first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        deviceName:
+                          type: string
+                          nullable: true
+                        deviceType:
+                          type: string
+                          nullable: true
+                        browser:
+                          type: string
+                          nullable: true
+                        os:
+                          type: string
+                          nullable: true
+                        ipAddress:
+                          type: string
+                          nullable: true
+                        location:
+                          type: string
+                          nullable: true
+                        lastActiveAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        createdAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        isCurrent:
+                          type: boolean
+
+  /api/auth/sessions/{sessionId}/revoke:
+    post:
+      tags: [Auth]
+      summary: Revoke one session
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session revoked (currentSessionRevoked when it was this device)
+        "404":
+          description: SESSION_NOT_FOUND
+
+  /api/auth/sessions/revoke-all:
+    post:
+      tags: [Auth]
+      summary: Revoke every session, optionally keeping the current one
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                exceptCurrent:
+                  type: boolean
+      responses:
+        "200":
+          description: Number of sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revokedCount:
+                    type: integer
+
+  /api/auth/backup-codes/status:
+    get:
+      tags: [Auth]
+      summary: Count unused backup codes
+      responses:
+        "200":
+          description: Remaining codes and generation time
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  remaining:
+                    type: integer
+                  backupCodesGeneratedAt:
+                    type: string
+                    format: date-time
+                    nullable: true
+
+  /api/auth/backup-codes/generate:
+    post:
+      tags: [Auth]
+      summary: Generate a fresh set of backup codes (invalidates old ones)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password:
+                  type: string
+                  description: Required when the account has a password
+      responses:
+        "200":
+          description: New codes — shown once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  codes:
+                    type: array
+                    items:
+                      type: string
+                  generatedAt:
+                    type: string
+                    format: date-time
+        "400":
+          description: PASSWORD_REQUIRED
+        "401":
+          description: INVALID_PASSWORD
+
+  /api/auth/2fa/setup:
+    post:
+      tags: [Auth]
+      summary: Begin TOTP enrolment — returns QR code and manual entry key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Pending secret stored (complete at /api/auth/2fa/verify-setup)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  qrCode:
+                    type: string
+                    description: Data URL of the otpauth QR code
+                  manualEntryKey:
+                    type: string
+        "400":
+          description: 2FA_ALREADY_ENABLED or PASSWORD_REQUIRED
+        "401":
+          description: INVALID_PASSWORD
+        "403":
+          description: EMAIL_NOT_VERIFIED
+
+  /api/auth/2fa/verify-setup:
+    post:
+      tags: [Auth]
+      summary: Confirm the TOTP code and enable 2FA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [totp]
+              properties:
+                totp:
+                  type: string
+                  pattern: "^[0-9]{6}$"
+      responses:
+        "200":
+          description: 2FA enabled — backup codes returned once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  backupCodes:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          description: INVALID_CODE or SETUP_EXPIRED
+
+  /api/auth/2fa/disable:
+    post:
+      tags: [Auth]
+      summary: Turn off 2FA (revokes other sessions)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password, totp]
+              properties:
+                password:
+                  type: string
+                totp:
+                  type: string
+                  pattern: "^[0-9]{6}$"
+      responses:
+        "200":
+          description: 2FA disabled
+        "400":
+          description: PASSWORD_AND_TOTP_REQUIRED, 2FA_NOT_ENABLED, or INVALID_CODE
+        "401":
+          description: INVALID_PASSWORD
+
+  /api/auth/2fa/validate:
+    post:
+      tags: [Auth]
+      summary: Finish a 2FA sign-in with a TOTP code or backup code
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pendingToken]
+              properties:
+                pendingToken:
+                  type: string
+                  description: From the requires2FA login response
+                totp:
+                  type: string
+                  pattern: "^[0-9]{6}$"
+                backupCode:
+                  type: string
+      responses:
+        "200":
+          description: >-
+            Signed in. May instead return `{ requiresSuspiciousLoginVerification, reasons }`,
+            and `backupCodesRemaining` when a backup code was used.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: INVALID_CODE, CODE_ALREADY_USED, INVALID_BACKUP_CODE, CODE_REQUIRED, or 2FA_NOT_ENABLED
+        "401":
+          description: PENDING_TOKEN_REQUIRED or PENDING_TOKEN_EXPIRED
+        "429":
+          description: Too many attempts
+
+  /api/auth/verify-suspicious-login:
+    post:
+      tags: [Auth]
+      summary: Lift a restricted (suspicious) session by second-factor proof
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                method:
+                  type: string
+                  enum: [email_otp, totp, backup_code]
+                code:
+                  type: string
+                  description: Omit with method=email_otp to request a fresh code
+      responses:
+        "200":
+          description: Session confirmed, or OTP_SENT when a code was just emailed
+        "400":
+          description: INVALID_CODE, INVALID_METHOD, or 2FA_NOT_ENABLED
+
+  /api/auth/login-events:
+    get:
+      tags: [Auth]
+      summary: Paginated sign-in history (IPs are masked)
+      parameters:
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Up to 20 events per page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        sessionId:
+                          type: string
+                          nullable: true
+                        ipAddress:
+                          type: string
+                          nullable: true
+                        country:
+                          type: string
+                          nullable: true
+                        city:
+                          type: string
+                          nullable: true
+                        browser:
+                          type: string
+                          nullable: true
+                        os:
+                          type: string
+                          nullable: true
+                        deviceType:
+                          type: string
+                          nullable: true
+                        isSuspicious:
+                          type: boolean
+                        suspiciousReasons:
+                          type: array
+                          items:
+                            type: string
+                        confirmedAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                        createdAt:
+                          type: string
+                          format: date-time
+                  nextOffset:
+                    type: integer
+                    nullable: true
+
+  /api/auth/login-events/{eventId}/confirm:
+    post:
+      tags: [Auth]
+      summary: Mark a login event as expected ("this was me")
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Event confirmed
+        "404":
+          description: EVENT_NOT_FOUND
+
+  /api/auth/recover/backup-code:
+    post:
+      tags: [Auth]
+      summary: Sign in with a backup code when the account is otherwise locked out
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, backupCode]
+              properties:
+                email:
+                  type: string
+                backupCode:
+                  type: string
+      responses:
+        "200":
+          description: Signed in — `codesRemaining`, and `warning=LOW_BACKUP_CODES` under 3 left
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: INVALID (email, account, or code)
+        "429":
+          description: Too many attempts
+
+  /api/auth/recover/recovery-email:
+    post:
+      tags: [Auth]
+      summary: Send a password reset link to the verified recovery address
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [primaryEmail]
+              properties:
+                primaryEmail:
+                  type: string
+      responses:
+        "200":
+          description: Generic success message (never reveals whether the account exists)
+        "429":
+          description: Too many attempts
+
+  /api/auth/recovery-email/add:
+    post:
+      tags: [Auth]
+      summary: Register a recovery address (OTP sent to it)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recoveryEmail]
+              properties:
+                recoveryEmail:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  description: Required when the account has a password
+      responses:
+        "200":
+          description: Verification sent to the recovery address
+        "400":
+          description: INVALID_RECOVERY_EMAIL, RECOVERY_EMAIL_MATCHES_PRIMARY, or PASSWORD_REQUIRED
+        "401":
+          description: INVALID_PASSWORD
+        "409":
+          description: RECOVERY_EMAIL_IN_USE
+
+  /api/auth/recovery-email/resend:
+    post:
+      tags: [Auth]
+      summary: Resend the recovery address verification code
+      responses:
+        "200":
+          description: Verification resent (identical message when nothing is pending)
+        "429":
+          description: Too many attempts
+
+  /api/auth/recovery-email/verify:
+    post:
+      tags: [Auth]
+      summary: Confirm the recovery address with its OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [otp]
+              properties:
+                otp:
+                  type: string
+                  pattern: "^[0-9]{6}$"
+      responses:
+        "200":
+          description: Recovery address verified
+        "400":
+          description: INVALID_OR_EXPIRED_CODE or RECOVERY_EMAIL_NOT_SET
+        "429":
+          description: Too many attempts
+
+  /api/auth/recovery-email:
+    delete:
+      tags: [Auth]
+      summary: Remove the recovery address
+      responses:
+        "200":
+          description: Recovery address cleared
 
   /api/rooms:
     get:
@@ -269,6 +1141,277 @@ paths:
                             description: Client stops local recording at this cap
         "404":
           description: Room not found or ended
+    delete:
+      tags: [Rooms]
+      summary: Delete a room (host only) — broadcasts room-ended to peers
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Room ended and state cleared
+        "404":
+          description: Room not found or not hosted by the caller
+
+  /api/rooms/join-by-invite/{token}:
+    get:
+      tags: [Rooms]
+      summary: Resolve an invite link to its room
+      security: []
+      description: >-
+        Optional Bearer token — when the caller is signed in, a 120-second
+        passcode/waiting-room bypass is granted for that room.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Room preview and inviteValid=true
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  room:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      hostId:
+                        type: string
+                      title:
+                        type: string
+                      isLocked:
+                        type: boolean
+                      maxParticipants:
+                        type: integer
+                      participantCount:
+                        type: integer
+                      hasPasscode:
+                        type: boolean
+                      createdAt:
+                        type: string
+                  inviteValid:
+                    type: boolean
+        "404":
+          description: ROOM_NOT_FOUND
+        "410":
+          description: INVITE_EXPIRED (token unknown, expired, or room ended)
+
+  /api/rooms/{id}/invite-token:
+    post:
+      tags: [Rooms]
+      summary: Generate a 24-hour invite link (host only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                previousToken:
+                  type: string
+                  description: Invalidate this token when regenerating
+      responses:
+        "200":
+          description: Invite token (single active token per regeneration)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  inviteUrl:
+                    type: string
+                  expiresAt:
+                    type: string
+                    format: date-time
+        "400":
+          description: INVALID_TOKEN — previousToken belongs to another room
+        "403":
+          description: FORBIDDEN — only the host may invite
+        "404":
+          description: ROOM_NOT_FOUND
+
+  /api/rooms/{id}/waiting-room:
+    get:
+      tags: [Rooms]
+      summary: List people waiting to be admitted (host or co-host)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Current waiting queue
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  waitingRoom:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                          nullable: true
+                        requestedAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+        "403":
+          description: FORBIDDEN — caller is neither host nor co-host
+
+  /api/rooms/{id}/waiting-room/admit:
+    post:
+      tags: [Rooms]
+      summary: Admit one waiting participant (host or co-host)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [participantId]
+              properties:
+                participantId:
+                  type: string
+      responses:
+        "200":
+          description: Participant admitted over WS with a fresh room token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+        "400":
+          description: BAD_REQUEST — participantId missing
+        "403":
+          description: FORBIDDEN
+
+  /api/rooms/{id}/waiting-room/reject:
+    post:
+      tags: [Rooms]
+      summary: Reject one waiting participant (host or co-host)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [participantId]
+              properties:
+                participantId:
+                  type: string
+      responses:
+        "200":
+          description: Participant notified of the rejection
+        "400":
+          description: BAD_REQUEST — participantId missing
+        "403":
+          description: FORBIDDEN
+
+  /api/rooms/{id}/waiting-room/admit-all:
+    post:
+      tags: [Rooms]
+      summary: Admit everyone waiting (host only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Number admitted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  admitted:
+                    type: integer
+        "403":
+          description: FORBIDDEN — only the host can admit all
+
+  /api/rooms/{id}/transcribe:
+    post:
+      tags: [Rooms]
+      summary: Transcribe a short audio clip for live captions
+      description: >-
+        Authenticates with a room token (Bearer) rather than an account token.
+        Requires OPENAI_API_KEY or DEEPGRAM_API_KEY; returns 503 when neither is set.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Audio clip (webm/ogg/mp3)
+      responses:
+        "200":
+          description: Transcript text
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  text:
+                    type: string
+        "400":
+          description: MISSING_FILE
+        "403":
+          description: INVALID_TOKEN — room token missing or for another room
+        "502":
+          description: TRANSCRIBE_FAILED — upstream provider error
+        "503":
+          description: TRANSCRIBE_DISABLED — no provider configured
 
   /api/rooms/{id}/state:
     get:
@@ -365,30 +1508,15 @@ paths:
         "403":
           description: Room locked or passcode required
 
-  /api/rooms/{id}/end:
-    post:
-      tags: [Rooms]
-      summary: End a room (host only)
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Room ended
-        "403":
-          description: Not host
-
   /api/ice-servers:
     get:
       tags: [ICE]
       summary: Get ICE/TURN server credentials
-      security:
-        - BearerAuth: []
+      security: []
+      description: >-
+        Bearer token optional. STUN only unless TURN_SERVERS and TURN_SECRET are
+        configured; TURN credentials are HMAC-SHA1 (expiry:random) and expire after
+        TURN_TTL_SEC (default 300s).
       responses:
         "200":
           description: ICE server configuration
@@ -401,6 +1529,15 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ICEServer"
+                  config:
+                    type: object
+                    properties:
+                      iceCandidatePoolSize:
+                        type: integer
+                      bundlePolicy:
+                        type: string
+                      rtcpMuxPolicy:
+                        type: string
 
   /api/recordings/{roomId}/status:
     get:
@@ -558,6 +1695,101 @@ paths:
           description: Deletion scheduled
         "409":
           description: Active room exists
+
+  /api/account/export/status:
+    get:
+      tags: [Account]
+      summary: Whether a new export can be requested right now
+      responses:
+        "200":
+          description: Rate-limit state for the export request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  canRequest:
+                    type: boolean
+                  retryAfter:
+                    type: integer
+                    description: Seconds until another export may be requested
+
+  /api/account/export/download:
+    get:
+      tags: [Account]
+      summary: Download a ready export archive (single-use link from the email)
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ZIP archive (deleted from disk after the response finishes)
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: INVALID_TOKEN
+        "404":
+          description: EXPORT_NOT_FOUND (unknown or already used)
+
+  /api/account/cancel-deletion:
+    post:
+      tags: [Account]
+      summary: Cancel a scheduled account deletion during the grace period
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [originalEmail, password]
+              properties:
+                originalEmail:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Deletion cancelled, account restored
+        "400":
+          description: EMAIL_AND_PASSWORD_REQUIRED or PASSWORD_UNAVAILABLE
+        "401":
+          description: INVALID_PASSWORD
+        "404":
+          description: DELETION_REQUEST_NOT_FOUND (unknown, cancelled, or past the grace period)
+
+  /api/oauth/google:
+    get:
+      tags: [OAuth]
+      summary: Redirect to Google's consent screen
+      security: []
+      parameters:
+        - name: state
+          in: query
+          schema:
+            type: string
+          description: Pass `link:{token}` to link Google to the signed-in account
+      responses:
+        "302":
+          description: Redirect to Google
+
+  /api/oauth/google/callback:
+    get:
+      tags: [OAuth]
+      summary: Google OAuth callback
+      security: []
+      responses:
+        "302":
+          description: >-
+            Redirect back to the frontend — signs in, or lands on
+            /auth/link-account with a link token when linking
 
   /health:
     get:
