@@ -3,7 +3,14 @@ import { store } from '@/store';
 import { peerAtomFamily, peerIdsAtom } from '@/store/atoms';
 import { WSManager } from '@/lib/ws-manager';
 
-let iceServers: RTCIceServer[] = [];
+const FALLBACK_ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
+const BUNDLE_POLICIES = ['balanced', 'max-compat', 'max-bundle'] as const;
+// Browsers only accept "require" — "negotiate" was removed from the WebRTC
+// spec — so an env value of "negotiate" is dropped and the default applies.
+const RTCP_MUX_POLICIES = ['require'] as const;
+const MAX_ICE_CANDIDATE_POOL_SIZE = 25;
+/** From GET /api/ice-servers, whitelisted — see buildIceConfiguration. */
+let peerConfiguration: RTCConfiguration = { iceServers: FALLBACK_ICE_SERVERS };
 const peerConnections = new Map<string, RTCPeerConnection>();
 /** ICE candidates received before setRemoteDescription completes (trickle race). */
 const pendingIceCandidates = new Map<string, RTCIceCandidateInit[]>();
@@ -78,6 +85,55 @@ async function restartIceConnection(userId: string) {
   }
 }
 
+function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value is T {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value);
+}
+
+/**
+ * Build the RTCPeerConnection configuration from GET /api/ice-servers. The
+ * server also returns env-tuned ICE hints (bundlePolicy, rtcpMuxPolicy,
+ * iceCandidatePoolSize); each is whitelisted/clamped here because the
+ * RTCPeerConnection constructor *throws* on invalid enum strings — one bad
+ * env value would otherwise take down every peer connection in the room.
+ */
+export function buildIceConfiguration(res: {
+  iceServers?: RTCIceServer[];
+  config?: {
+    iceCandidatePoolSize?: number;
+    bundlePolicy?: string;
+    rtcpMuxPolicy?: string;
+  };
+}): RTCConfiguration {
+  const configuration: RTCConfiguration = {
+    iceServers: res.iceServers?.length ? res.iceServers : FALLBACK_ICE_SERVERS,
+  };
+  const config = res.config;
+  if (!config) return configuration;
+  if (isOneOf(config.bundlePolicy, BUNDLE_POLICIES)) {
+    configuration.bundlePolicy = config.bundlePolicy;
+  }
+  if (isOneOf(config.rtcpMuxPolicy, RTCP_MUX_POLICIES)) {
+    configuration.rtcpMuxPolicy = config.rtcpMuxPolicy;
+  }
+  if (
+    typeof config.iceCandidatePoolSize === 'number' &&
+    Number.isFinite(config.iceCandidatePoolSize)
+  ) {
+    configuration.iceCandidatePoolSize = Math.min(
+      MAX_ICE_CANDIDATE_POOL_SIZE,
+      Math.max(0, Math.floor(config.iceCandidatePoolSize)),
+    );
+  }
+  return configuration;
+}
+
+/** Mirror a peer's RTCPeerConnection.connectionState into its atom (tile chip). */
+function publishConnState(userId: string, state: RTCPeerConnectionState): void {
+  const peer = store.get(peerAtomFamily(userId));
+  if (!peer || peer.connState === state) return;
+  store.set(peerAtomFamily(userId), { ...peer, connState: state });
+}
+
 function attachLocalTracks(connection: RTCPeerConnection, stream: MediaStream | null) {
   if (!stream) return;
   
@@ -102,10 +158,9 @@ function attachLocalTracks(connection: RTCPeerConnection, stream: MediaStream | 
 export const RTCManager = {
   async init() {
     try {
-      const res = await api.getIceServers();
-      iceServers = res.iceServers && res.iceServers.length > 0 ? res.iceServers : [{ urls: 'stun:stun.l.google.com:19302' }];
+      peerConfiguration = buildIceConfiguration(await api.getIceServers());
     } catch {
-      iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+      peerConfiguration = { iceServers: FALLBACK_ICE_SERVERS };
     }
   },
 
@@ -129,7 +184,7 @@ export const RTCManager = {
       attachLocalTracks(connection, stream ?? localStream);
       return { connection, created: false };
     }
-    const connection = new RTCPeerConnection({ iceServers });
+    const connection = new RTCPeerConnection(peerConfiguration);
     attachLocalTracks(connection, stream ?? localStream);
 
     connection.ontrack = (event) => {
@@ -218,6 +273,7 @@ export const RTCManager = {
     };
 
     connection.onconnectionstatechange = () => {
+      publishConnState(userId, connection.connectionState);
       if (connection.connectionState === 'failed') {
         void restartIceConnection(userId);
       }
@@ -242,6 +298,7 @@ export const RTCManager = {
     };
 
     peerConnections.set(userId, connection);
+    publishConnState(userId, connection.connectionState);
     return { connection, created: true };
   },
 

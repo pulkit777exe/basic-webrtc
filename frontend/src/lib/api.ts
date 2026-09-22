@@ -311,7 +311,15 @@ export const api = {
   },
 
   async getIceServers() {
-    return request<{ iceServers: RTCIceServer[] }>("/api/ice-servers");
+    return request<{
+      iceServers: RTCIceServer[];
+      /** Env-tuned ICE hints — whitelisted before use, see rtc-manager.buildIceConfiguration. */
+      config?: {
+        iceCandidatePoolSize?: number;
+        bundlePolicy?: string;
+        rtcpMuxPolicy?: string;
+      };
+    }>("/api/ice-servers");
   },
 
   async getRoomTranscript(roomId: string, limit = 1000) {

@@ -16,6 +16,8 @@ interface GridParticipant {
   screen: boolean;
   isLocal: boolean;
   handRaised: boolean;
+  /** Remote peers only: RTCPeerConnection.connectionState for the tile chip. */
+  connState?: RTCPeerConnectionState;
 }
 
 interface RoomVideoGridProps {
@@ -99,6 +101,7 @@ export function RoomVideoGrid({
         screen: peer.screen,
         isLocal: false,
         handRaised: peer.handRaised ?? false,
+        connState: peer.connState,
       })),
     [peers]
   );
@@ -224,6 +227,7 @@ export function RoomVideoGrid({
       videoMuted={!participant.video}
       isScreenShare={participant.screen}
       handRaised={participant.handRaised}
+      connState={participant.connState}
       canPin={!participant.isLocal}
       onTogglePin={onTogglePin}
       audioOutputDeviceId={audioOutputDeviceId}

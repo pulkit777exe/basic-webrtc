@@ -62,6 +62,8 @@ export interface PeerState {
   role: "host" | "co-host" | "participant";
   handRaised: boolean;
   handRaisedAt: number | null;
+  /** RTCPeerConnection.connectionState — drives the tile's connection chip. */
+  connState?: RTCPeerConnectionState;
 }
 
 interface LocalMedia {

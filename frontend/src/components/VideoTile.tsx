@@ -3,6 +3,7 @@ import { useAtomValue } from 'jotai';
 import { ExternalLink, Fullscreen, MicOff, Monitor, PictureInPicture2, Pin, PinOff, VideoOff } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { connectionChip } from '@/components/connection-chip';
 import { cn } from '@/lib/utils';
 import { isSpeakingAtomFamily } from '@/store/atoms';
 
@@ -20,6 +21,8 @@ export interface VideoTileProps {
   onTogglePin?: (participantId: string) => void;
   audioOutputDeviceId?: string | null;
   className?: string;
+  /** Remote peers only: RTCPeerConnection.connectionState (drives the chip). */
+  connState?: RTCPeerConnectionState;
 }
 
 /**
@@ -45,6 +48,7 @@ function VideoTileInner({
   onTogglePin,
   audioOutputDeviceId,
   className,
+  connState,
 }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const isSpeaking = useAtomValue(isSpeakingAtomFamily(participantId));
@@ -71,6 +75,7 @@ function VideoTileInner({
       : !videoMuted && hasLiveRemoteVideo);
 
   const trackCount = stream?.getTracks().length ?? 0;
+  const chip = connectionChip(connState, isLocal);
   const streamBindKey = useMemo(() => {
     if (!stream) return '';
     return `${stream.id}:${trackCount}:${stream
@@ -262,9 +267,25 @@ function VideoTileInner({
       </div>
 
       <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-linear-to-t from-black/85 via-black/35 to-transparent px-3 py-2.5">
-        <span className="truncate text-sm font-medium text-white">
-          {name}
-          {isLocal ? ' (You)' : ''}
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-medium text-white">
+            {name}
+            {isLocal ? ' (You)' : ''}
+          </span>
+          {chip && (
+            <span
+              role="status"
+              className={cn(
+                'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium',
+                chip.tone === 'failed'
+                  ? 'bg-rose-500/25 text-rose-300'
+                  : 'bg-amber-500/20 text-amber-300'
+              )}
+            >
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+              {chip.label}
+            </span>
+          )}
         </span>
       </div>
     </div>
