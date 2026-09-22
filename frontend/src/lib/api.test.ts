@@ -335,4 +335,43 @@ describe('api module', () => {
       });
     });
   });
+
+  describe('network failures', () => {
+    it('surfaces a friendly message instead of a raw fetch TypeError', async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+        Promise.reject(new TypeError('fetch failed')),
+      );
+      await expect(api.getMe()).rejects.toThrow(
+        'Network error — check your connection and try again',
+      );
+    });
+
+    it('retries a GET exactly once on network failure', async () => {
+      const fetchMock = vi
+        .spyOn(globalThis, 'fetch')
+        .mockRejectedValueOnce(new TypeError('fetch failed'))
+        .mockImplementation(() => jsonResponse({ user: { id: 'u1', email: 'a@b.c', name: 'A', emailVerified: true } }));
+      const res = await api.getMe();
+      expect(res.user.id).toBe('u1');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not retry non-idempotent requests (POST)', async () => {
+      const fetchMock = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(() => Promise.reject(new TypeError('fetch failed')));
+      await expect(api.refresh()).rejects.toThrow(
+        'Network error — check your connection and try again',
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('still throws ApiError untouched (no retry on HTTP errors)', async () => {
+      const fetchMock = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(() => errorResponse(404, { error: 'Room not found', code: 'ROOM_NOT_FOUND' }));
+      await expect(api.getRoom('nope')).rejects.toMatchObject({ status: 404 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
 });

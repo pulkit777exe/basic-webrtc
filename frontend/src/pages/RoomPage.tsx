@@ -4,7 +4,6 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { useAtomValue, useAtom, useSetAtom } from "jotai";
 import {
-  activeSpeakerAtom,
   audioOutputDeviceIdAtom,
   chatAtom,
   chatEnabledAtom,
@@ -12,8 +11,10 @@ import {
   chatUnreadAtom,
   captionsAtom,
   captionsEnabledAtom,
+  connectionStatusAtom,
   isHostAtom,
   layoutModeAtom,
+  peerAtomFamily,
   recordingAtom,
   roomAtom,
   roomLockedAtom,
@@ -28,9 +29,9 @@ import {
   mutedByHostAtom,
   participantsAtom,
   selfViewModeAtom,
-  speakingPeersAtom,
   uiAtom,
   waitingRoomParticipantsAtom,
+  type ConnectionStatus,
 } from "@/store/atoms";
 import { store } from "@/store";
 import { WSManager } from "@/lib/ws-manager";
@@ -44,6 +45,10 @@ import { MediaManager } from "@/lib/media-manager";
 import { RoomVideoGrid } from "@/components/room/RoomVideoGrid";
 import { RoomControlBar } from "@/components/room/RoomControlBar";
 import { RoomChatSidebar } from "@/components/room/RoomChatSidebar";
+import { ConnectionStatusPill } from "@/components/room/ConnectionStatusPill";
+import { ElapsedTimer } from "@/components/room/ElapsedTimer";
+import { api } from "@/lib/api";
+import { mergeChatHistory } from "@/lib/chat-history";
 import { RoomParticipantsPanel } from "@/components/room/RoomParticipantsPanel";
 import { MeetingNotesPanel } from "@/components/room/MeetingNotesPanel";
 import { RoomCaptionsOverlay } from "@/components/room/RoomCaptionsOverlay";
@@ -74,7 +79,6 @@ import { InviteModal } from "@/components/InviteModal";
 import { VideoGridErrorBoundary } from "@/components/room/VideoGridErrorBoundary";
 import { ChatErrorBoundary } from "@/components/room/ChatErrorBoundary";
 import { ControlsErrorBoundary } from "@/components/room/ControlsErrorBoundary";
-import { formatDuration } from "@/lib/time";
 import {
   isEditableTarget,
   isHelpKey,
@@ -99,8 +103,6 @@ export function RoomPage() {
   const user = useAtomValue(userAtom);
   const isHost = useAtomValue(isHostAtom);
   const peers = useAtomValue(peerListAtom);
-  const speakingPeers = useAtomValue(speakingPeersAtom);
-  const activeSpeakerId = useAtomValue(activeSpeakerAtom);
   const audioOutputDeviceId = useAtomValue(audioOutputDeviceIdAtom);
   const localMedia = useAtomValue(localMediaAtom);
   const mutedByHost = useAtomValue(mutedByHostAtom);
@@ -148,7 +150,6 @@ export function RoomPage() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [joinedAt] = useState(() => Date.now());
-  const [nowMs, setNowMs] = useState(() => Date.now());
   const muteOnJoinCheckedRef = useRef(false);
   const capNotifiedForStartRef = useRef<number | null>(null);
   const setChatEnabled = useSetAtom(chatEnabledAtom);
@@ -290,11 +291,36 @@ export function RoomPage() {
     }
   }, [room, localMedia.stream, localMedia.audio]);
 
-  // Header elapsed timer (Google Meet shows time-in-call).
+  // Chat history: hydrate on first connect, resync after every reconnect —
+  // the WS only streams live messages, so an outage would otherwise leave a gap.
+  const connectionStatus = useAtomValue(connectionStatusAtom);
+  const prevConnRef = useRef<ConnectionStatus>("connecting");
   useEffect(() => {
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
+    if (connectionStatus !== "connected") {
+      prevConnRef.current = connectionStatus;
+      return;
+    }
+    if (prevConnRef.current === "connected" || !roomId || !roomToken) return;
+    prevConnRef.current = "connected";
+    let cancelled = false;
+    void api
+      .getRoomMessages(roomId, roomToken)
+      .then(({ messages: rows }) => {
+        if (cancelled || rows.length === 0) return;
+        const participants = store.get(participantsAtom);
+        const resolveName = (userId: string) =>
+          participants.find((p) => p.userId === userId)?.user.name ??
+          store.get(peerAtomFamily(userId))?.user.name;
+        // Synchronous read-merge-write: no awaits, so a live WS append can't interleave.
+        setChat(mergeChatHistory(store.get(chatAtom), rows, resolveName));
+      })
+      .catch(() => {
+        // Best-effort: a history gap is recoverable; the header shows connection state.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [connectionStatus, roomId, roomToken, setChat]);
 
   // Fullscreen state mirror for the header toggle.
   useEffect(() => {
@@ -763,9 +789,10 @@ export function RoomPage() {
             </Badge>
           </div>
           <div className="flex items-center gap-2">
+            <ConnectionStatusPill />
             <Badge className="rounded-full border-0 bg-(--room-elevated) text-(--room-text) hover:bg-(--room-elevated)">
               <Clock className="mr-1 h-3.5 w-3.5 text-(--room-muted)" />
-              {formatDuration(nowMs - joinedAt)}
+              <ElapsedTimer joinedAt={joinedAt} />
             </Badge>
             <Badge className="rounded-full border-0 bg-(--room-elevated) text-(--room-text) hover:bg-(--room-elevated)">
               {participantCount} participant{participantCount > 1 ? "s" : ""}
@@ -959,8 +986,6 @@ export function RoomPage() {
             layoutMode={layoutMode}
             selfViewMode={selfViewMode}
             pinnedParticipants={pinnedParticipants}
-            speakingPeers={speakingPeers}
-            activeSpeakerId={activeSpeakerId}
             audioOutputDeviceId={audioOutputDeviceId}
             onTogglePin={togglePin}
           />

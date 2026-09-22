@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
+import { useAtomValue } from 'jotai';
 import { ExternalLink, Fullscreen, MicOff, Monitor, PictureInPicture2, Pin, PinOff, VideoOff } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { isSpeakingAtomFamily } from '@/store/atoms';
 
 export interface VideoTileProps {
   stream: MediaStream | null;
@@ -10,43 +12,42 @@ export interface VideoTileProps {
   name: string;
   isLocal: boolean;
   isPinned: boolean;
-  isSpeaking: boolean;
   audioMuted: boolean;
   videoMuted: boolean;
   isScreenShare: boolean;
   handRaised?: boolean;
   canPin?: boolean;
   onTogglePin?: (participantId: string) => void;
-  /** Browser PiP for this tile's video (intended for remote camera/screen). */
-  onEnterPiP?: () => void;
-  onPopOutScreen?: (participantId: string) => void;
-  onFullscreen?: () => void;
-  registerVideoElement?: (participantId: string, element: HTMLVideoElement | null) => void;
   audioOutputDeviceId?: string | null;
   className?: string;
 }
 
-export function VideoTile({
+/**
+ * One participant's video tile.
+ *
+ * Deliberately self-contained: speaking state comes from a per-id derived atom
+ * (only this tile re-renders on audio-activity), and PiP / fullscreen / pop-out
+ * run against this tile's own <video> — so every remaining prop is a primitive
+ * or a stable callback, which lets `memo` skip re-renders during speaking and
+ * layout churn.
+ */
+function VideoTileInner({
   stream,
   participantId,
   name,
   isLocal,
   isPinned,
-  isSpeaking,
   audioMuted,
   videoMuted,
   isScreenShare,
   handRaised = false,
   canPin = false,
   onTogglePin,
-  onEnterPiP,
-  onPopOutScreen,
-  onFullscreen,
-  registerVideoElement,
   audioOutputDeviceId,
   className,
 }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const isSpeaking = useAtomValue(isSpeakingAtomFamily(participantId));
   const initials = useMemo(
     () =>
       name
@@ -99,15 +100,48 @@ export function VideoTile({
   }, [stream, streamBindKey, showVideo]);
 
   useEffect(() => {
-    registerVideoElement?.(participantId, videoRef.current);
-    return () => registerVideoElement?.(participantId, null);
-  }, [participantId, registerVideoElement]);
-
-  useEffect(() => {
     const element = videoRef.current as (HTMLVideoElement & { setSinkId?: (deviceId: string) => Promise<void> }) | null;
     if (!element?.setSinkId || !audioOutputDeviceId) return;
     element.setSinkId(audioOutputDeviceId).catch(() => {});
   }, [audioOutputDeviceId]);
+
+  // ── Self-contained tile actions (stable props keep memo effective) ──
+  const canPictureInPicture = !isLocal && Boolean(stream) && (!videoMuted || isScreenShare);
+  const canShareView = isScreenShare && Boolean(stream);
+
+  const enterPictureInPicture = async () => {
+    const el = videoRef.current;
+    if (!el || !document.pictureInPictureEnabled) return;
+    try {
+      if (document.pictureInPictureElement && document.pictureInPictureElement !== el) {
+        await document.exitPictureInPicture();
+      }
+      if (document.pictureInPictureElement !== el) {
+        await el.requestPictureInPicture();
+      }
+    } catch {
+      // PiP requests need a user gesture; browsers may still refuse.
+    }
+  };
+
+  const enterFullscreen = () => {
+    void videoRef.current?.requestFullscreen().catch(() => {});
+  };
+
+  const popOutScreen = () => {
+    const screenStream = videoRef.current?.srcObject;
+    if (!screenStream) return;
+    const popup = window.open('', '_blank', 'width=960,height=540');
+    if (!popup) return;
+    popup.document.write(
+      '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src \'self\' \'unsafe-inline\'; media-src blob: mediastream:;"><title>Shared screen</title><style>html,body{margin:0;background:#000;height:100%}video{width:100%;height:100%;object-fit:contain;background:#000}</style></head><body><video id="screen" autoplay playsinline controls></video></body></html>'
+    );
+    popup.document.close();
+    const video = popup.document.getElementById('screen') as HTMLVideoElement | null;
+    if (video) {
+      video.srcObject = screenStream;
+    }
+  };
 
   return (
     <div
@@ -149,26 +183,26 @@ export function VideoTile({
               <Monitor className="mr-1 h-3.5 w-3.5" />
               Sharing
             </Badge>
-            {onFullscreen && (
+            {canShareView && (
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-sm"
                 className="h-7 w-7 rounded-full border border-white/20 bg-black/45 text-white hover:bg-black/65"
-                onClick={onFullscreen}
+                onClick={enterFullscreen}
                 title="Fullscreen"
                 aria-label="View fullscreen"
               >
                 <Fullscreen className="h-3.5 w-3.5" />
               </Button>
             )}
-            {onPopOutScreen && (
+            {canShareView && (
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-sm"
                 className="h-7 w-7 rounded-full border border-white/20 bg-black/45 text-white hover:bg-black/65"
-                onClick={() => onPopOutScreen(participantId)}
+                onClick={popOutScreen}
                 title="Pop out shared screen"
                 aria-label="Pop out shared screen"
               >
@@ -185,13 +219,13 @@ export function VideoTile({
             ✋
           </span>
         )}
-        {onEnterPiP && (
+        {canPictureInPicture && (
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
             className="h-7 w-7 rounded-full border border-white/20 bg-black/45 text-white opacity-0 transition-opacity hover:bg-black/65 group-hover:opacity-100 group-focus-within:opacity-100"
-            onClick={onEnterPiP}
+            onClick={() => void enterPictureInPicture()}
             title="Picture-in-picture"
             aria-label="Picture-in-picture"
           >
@@ -236,3 +270,6 @@ export function VideoTile({
     </div>
   );
 }
+
+/** Memoized: props are primitives/stable callbacks, so most updates skip entirely. */
+export const VideoTile = memo(VideoTileInner);

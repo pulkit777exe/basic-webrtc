@@ -8,6 +8,8 @@ const API_TIMEOUT_MS =
   Number.isFinite(parsedTimeoutMs) && parsedTimeoutMs > 0
     ? parsedTimeoutMs
     : 15000;
+const NETWORK_ERROR_MESSAGE = "Network error — check your connection and try again";
+const NETWORK_RETRY_DELAY_MS = 500;
 
 let accessToken: string | null = null;
 
@@ -58,8 +60,6 @@ async function request<T>(
   options: RequestInit & { token?: string | null } = {},
 ): Promise<T> {
   const { token = accessToken, ...init } = options;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   const headers: HeadersInit = {
     ...(init.headers as Record<string, string>),
   };
@@ -69,41 +69,59 @@ async function request<T>(
   if (token) {
     (headers as Record<string, string>)["Authorization"] = `Bearer ${token}`;
   }
-  try {
-    const res = await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
-      credentials: "include",
-      headers,
-      signal: controller.signal,
-    });
+  const method = (init.method ?? "GET").toUpperCase();
+  // GETs are idempotent: retry once on a network blip before giving up.
+  const maxAttempts = method === "GET" ? 2 : 1;
+  let lastNetworkError: unknown = null;
 
-    if (res.status === 204) {
-      return {} as T;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, NETWORK_RETRY_DELAY_MS));
     }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${API_BASE_URL}${path}`, {
+        ...init,
+        credentials: "include",
+        headers,
+        signal: controller.signal,
+      });
 
-    const contentType = res.headers.get("content-type") ?? "";
-    const data = contentType.includes("application/json")
-      ? await res.json().catch(() => ({}))
-      : { error: await res.text().catch(() => "") };
+      if (res.status === 204) {
+        return {} as T;
+      }
 
-    if (!res.ok) {
-      const payload = data as { error?: string; errors?: string[]; code?: string };
-      const errorMessage =
-        payload.error ||
-        (Array.isArray(payload.errors) && payload.errors.length
-          ? payload.errors.join("; ")
-          : res.statusText || "Request failed");
-      throw new ApiError(errorMessage, res.status, payload.code, data);
+      const contentType = res.headers.get("content-type") ?? "";
+      const data = contentType.includes("application/json")
+        ? await res.json().catch(() => ({}))
+        : { error: await res.text().catch(() => "") };
+
+      if (!res.ok) {
+        const payload = data as { error?: string; errors?: string[]; code?: string };
+        const errorMessage =
+          payload.error ||
+          (Array.isArray(payload.errors) && payload.errors.length
+            ? payload.errors.join("; ")
+            : res.statusText || "Request failed");
+        throw new ApiError(errorMessage, res.status, payload.code, data);
+      }
+      return data as T;
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw new Error(`Request timed out after ${API_TIMEOUT_MS}ms`, { cause: err });
+      }
+      if (err instanceof TypeError) {
+        // `fetch` rejects with TypeError when the network itself fails.
+        lastNetworkError = err;
+        continue;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
     }
-    return data as T;
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      throw new Error(`Request timed out after ${API_TIMEOUT_MS}ms`, { cause: err });
-    }
-    throw err;
-  } finally {
-    clearTimeout(timeout);
   }
+  throw new Error(NETWORK_ERROR_MESSAGE, { cause: lastNetworkError });
 }
 
 export const api = {

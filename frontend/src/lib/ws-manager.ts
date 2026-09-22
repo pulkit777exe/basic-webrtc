@@ -6,6 +6,7 @@ import {
   chatEnabledAtom,
   chatReactionsAtom,
   chatUnreadAtom,
+  connectionStatusAtom,
   floatingReactionsAtom,
   localMediaAtom,
   meetingNotesAtom,
@@ -16,6 +17,7 @@ import {
   peerIdsAtom,
   pinnedParticipantsAtom,
   reactionsEnabledAtom,
+  reconnectAttemptAtom,
   recordingAtom,
   roomAtom,
   roomLockedAtom,
@@ -31,6 +33,7 @@ import { handleSignal } from "./signal-handler";
 import { playHandRaiseSound } from "./hand-raise-sound";
 import { appendFloatingReaction } from "./reactions";
 import { signalingWsUrl } from "@/config/api";
+import { MAX_RECONNECT, nextReconnectDelay } from "./connection";
 
 type Signal =
   | { type: "offer"; to: string; sdp: RTCSessionDescriptionInit; from?: string }
@@ -115,8 +118,8 @@ let ws: WebSocket | null = null;
 let reconnectAttempts = 0;
 let intentionalDisconnect = false;
 let recordingNoticeShown = false;
-const MAX_RECONNECT = 10;
-const DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let lastRoomToken: string | null = null;
 
 // Pending subscriptions for role assignment when roomAtom is not yet available
 // Map<userId, unsubscribe>
@@ -219,11 +222,26 @@ let lastPongReceived = true;
 export const WSManager = {
   connect(roomToken: string) {
     intentionalDisconnect = false;
+    lastRoomToken = roomToken;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    const prevStatus = store.get(connectionStatusAtom);
+    const isRetry =
+      prevStatus === "reconnecting" || prevStatus === "offline" || prevStatus === "disconnected";
+    store.set(connectionStatusAtom, isRetry ? "reconnecting" : "connecting");
     const url = signalingWsUrl(roomToken);
     ws = new WebSocket(url);
 
     ws.onopen = () => {
+      const statusBefore = store.get(connectionStatusAtom);
       reconnectAttempts = 0;
+      store.set(reconnectAttemptAtom, 0);
+      store.set(connectionStatusAtom, "connected");
+      if (statusBefore === "reconnecting" || statusBefore === "offline" || statusBefore === "disconnected") {
+        toast.success("Reconnected");
+      }
       lastPongReceived = true;
       // Start heartbeat — send ping every 25s, detect dead connection if no pong within 10s
       if (pingInterval) clearInterval(pingInterval);
@@ -604,6 +622,8 @@ export const WSManager = {
     };
 
     ws.onclose = (event) => {
+      // Ignore a late close from a superseded socket (a fresh one may exist).
+      if (event.target !== ws) return;
       ws = null;
       if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
       if (pongTimeout) { clearTimeout(pongTimeout); pongTimeout = null; }
@@ -615,25 +635,36 @@ export const WSManager = {
           url,
         });
       }
-      if (reconnectAttempts < MAX_RECONNECT) {
-        // Clear stale peer state so fresh join messages rebuild cleanly
-        // (handles Render cold-start where server in-memory state is wiped)
-        RTCManager.disconnectAll();
-        store.set(participantsAtom, []);
-        store.set(peerIdsAtom, []);
-        store.set(speakingPeersAtom, new Set());
-        store.set(pinnedParticipantsAtom, new Set());
-        store.set(activeSpeakerAtom, null);
-
-        const delay = DELAYS[Math.min(reconnectAttempts, DELAYS.length - 1)] + Math.random() * 1000;
-        reconnectAttempts++;
-        toast.info("Reconnecting to room...");
-        setTimeout(() => WSManager.connect(roomToken), delay);
-      } else if (!intentionalDisconnect) {
+      if (intentionalDisconnect) return;
+      const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+      if (reconnectAttempts >= MAX_RECONNECT) {
+        store.set(connectionStatusAtom, "disconnected");
         toast.error(
           "Could not stay connected to the room. Check your network or WebSocket URL, then refresh.",
         );
+        return;
       }
+      // Clear stale peer state so fresh join messages rebuild cleanly
+      // (handles Render cold-start where server in-memory state is wiped)
+      RTCManager.disconnectAll();
+      store.set(participantsAtom, []);
+      store.set(peerIdsAtom, []);
+      store.set(speakingPeersAtom, new Set());
+      store.set(pinnedParticipantsAtom, new Set());
+      store.set(activeSpeakerAtom, null);
+
+      reconnectAttempts += 1;
+      store.set(reconnectAttemptAtom, reconnectAttempts);
+      store.set(connectionStatusAtom, offline ? "offline" : "reconnecting");
+      if (offline) {
+        // No point dialing while the network is down; the 'online' listener retries.
+        return;
+      }
+      const delay = nextReconnectDelay(reconnectAttempts - 1);
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        WSManager.connect(roomToken);
+      }, delay);
     };
 
     ws.onerror = () => {
@@ -641,20 +672,26 @@ export const WSManager = {
     };
   },
 
-  send(signal: object) {
+  send(signal: object): boolean {
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(signal));
+      return true;
     }
+    return false;
   },
 
   disconnect() {
     intentionalDisconnect = true;
     recordingNoticeShown = false;
+    // Reset connection state so the next join starts from a clean "connecting".
+    store.set(connectionStatusAtom, "connecting");
+    store.set(reconnectAttemptAtom, 0);
     // Clean up all pending subscriptions
     _pendingRoomSubs.forEach((unsub) => unsub());
     _pendingRoomSubs.clear();
     if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
     if (pongTimeout) { clearTimeout(pongTimeout); pongTimeout = null; }
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     if (ws) {
       ws.close();
       ws = null;
@@ -662,3 +699,31 @@ export const WSManager = {
     reconnectAttempts = MAX_RECONNECT;
   },
 };
+
+// ── Low-network handling ─────────────────────────────────────────
+// Surface "offline" immediately (browsers can keep a zombie socket open for
+// minutes) and re-dial with a fresh attempt budget once connectivity returns.
+if (typeof window !== "undefined") {
+  window.addEventListener("offline", () => {
+    const status = store.get(connectionStatusAtom);
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (status === "connected" || status === "reconnecting" || status === "connecting") {
+      store.set(connectionStatusAtom, "offline");
+    }
+  });
+  window.addEventListener("online", () => {
+    if (intentionalDisconnect || !lastRoomToken) return;
+    if (store.get(connectionStatusAtom) === "connected") return;
+    if (ws) {
+      // Zombie socket from before the outage — reap it; its close schedules a retry.
+      ws.close();
+      return;
+    }
+    reconnectAttempts = 0;
+    store.set(reconnectAttemptAtom, 0);
+    WSManager.connect(lastRoomToken);
+  });
+}

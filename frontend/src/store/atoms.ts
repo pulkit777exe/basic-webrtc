@@ -187,6 +187,24 @@ export const layoutModeAtom = atom<LayoutMode>("auto");
 export const selfViewModeAtom = atom<SelfViewMode>("floating");
 export const pinnedParticipantsAtom = atom<Set<string>>(new Set<string>());
 export const activeSpeakerAtom = atom<string | null>(null);
+/**
+ * Per-tile speaking flag: a derived boolean, so only tiles whose flag actually
+ * flips re-render on audio-activity bursts (not the whole page/grid).
+ */
+export const isSpeakingAtomFamily = atomFamily((userId: string) =>
+  atom((get) => get(speakingPeersAtom).has(userId))
+);
+
+// ── Connection state (low-bandwidth / reconnect UX) ──────────────
+export type ConnectionStatus =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "offline"
+  | "disconnected";
+export const connectionStatusAtom = atom<ConnectionStatus>("connecting");
+/** Current reconnect attempt number (0 when connected/connecting). */
+export const reconnectAttemptAtom = atom<number>(0);
 export const reactionsEnabledAtom = atom<boolean>(true);
 export const roomLockedAtom = atom<boolean>(false);
 /** Host controls (defaults permissive; overwritten by room settings on join). */

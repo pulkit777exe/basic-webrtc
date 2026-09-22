@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { ArrowDown, Pin, X } from 'lucide-react';
+import { toast } from 'sonner';
 
 function renderFormattedMessage(text: string) {
   const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*|_[^_]+_|https?:\/\/\S+)/g);
@@ -95,7 +96,10 @@ export function RoomChatSidebar({ onClose }: { onClose: () => void }) {
   function send() {
     const text = input.trim();
     if (!text) return;
-    WSManager.send({ type: 'chat', content: text, timestamp: Date.now() });
+    if (!WSManager.send({ type: 'chat', content: text, timestamp: Date.now() })) {
+      toast.error("You're offline — the message wasn't sent. It will work once you reconnect.");
+      return;
+    }
     setInput('');
   }
 

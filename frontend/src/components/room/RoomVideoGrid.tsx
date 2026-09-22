@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useAtomValue } from 'jotai';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { VideoTile } from '@/components/VideoTile';
 import { Button } from '@/components/ui/button';
+import { activeSpeakerAtom } from '@/store/atoms';
 import type { LayoutMode, PeerState, SelfViewMode, User } from '@/store/atoms';
 
 interface GridParticipant {
@@ -26,8 +28,6 @@ interface RoomVideoGridProps {
   layoutMode: LayoutMode;
   selfViewMode: SelfViewMode;
   pinnedParticipants: Set<string>;
-  speakingPeers: Set<string>;
-  activeSpeakerId: string | null;
   audioOutputDeviceId: string | null;
   onTogglePin: (participantId: string) => void;
 }
@@ -56,11 +56,12 @@ export function RoomVideoGrid({
   layoutMode,
   selfViewMode,
   pinnedParticipants,
-  speakingPeers,
-  activeSpeakerId,
   audioOutputDeviceId,
   onTogglePin,
 }: RoomVideoGridProps) {
+  // Subscribed here (not in RoomPage) so audio-activity bursts re-render at
+  // most the grid — never the whole page.
+  const activeSpeakerId = useAtomValue(activeSpeakerAtom);
   const [page, setPage] = useState(0);
   const [floatingPosition, setFloatingPosition] = useState(() => ({
     x: Math.max(FLOATING_GAP, window.innerWidth - FLOATING_WIDTH - FLOATING_GAP),
@@ -69,7 +70,6 @@ export function RoomVideoGrid({
   const [isDragging, setIsDragging] = useState(false);
   const hiddenLocalVideoRef = useRef<HTMLVideoElement>(null);
   const pointerOffsetRef = useRef({ x: 0, y: 0 });
-  const videoElementsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
   const activePeerIds = useMemo(() => new Set(peers.map((peer) => peer.userId)), [peers]);
 
   const localParticipant: GridParticipant = useMemo(
@@ -148,30 +148,6 @@ export function RoomVideoGrid({
     return activeFeatured ?? visibleParticipants[0];
   }, [activeSpeakerId, pinnedParticipants, visibleParticipants]);
 
-  const registerVideoElement = useCallback((participantId: string, element: HTMLVideoElement | null) => {
-    if (element) {
-      videoElementsRef.current.set(participantId, element);
-      return;
-    }
-    videoElementsRef.current.delete(participantId);
-  }, []);
-
-  const enterPiPForParticipant = useCallback(async (participantId: string) => {
-    if (!document.pictureInPictureEnabled) return;
-    const target = videoElementsRef.current.get(participantId);
-    if (!target) return;
-    try {
-      if (document.pictureInPictureElement && document.pictureInPictureElement !== target) {
-        await document.exitPictureInPicture();
-      }
-      if (document.pictureInPictureElement !== target) {
-        await target.requestPictureInPicture();
-      }
-    } catch {
-      // PiP requests need a user gesture; browsers may still refuse.
-    }
-  }, []);
-
   useEffect(() => {
     const onResize = () => setFloatingPosition((current) => clampPosition(current.x, current.y));
     window.addEventListener('resize', onResize);
@@ -244,45 +220,12 @@ export function RoomVideoGrid({
       name={participant.name}
       isLocal={participant.isLocal}
       isPinned={pinnedParticipants.has(participant.id)}
-      isSpeaking={speakingPeers.has(participant.id)}
       audioMuted={!participant.audio}
       videoMuted={!participant.video}
       isScreenShare={participant.screen}
       handRaised={participant.handRaised}
       canPin={!participant.isLocal}
       onTogglePin={onTogglePin}
-      onEnterPiP={
-        !participant.isLocal && participant.stream && (participant.video || participant.screen)
-          ? () => void enterPiPForParticipant(participant.id)
-          : undefined
-      }
-      onFullscreen={
-        participant.screen && participant.stream
-          ? () => {
-              const el = videoElementsRef.current.get(participant.id);
-              if (el && el.requestFullscreen) {
-                el.requestFullscreen().catch(() => {});
-              }
-            }
-          : undefined
-      }
-      onPopOutScreen={
-        participant.screen && participant.stream
-          ? () => {
-              const popup = window.open('', '_blank', 'width=960,height=540');
-              if (!popup) return;
-              popup.document.write(
-                '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src \'self\' \'unsafe-inline\'; media-src blob: mediastream:;"><title>Shared screen</title><style>html,body{margin:0;background:#000;height:100%}video{width:100%;height:100%;object-fit:contain;background:#000}</style></head><body><video id="screen" autoplay playsinline controls></video></body></html>'
-              );
-              popup.document.close();
-              const video = popup.document.getElementById('screen') as HTMLVideoElement | null;
-              if (video) {
-                video.srcObject = participant.stream;
-              }
-            }
-          : undefined
-      }
-      registerVideoElement={registerVideoElement}
       audioOutputDeviceId={audioOutputDeviceId}
       className={
         isFeatured
@@ -388,11 +331,9 @@ export function RoomVideoGrid({
             name={localParticipant.name}
             isLocal
             isPinned={false}
-            isSpeaking={speakingPeers.has(localParticipant.id)}
             audioMuted={!localParticipant.audio}
             videoMuted={!localParticipant.video}
             isScreenShare={localParticipant.screen}
-            registerVideoElement={registerVideoElement}
           />
         </div>
       )}
@@ -405,11 +346,9 @@ export function RoomVideoGrid({
             name={`${localParticipant.name} (Presenter)`}
             isLocal
             isPinned={false}
-            isSpeaking={speakingPeers.has(localParticipant.id)}
             audioMuted={!localParticipant.audio}
             videoMuted={!localParticipant.video}
             isScreenShare={false}
-            registerVideoElement={registerVideoElement}
             audioOutputDeviceId={audioOutputDeviceId}
           />
         </div>
