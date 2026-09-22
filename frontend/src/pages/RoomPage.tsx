@@ -304,7 +304,7 @@ export function RoomPage() {
     prevConnRef.current = "connected";
     let cancelled = false;
     void api
-      .getRoomMessages(roomId, roomToken)
+      .getRoomMessages(roomId)
       .then(({ messages: rows }) => {
         if (cancelled || rows.length === 0) return;
         const participants = store.get(participantsAtom);

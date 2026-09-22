@@ -29,6 +29,7 @@ import {
   type WaitingParticipant,
 } from '../lib/redis-rooms';
 import { getRoomSettings, invalidateRoomSettings } from '../lib/room-settings';
+import { canAccessRoom, recordRoomMembership } from '../lib/room-access';
 import { redis } from '../config/redis';
 import { verifyRoomToken } from '../utils/jwt';
 import { apiLimiter } from '../lib/rate-limiters';
@@ -424,6 +425,9 @@ router.post(
       // 8. Pre-register role in Redis so the WS getPeerRole check passes, then return token
       const userRole = room.hostId === userId ? 'host' : 'participant';
       await addPeerToRoom(id, userId, userRole);
+      // Persist membership so it outlives the Redis role: "Recent meetings",
+      // recordings status and post-meeting chat history read room_participants.
+      await recordRoomMembership(id, userId, userRole);
       const roomToken = generateRoomToken(userId, id);
       res.json({ status: 'joined', roomToken });
     } catch (error) {
@@ -538,55 +542,22 @@ router.get('/:id/state', authenticateToken, async (req: Request<{ id: string }>,
 });
 
 // Room messages
+//
+// Mounted behind `authenticateToken` + `requireVerifiedEmail` (server.ts), so
+// every caller has a session — there is no room-token alternative here: the
+// mount rejects a room JWT before this handler runs, and the old `?token=`
+// branch was unreachable (the client's Authorization header carried the access
+// token, which this code mis-verified as a room token under the default
+// shared-secret config). Membership is what grants read access.
 
 router.get(
   '/:id/messages',
-  async (
-    req: Request<{ id: string }, unknown, unknown, { token?: string | string[] }>,
-    res: Response,
-  ): Promise<void> => {
+  async (req: Request<{ id: string }>, res: Response): Promise<void> => {
     try {
       const { id } = req.params;
-      const authHeader = req.headers.authorization;
-      const queryToken = req.query.token;
-      const tokenFromQuery = typeof queryToken === 'string' ? queryToken : undefined;
-      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : tokenFromQuery;
-
-      const roomPayload = token ? verifyRoomToken(token) : null;
-      const userPayload = req.user;
-
-      if (!roomPayload && !userPayload) {
-        res.status(401).json({ error: 'Unauthorized', code: 'UNAUTHORIZED' });
-        return;
-      }
-      if (roomPayload) {
-        // Room tokens are roomId-scoped; waiting tokens are pre-admission and
-        // must not read chat history before being let in.
-        if (roomPayload.roomId !== id || roomPayload.waiting === true) {
-          res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
-          return;
-        }
-      } else if (userPayload) {
-        // Session-authenticated callers must actually belong to the room.
-        const [roomRow] = await db
-          .select({ hostId: rooms.hostId })
-          .from(rooms)
-          .where(eq(rooms.id, id))
-          .limit(1);
-        if (roomRow?.hostId !== userPayload.id) {
-          const [participant] = await db
-            .select({ id: roomParticipants.id })
-            .from(roomParticipants)
-            .where(
-              and(eq(roomParticipants.roomId, id), eq(roomParticipants.userId, userPayload.id)),
-            )
-            .limit(1);
-          if (!participant) {
-            res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
-            return;
-          }
-        }
-      }
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      if (!(await canAccessRoom(id, authUser.id, res))) return;
 
       const list = await db
         .select({

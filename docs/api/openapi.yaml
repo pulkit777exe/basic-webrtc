@@ -293,21 +293,17 @@ paths:
       tags: [Rooms]
       summary: Fetch recent chat history for a room
       description: >-
-        Accepts a room token (query `token` or Authorization header) or an
-        authenticated session belonging to the room (host or participant).
-        Waiting-room tokens are rejected until the caller is admitted.
+        Requires an authenticated session (Bearer access token) and membership
+        in the room: the host, a currently connected peer, or a participant
+        recorded in room_participants — so past attendees can still read
+        history after the call ends. Waiting-room occupants are rejected until
+        admitted.
       security:
         - BearerAuth: []
       parameters:
         - name: id
           in: path
           required: true
-          schema:
-            type: string
-        - name: token
-          in: query
-          required: false
-          description: Room token alternative to the Authorization header
           schema:
             type: string
       responses:
@@ -339,7 +335,9 @@ paths:
         "401":
           description: Unauthorized
         "403":
-          description: Wrong room, waiting token, or not a room member
+          description: Not a member of the room
+        "404":
+          description: Room not found
 
   /api/rooms/{id}/join:
     post:

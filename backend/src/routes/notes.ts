@@ -1,9 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { requireUser } from '../middleware/auth';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { asc, desc, eq } from 'drizzle-orm';
 import { db } from '../db';
-import { meetingNotes, roomParticipants, rooms, transcriptSegments } from '../db/schema';
-import { getPeerRole, roomSignalChannel } from '../lib/redis-rooms';
+import { meetingNotes, transcriptSegments } from '../db/schema';
+import { canAccessRoom } from '../lib/room-access';
+import { roomSignalChannel } from '../lib/redis-rooms';
 import { generateMeetingNotes, type MeetingNotes } from '../lib/meeting-notes';
 import { redis } from '../config/redis';
 import { logger } from '../lib/logger';
@@ -13,39 +14,13 @@ const router = Router();
 const MAX_TRANSCRIPT_FETCH = 2000;
 const MAX_SCREENSHOTS = 12;
 
-/**
- * Access survives the live room: hosts and anyone with a room_participants
- * row can fetch transcript/notes after the call ends (post-meeting recap).
- */
-async function canAccess(roomId: string, userId: string, res: Response): Promise<boolean> {
-  const [room] = await db
-    .select({ id: rooms.id, hostId: rooms.hostId })
-    .from(rooms)
-    .where(eq(rooms.id, roomId))
-    .limit(1);
-  if (!room) {
-    res.status(404).json({ error: 'Room not found', code: 'ROOM_NOT_FOUND' });
-    return false;
-  }
-  if (room.hostId === userId) return true;
-  if (await getPeerRole(roomId, userId)) return true;
-  const [member] = await db
-    .select({ id: roomParticipants.id })
-    .from(roomParticipants)
-    .where(and(eq(roomParticipants.roomId, roomId), eq(roomParticipants.userId, userId)))
-    .limit(1);
-  if (member) return true;
-  res.status(403).json({ error: 'Not a room participant', code: 'FORBIDDEN' });
-  return false;
-}
-
 /** Persisted live transcript (newest-last), feeding Ask and notes generation. */
 router.get('/:roomId/transcript', async (req: Request<{ roomId: string }>, res: Response): Promise<void> => {
   try {
     const { roomId } = req.params;
     const authUser = requireUser(req, res);
     if (!authUser) return;
-    if (!(await canAccess(roomId, authUser.id, res))) return;
+    if (!(await canAccessRoom(roomId, authUser.id, res))) return;
     const rawLimit = Number(req.query.limit);
     const limit = Number.isFinite(rawLimit)
       ? Math.min(2000, Math.max(1, Math.floor(rawLimit)))
@@ -74,7 +49,7 @@ router.get('/:roomId/notes', async (req: Request<{ roomId: string }>, res: Respo
     const { roomId } = req.params;
     const authUser = requireUser(req, res);
     if (!authUser) return;
-    if (!(await canAccess(roomId, authUser.id, res))) return;
+    if (!(await canAccessRoom(roomId, authUser.id, res))) return;
     const [latest] = await db
       .select()
       .from(meetingNotes)
@@ -119,7 +94,7 @@ router.post(
       const authUser = requireUser(req, res);
       if (!authUser) return;
       const userId = authUser.id;
-      if (!(await canAccess(roomId, userId, res))) return;
+      if (!(await canAccessRoom(roomId, userId, res))) return;
 
       const rows = await db
         .select({ text: transcriptSegments.text })

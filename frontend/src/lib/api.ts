@@ -297,10 +297,8 @@ export const api = {
     });
   },
 
-  async getRoomMessages(roomId: string, token?: string) {
-    const url = token
-      ? `/api/rooms/${roomId}/messages?token=${encodeURIComponent(token)}`
-      : `/api/rooms/${roomId}/messages`;
+  /** Chat history: requires session auth + membership in the room (server-enforced). */
+  async getRoomMessages(roomId: string) {
     return request<{
       messages: Array<{
         id: string;
@@ -309,7 +307,7 @@ export const api = {
         type: string;
         createdAt: string;
       }>;
-    }>(url);
+    }>(`/api/rooms/${roomId}/messages`);
   },
 
   async getIceServers() {

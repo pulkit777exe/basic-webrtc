@@ -292,7 +292,7 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 |-------|--------|----------------|---------|
 | Access token | `JWT_SECRET` | 15m | API authentication |
 | Refresh token | `JWT_REFRESH_SECRET` | 7d | Token renewal |
-| Room token | `JWT_ROOM_SECRET` (falls back to `JWT_SECRET`) | 2h | WebSocket + room access |
+| Room token | `JWT_ROOM_SECRET` (falls back to `JWT_SECRET`) | 2h | WebSocket upgrade + captions upload |
 
 ### Access Token Flow
 
@@ -312,7 +312,7 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 
 ### Room Authorization
 
-- Room tokens are verified during WebSocket upgrade (`server.ts:120`) and REST calls (`rooms.ts`)
+- Room tokens are verified during WebSocket upgrade (`server.ts:137`) and for the captions upload `POST /api/rooms/{id}/transcribe` (`rooms.ts`); every other room REST route authenticates with the session access token
 - Roles (host/co-host/participant) stored in Redis hash `room:{id}:roles`
 - `getPeerRole()` checked before admin actions (`handlers/index.ts`)
 - Waiting room: token includes `waiting: true` flag; limited API access until admitted
@@ -327,7 +327,7 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 - **CORS**: Configurable via `ALLOWED_ORIGINS` env var — `server.ts:40`
 - **WS origin check**: WebSocket upgrades from non-`ALLOWED_ORIGINS` browser origins are rejected with 403 (CSWSH hardening) — `backend/src/utils/origin.ts`
 - **Body limits**: JSON request bodies capped at 256 KB; multipart uploads capped per-route via multer (avatars 5 MB, transcription 4 MB)
-- **IDOR guards**: `GET /api/rooms/{id}/messages` requires a room-scoped token (waiting tokens rejected) or host/participant membership; `GET /api/recordings/{roomId}/status` requires membership
+- **IDOR guards**: `GET /api/rooms/{id}/messages` requires session auth plus room membership — host, live peer (Redis role), or persisted `room_participants` row (`backend/src/lib/room-access.ts`); `GET /api/recordings/{roomId}/status` requires membership
 - **Settings cache**: `getRoomSettings` is memoized for 5s in-process (invalidated on toggle and room end) to keep per-message WS gating off the Upstash free-tier quota — `backend/src/lib/room-settings.ts`
 
 ## 7. EXTERNAL DEPENDENCIES & INTEGRATIONS
