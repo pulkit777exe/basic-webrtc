@@ -76,13 +76,15 @@ basic-webrtc-app/
 │   ├── src/
 │   │   ├── pages/               # Route-level components (17 pages)
 │   │   ├── components/          # Reusable UI components
-│   │   │   ├── ui/              # shadcn/ui primitives (47 components)
-│   │   │   └── room/            # In-call UI (VideoGrid, ControlBar, Chat, etc.)
+│   │   │   ├── ui/              # shadcn/ui primitives (21 in use)
+│   │   │   └── room/            # In-call UI (VideoGrid, ControlBar, Chat, Notes, etc.)
 │   │   ├── lib/                 # Core client logic
 │   │   │   ├── rtc-manager.ts   # WebRTC peer connection management
 │   │   │   ├── ws-manager.ts    # WebSocket signaling client
-│   │   │   ├── media-manager.ts # Camera/mic/screen capture
+│   │   │   ├── media-manager.ts # Camera/mic/screen capture + quality cap
 │   │   │   ├── RecordingManager.ts # Client-side recording (IndexedDB)
+│   │   │   ├── screenshots.ts   # Slide snapshots for notes (IndexedDB)
+│   │   │   ├── ask.ts           # Local transcript retrieval ("Ask")
 │   │   │   ├── api.ts           # REST API client (fetch wrapper)
 │   │   │   ├── signal-handler.ts # WebRTC signal dispatch
 │   │   │   └── live-captions.ts # Browser/Deepgram/Whisper STT
@@ -96,8 +98,9 @@ basic-webrtc-app/
 │   ├── src/
 │   │   ├── server.ts            # Entry: Express, HTTP upgrade, WS servers
 │   │   ├── routes/              # REST API handlers
-│   │   │   ├── auth.ts          # Signup/login/logout/2FA (2946 lines)
+│   │   │   ├── auth.ts          # Signup/login/logout/2FA (2938 lines)
 │   │   │   ├── rooms.ts         # Room CRUD, join/leave, invitations
+│   │   │   ├── notes.ts         # AI workspace: transcript + meeting notes
 │   │   │   ├── account.ts       # Profile, sessions, data export, deletion
 │   │   │   ├── recordings.ts    # Recording metadata status
 │   │   │   ├── ice.ts           # STUN/TURN server config
@@ -109,9 +112,10 @@ basic-webrtc-app/
 │   │   │   └── live-captions-bridge.ts # Deepgram proxy WS
 │   │   ├── db/
 │   │   │   ├── index.ts         # Postgres.js + Drizzle client
-│   │   │   └── schema.ts        # 13 tables (users, rooms, messages, etc.)
+│   │   │   └── schema.ts        # 15 tables (users, rooms, messages, meeting_notes, etc.)
 │   │   ├── lib/
 │   │   │   ├── redis-rooms.ts   # Room state in Redis (peers, roles, settings)
+│   │   │   ├── meeting-notes.ts # Local extractive notes engine (no external AI)
 │   │   │   ├── redis-streams.ts # Redis Streams for durable signal log
 │   │   │   ├── signals.ts       # Signal type definitions
 │   │   │   ├── rate-limiters.ts # Express rate limiters (Redis-backed)
@@ -176,6 +180,8 @@ graph LR
 | `room_settings` | `varchar(10)` | `room_id → rooms.id` | Per-room permissions |
 | `recording_sessions` | `uuid` | `room_id → rooms.id`, `started_by → users.id` | Recording metadata |
 | `recording_tracks` | `uuid` | `session_id → recording_sessions.id` | Per-track status |
+| `transcript_segments` | `uuid` | `room_id → rooms.id`, `user_id → users.id` | Caption finals for notes/Ask |
+| `meeting_notes` | `uuid` | `room_id → rooms.id`, `created_by → users.id` | Generated notes + slide refs |
 | `otp_codes` | `uuid` | — | Email verification OTPs |
 | `backup_codes` | `uuid` | `user_id → users.id` | 2FA backup codes |
 | `user_sessions` | `uuid` | `user_id → users.id` | Active session tracking |
@@ -482,9 +488,9 @@ exports run in-process and deletions use a DB-backed poller
 | JWT with three secret types | `cat backend/src/utils/jwt.ts:5-11` — JWT_SECRET, JWT_REFRESH_SECRET, JWT_ROOM_SECRET |
 | BullMQ workers (2 queues) | `ls backend/src/jobs/` — export-worker, deletion-worker (recording is inlined) |
 | Sentry with React Router v7 | `cat frontend/src/instrument.ts` — `createRoutesFromChildren`, `matchRoutes` from react-router-dom |
-| 13 database tables | `cat backend/src/db/schema.ts` — count `pgTable` definitions |
+| 15 database tables | `cat backend/src/db/schema.ts` — count `pgTable` definitions |
 | Rate limiting via Redis | `cat backend/src/lib/rate-limiters.ts` — `RedisStore` from `rate-limit-redis` |
 
 ---
 
-**Last verified**: 2026-09-21 (verification table re-checked: versions, mesh, Drizzle, Upstash, client-only recording, `/ws` upgrade, JWT secrets, jobs, Sentry router integration, 13 tables, Redis rate limiting).
+**Last verified**: 2026-09-21 (verification table re-checked: versions, mesh, Drizzle, Upstash, client-only recording, `/ws` upgrade, JWT secrets, jobs, Sentry router integration, 15 tables, Redis rate limiting, AI notes pipeline).

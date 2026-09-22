@@ -163,6 +163,16 @@ All three are relayed to the target peer (or broadcast if no `to` field).
 | `recording_start` | server→client | host | Recording started (clients capture locally) |
 | `recording_stop` | server→client | host | Recording stopped (clients save locally) |
 
+### AI workspace (meeting notes)
+
+| Type | Direction | Role Required | Description |
+|------|-----------|---------------|-------------|
+| `notes_ready` | server→client | — | Notes generated (host or attendee POSTs `/api/rooms/:id/notes`; server publishes) |
+
+Caption finals (`caption`) are additionally persisted server-side to feed
+transcript/notes endpoints (`GET /api/rooms/:id/transcript`,
+`GET|POST /api/rooms/:id/notes` — see `docs/AI_MEETING_WORKSPACE.md`).
+
 **Recording start:**
 ```json
 {

@@ -274,6 +274,85 @@ paths:
         "404":
           description: No recording session for this room
 
+  /api/rooms/{roomId}/transcript:
+    get:
+      tags: [Notes]
+      summary: Fetch the persisted live transcript (caption finals)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            maximum: 2000
+      responses:
+        "200":
+          description: Transcript segments, oldest first
+        "403":
+          description: Not a room participant
+
+  /api/rooms/{roomId}/notes:
+    get:
+      tags: [Notes]
+      summary: Latest generated meeting notes (or null)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "`notes` object or null"
+        "403":
+          description: Not a room participant
+    post:
+      tags: [Notes]
+      summary: Generate notes from the transcript (local extractive engine, no external AI)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                screenshots:
+                  type: array
+                  maxItems: 12
+                  description: Per-browser IndexedDB blob refs (key + capturedAt); no upload
+                  items:
+                    type: object
+                    required: [key, capturedAt]
+                    properties:
+                      key:
+                        type: string
+                      capturedAt:
+                        type: integer
+      responses:
+        "201":
+          description: Notes created and `notes_ready` published to the room
+        "400":
+          description: No transcript yet (captions were never on)
+        "403":
+          description: Not a room participant
+
   /api/account/export:
     post:
       tags: [Account]
