@@ -336,7 +336,7 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 |---------|---------|-------|-----------------|
 | Google OAuth | `passport-google-oauth20` `^2.0.0` | Social login + account linking | `backend/src/config/passport.ts` |
 | Deepgram | `@deepgram/sdk` `^5.4.0` | Live speech-to-text captions | `backend/src/websocket/live-captions-bridge.ts` |
-| Nodemailer | `nodemailer` `^8.0.10` | Transactional emails (OTP, verification, alerts) | `backend/src/services/email.ts` — SMTP config via env |
+| Resend | native `fetch` (no SDK) | Transactional emails (OTP, verification, alerts) | `backend/src/services/email.ts` — `RESEND_API_KEY`/`EMAIL_FROM` via env |
 | Sentry | `@sentry/react` `^10.63.0` | Error monitoring + session replay | `frontend/src/instrument.ts` |
 | hCaptcha | `@hcaptcha/react-hcaptcha` `^2.0.2` | Bot protection | Used in frontend auth pages |
 | GeoIP | `geoip-lite` `^2.0.2` | IP geolocation for login analysis | `backend/src/services/session.ts`, `login-analyzer.ts` |
@@ -390,7 +390,7 @@ exports run in-process and deletions use a DB-backed poller
 - `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` — Redis credentials
 - `JWT_SECRET` / `JWT_REFRESH_SECRET` / `JWT_ROOM_SECRET` — signing keys
 - `ALLOWED_ORIGINS` — comma-separated CORS origins
-- `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` — email
+- `RESEND_API_KEY` / `EMAIL_FROM` — Resend transactional email (required for OTP / password-reset / security mail)
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — OAuth
 - `DEEPGRAM_API_KEY` — live captions
 - `STUN_SERVERS` / `TURN_SERVERS` / `TURN_SECRET` — ICE config

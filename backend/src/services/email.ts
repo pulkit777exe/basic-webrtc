@@ -1,14 +1,45 @@
-import nodemailer from 'nodemailer';
+/**
+ * Transactional mail (OTP, verification, 2FA, security alerts) via the
+ * Resend HTTP API — no SMTP dependency.
+ *
+ * `RESEND_API_KEY` and `EMAIL_FROM` live only in env (local backend/.env is
+ * gitignored; production uses Render env vars) and are never logged or
+ * included in thrown errors — failures surface Resend's *response* body only,
+ * so the key cannot leak through logs, errors, or API responses.
+ *
+ * Free tier: 3,000 emails/month — see docs/FREE_TIER_DEPLOY.md § Email.
+ */
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT || '587', 10),
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+const RESEND_API_URL = 'https://api.resend.com/emails';
+const SEND_TIMEOUT_MS = 10_000;
+
+function requireEnv(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`Missing ${name} — see docs/FREE_TIER_DEPLOY.md (Email / Resend)`);
+  }
+  return value;
+}
+
+async function sendViaResend(mail: { to: string; subject: string; html: string }): Promise<void> {
+  const apiKey = requireEnv('RESEND_API_KEY');
+  const from = requireEnv('EMAIL_FROM');
+  const response = await fetch(RESEND_API_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ from, to: mail.to, subject: mail.subject, html: mail.html }),
+    signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    // Response body only — the request's headers carry the API key and must
+    // never reach logs, thrown errors, or API responses.
+    const detail = (await response.text().catch(() => '')).slice(0, 300);
+    throw new Error(`Resend API ${response.status}: ${detail}`);
+  }
+}
 
 type EmailTemplate =
   | 'otp_verification'
@@ -597,8 +628,7 @@ function renderEmail(
 
 export async function queueEmail(input: QueueEmailInput): Promise<void> {
   const rendered = renderEmail(input.template, input.data);
-  await transporter.sendMail({
-    from: process.env.SMTP_USER,
+  await sendViaResend({
     to: input.to,
     subject: rendered.subject,
     html: rendered.html,

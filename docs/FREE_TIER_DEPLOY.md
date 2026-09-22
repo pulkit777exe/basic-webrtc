@@ -25,7 +25,9 @@ still works when those are configured.
    - `ALLOWED_ORIGINS` — your Vercel URL, e.g. `https://your-app.vercel.app`.
    - `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` — Upstash console.
    - `APP_URL` — same Vercel URL (used in email links / OAuth callbacks).
-   - Optional: `GOOGLE_*`, `SMTP_*`, `DEEPGRAM_API_KEY`.
+   - `RESEND_API_KEY` / `EMAIL_FROM` — outgoing mail; setup in
+     [Email (Resend)](#email-resend) below.
+   - Optional: `GOOGLE_*`, `DEEPGRAM_API_KEY`.
    - `JWT_SECRET` / `JWT_REFRESH_SECRET` are auto-generated (`generateValue`).
    - Leave `REDIS_URL` unset (BullMQ scale-up only).
 4. Deploy. Render runs migrations pre-deploy and health-checks `/health`.
@@ -41,6 +43,32 @@ Free-tier behavior to expect:
   instance — regenerate if expired.
 - **Connection budget:** `DATABASE_POOL_MAX` defaults to `5` for free Postgres
   plans; raise it only on paid DBs.
+
+### Email (Resend)
+
+Transactional mail — registration OTP, password resets, 2FA codes, security
+alerts — goes through the [Resend](https://resend.com) HTTP API (no SMTP; the
+backend uses plain `fetch`, no extra dependency). Free tier: **3,000
+emails/month**.
+
+1. Create a Resend account → **Settings → API Keys** → create a key.
+2. **Verify a sending domain** (Resend gives you the DNS records: DKIM + SPF)
+   and set `EMAIL_FROM="Meet <mail@yourdomain.com>"`.
+   Local-dev shortcut: `EMAIL_FROM="Meet <onboarding@resend.dev>"` — Resend
+   delivers that sender *only to your own account address*, which is fine
+   while registering/testing with your own email.
+3. Set both as `sync: false` env vars in Render, and in `backend/.env`
+   locally (gitignored).
+
+Without these, every flow that mails fails fast with a
+`Missing RESEND_API_KEY` / `Missing EMAIL_FROM` error — registration and
+password reset won't work, by design (no silent mail loss).
+
+**Key handling:** the API key is a password. It belongs only in those two
+places (Render env vars, local `backend/.env`) — never in code, this file,
+`.env.example`, commits, issues, chats, or logs. Error messages include
+Resend's *response* body only, never request headers, so the key can't leak
+through failed-send logs.
 
 ## 2. Frontend on Vercel
 
