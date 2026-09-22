@@ -288,6 +288,59 @@ paths:
         "404":
           description: Room not found
 
+  /api/rooms/{id}/messages:
+    get:
+      tags: [Rooms]
+      summary: Fetch recent chat history for a room
+      description: >-
+        Accepts a room token (query `token` or Authorization header) or an
+        authenticated session belonging to the room (host or participant).
+        Waiting-room tokens are rejected until the caller is admitted.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: token
+          in: query
+          required: false
+          description: Room token alternative to the Authorization header
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Last 50 messages, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        roomId:
+                          type: string
+                        userId:
+                          type: string
+                        content:
+                          type: string
+                        type:
+                          type: string
+                        createdAt:
+                          type: string
+                          format: date-time
+        "401":
+          description: Unauthorized
+        "403":
+          description: Wrong room, waiting token, or not a room member
+
   /api/rooms/{id}/join:
     post:
       tags: [Rooms]
@@ -377,6 +430,8 @@ paths:
                     type: string
                   participantCount:
                     type: integer
+        "403":
+          description: Not a member of this room
         "404":
           description: No recording session for this room
 

@@ -13,6 +13,8 @@ A WebRTC video chat app with a React frontend and an Express backend. Signaling 
 - Waiting-room controls (admit/reject), room lock/passcodes, basic moderation
 - Host controls enforced server-side: disable chat / screen sharing / reactions, mute-on-join, recording time cap
 - Google-Meet-style ergonomics: audience reactions, keyboard shortcuts (`?`), elapsed-time header, one-click link copy, fullscreen, transcript download, recent-meetings dashboard
+- Low-network resilience: WebSocket auto-reconnect with backoff, header connection state (`connecting/reconnecting/offline/disconnected`), chat history re-sync after outages, one retry for idempotent REST calls
+- Security hardening: helmet CSP, exact-origin CORS + WebSocket origin checks, membership-gated history/recording endpoints, body-size caps, server-enforced room settings
 - Meeting recording captured locally per client (IndexedDB + download, no server merge)
 - Redis-backed real-time state and signaling fanout
 - Postgres persistence via Drizzle ORM

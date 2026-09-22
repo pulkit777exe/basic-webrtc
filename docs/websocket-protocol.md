@@ -14,6 +14,8 @@ ws://localhost:4000/ws?token=<JWT_ROOM_TOKEN>
 
 Connect with a valid room token (JWT) in the query string or `Authorization` header. The token is obtained via `POST /api/rooms/{id}/join`.
 
+Browser clients must send an `Origin` header that matches `ALLOWED_ORIGINS` — the HTTP upgrade is rejected with `403 Forbidden` otherwise (CSWSH hardening, `backend/src/utils/origin.ts`). Non-browser clients may omit `Origin` but still need a valid token.
+
 ### Lifecycle
 
 1. Client connects with a valid room token
@@ -21,6 +23,7 @@ Connect with a valid room token (JWT) in the query string or `Authorization` hea
 3. Client receives `join` messages for all existing participants
 4. Client sends WebRTC signaling (offer/answer/ICE) to establish peer connections
 5. On disconnect, server broadcasts `leave` to remaining participants
+6. If the socket drops, the client reconnects automatically with exponential backoff (1s → 30s + jitter, up to 10 attempts) and surfaces `connecting / reconnecting / offline / disconnected` states in the room header. While the browser reports no network, retries pause (`offline`) and resume immediately on the `online` event. After each successful (re)connect the client re-fetches chat history from `GET /api/rooms/{id}/messages` so messages sent during the outage are not lost.
 
 ---
 

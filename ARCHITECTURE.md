@@ -80,7 +80,7 @@ basic-webrtc-app/
 │   │   │   └── room/            # In-call UI (VideoGrid, ControlBar, Chat, Notes, etc.)
 │   │   ├── lib/                 # Core client logic
 │   │   │   ├── rtc-manager.ts   # WebRTC peer connection management
-│   │   │   ├── ws-manager.ts    # WebSocket signaling client
+│   │   │   ├── ws-manager.ts    # WebSocket client: reconnect/backoff + connection status
 │   │   │   ├── media-manager.ts # Camera/mic/screen capture + quality cap
 │   │   │   ├── RecordingManager.ts # Client-side recording (IndexedDB)
 │   │   │   ├── screenshots.ts   # Slide snapshots for notes (IndexedDB)
@@ -88,7 +88,9 @@ basic-webrtc-app/
 │   │   │   ├── shortcuts.ts     # In-call keyboard shortcut matchers
 │   │   │   ├── reactions.ts     # Floating-reaction feed + emoji whitelist
 │   │   │   ├── time.ts          # Duration formatting (elapsed timer)
-│   │   │   ├── api.ts           # REST API client (fetch wrapper)
+│   │   │   ├── connection.ts    # Reconnect backoff math + connection-state labels
+│   │   │   ├── chat-history.ts  # Chat history merge (REST × live, deduped by id)
+│   │   │   ├── api.ts           # REST API client (fetch wrapper, GET retry on network blips)
 │   │   │   ├── signal-handler.ts # WebRTC signal dispatch
 │   │   │   └── live-captions.ts # Browser/Deepgram/Whisper STT
 │   │   ├── store/               # Jotai atoms (global state)
@@ -118,7 +120,7 @@ basic-webrtc-app/
 │   │   │   └── schema.ts        # 15 tables (users, rooms, messages, meeting_notes, etc.)
 │   │   ├── lib/
 │   │   │   ├── redis-rooms.ts   # Room state in Redis (peers, roles, settings)
-│   │   │   ├── room-settings.ts # Room feature settings (Redis mirror + Postgres truth)
+│   │   │   ├── room-settings.ts # Room feature settings (Redis mirror + Postgres truth + 5s TTL cache)
 │   │   │   ├── audience.ts      # Audience-reaction emoji whitelist
 │   │   │   ├── meeting-notes.ts # Local extractive notes engine (no external AI)
 │   │   │   ├── redis-streams.ts # Redis Streams for durable signal log
@@ -144,7 +146,7 @@ basic-webrtc-app/
 │   │   │   ├── redis.ts         # Upstash client, session/blocklist helpers
 │   │   │   ├── passport.ts      # Google OAuth strategy
 │   │   │   └── scaling.ts       # DB pool, trust proxy, WS frame limits
-│   │   ├── utils/               # JWT, validation, bloom filter, crypto
+│   │   ├── utils/               # JWT, validation, bloom filter, crypto, WS origin allowlist
 │   │   └── types/               # Shared TypeScript types
 │   ├── drizzle/                 # SQL migrations
 │   └── Dockerfile               # Single-stage: Bun runs src/server.ts
@@ -323,6 +325,10 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 - **Suspicious login detection**: geoip + device fingerprinting, email alerts — `backend/src/services/login-analyzer.ts`
 - **Helmet**: CSP headers configured in `backend/src/middleware/security.ts`
 - **CORS**: Configurable via `ALLOWED_ORIGINS` env var — `server.ts:40`
+- **WS origin check**: WebSocket upgrades from non-`ALLOWED_ORIGINS` browser origins are rejected with 403 (CSWSH hardening) — `backend/src/utils/origin.ts`
+- **Body limits**: JSON request bodies capped at 256 KB; multipart uploads capped per-route via multer (avatars 5 MB, transcription 4 MB)
+- **IDOR guards**: `GET /api/rooms/{id}/messages` requires a room-scoped token (waiting tokens rejected) or host/participant membership; `GET /api/recordings/{roomId}/status` requires membership
+- **Settings cache**: `getRoomSettings` is memoized for 5s in-process (invalidated on toggle and room end) to keep per-message WS gating off the Upstash free-tier quota — `backend/src/lib/room-settings.ts`
 
 ## 7. EXTERNAL DEPENDENCIES & INTEGRATIONS
 
