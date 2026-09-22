@@ -30,10 +30,13 @@ describe('encryption', () => {
   });
 
   it('throws when decrypting tampered ciphertext', () => {
-    const ciphertext = encrypt('sensitive');
-    const tampered = `${ciphertext.slice(0, -1)}${
-      ciphertext.endsWith('A') ? 'B' : 'A'
-    }`;
+    const [iv, authTag, data] = encrypt('sensitive').split(':');
+    // Flip to a *different lowercase* nibble: hex parsing is case-insensitive,
+    // so swapping case only (e.g. 'a' -> 'A') leaves the bytes untouched and
+    // the auth tag still verifies. Tampering the payload (not just the tag)
+    // guarantees the GCM check fails.
+    const flipped = (data[0] === 'a' ? 'b' : 'a') + data.slice(1);
+    const tampered = [iv, authTag, flipped].join(':');
     expect(() => decrypt(tampered)).toThrow();
   });
 
