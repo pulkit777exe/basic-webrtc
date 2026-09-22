@@ -74,10 +74,11 @@ All three are relayed to the target peer (or broadcast if no `to` field).
 
 | Type | Direction | Description |
 |------|-----------|-------------|
-| `chat` | bidirectional | Text chat message (persisted to DB) |
+| `chat` | bidirectional | Text chat message (persisted to DB; rejected when the host disabled chat) |
 | `chat_pin` | server→client | Pinned message broadcast |
-| `chat_reaction` | bidirectional | Emoji reaction on a message |
+| `chat_reaction` | bidirectional | Emoji reaction on a message (rejected while reactions are disabled) |
 | `caption` | bidirectional | Speech-to-text caption relay |
+| `reaction` | bidirectional | Floating audience emoji — whitelist-checked, throttled to 1/sec/user |
 
 **Chat message:**
 ```json
@@ -109,6 +110,16 @@ All three are relayed to the target peer (or broadcast if no `to` field).
 }
 ```
 
+**Audience reaction (floating overlay):**
+```json
+{
+  "type": "reaction",
+  "emoji": "🎉"
+}
+```
+The server only forwards emojis on the whitelist in `backend/src/lib/audience.ts`
+(the frontend picker in `RoomControlBar.tsx` mirrors it).
+
 ### Media State
 
 | Type | Direction | Description |
@@ -135,6 +146,8 @@ All three are relayed to the target peer (or broadcast if no `to` field).
 | `admin_unmute_all` | bidirectional | co-host+ | Unmute all participants |
 | `admin_lock` | bidirectional | host | Lock/unlock room |
 | `admin_reactions_toggle` | bidirectional | co-host+ | Enable/disable reactions |
+| `admin_chat_toggle` | bidirectional | co-host+ | Enable/disable chat (enforced server-side) |
+| `admin_screen_toggle` | bidirectional | co-host+ | Enable/disable screen sharing (enforced server-side) |
 | `admin_kick` | bidirectional | co-host+ | Kick a participant |
 | `admin_promote` | bidirectional | host | Promote to co-host |
 | `admin_pin_message` | bidirectional | co-host+ | Pin a chat message |
@@ -237,6 +250,11 @@ The server enforces a per-room message burst limit of **80 messages/second**.
 - `ping`, `pong` (keep-alive)
 - `media-state`, `audio-activity` (frequent state updates)
 - `active_speaker` (already rate-limited to 1 per 2s per participant)
+
+Additional server-side throttles (independent of the burst limit):
+
+- `reaction` — max 1 per second per user (Redis `SET NX` key, validated against the emoji whitelist)
+- `caption` persistence — max 1 transcript insert per second per user
 
 When the limit is exceeded, the server sends `{ "type": "rate_limited" }` and drops the message.
 

@@ -13,6 +13,7 @@ runs on the free tier with zero API keys.
 | **Slide capture** | "Capture slide" snapshots the largest visible `<video>` (screen share/pinned tile) to IndexedDB; notes store `{key, capturedAt}` refs only — blobs never upload | `frontend/src/lib/screenshots.ts` |
 | **Ask** | Local retrieval over the transcript: idf-weighted term overlap (BM25-lite), top-3 matching lines in chronological order | `frontend/src/lib/ask.ts` |
 | **Video quality cap** | Settings → Video Quality caps the outbound resolution ladder (Auto/1080p/720p/480p) and re-negotiates the camera — saves uplink | `media-manager.ts`, `RoomControlBar.tsx` |
+| **Transcript download** | "Download transcript" in the notes panel saves the persisted transcript as a `.txt` (works even when notes are empty) | `MeetingNotesPanel.tsx` |
 | **Consent by construction** | Notes come only from captions every participant already sees in-call; nothing extra is recorded, no silent listening | panel copy + design |
 
 ## Data flow

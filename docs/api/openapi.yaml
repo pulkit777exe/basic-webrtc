@@ -143,6 +143,46 @@ paths:
           description: Invalid or expired token
 
   /api/rooms:
+    get:
+      tags: [Rooms]
+      summary: List rooms the caller hosts or participated in (dashboard "Recent meetings")
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Up to 10 most recent rooms with live participant counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rooms:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        hostId:
+                          type: string
+                        title:
+                          type: string
+                        isLocked:
+                          type: boolean
+                        maxParticipants:
+                          type: integer
+                        participantCount:
+                          type: integer
+                        hostName:
+                          type: string
+                          nullable: true
+                        createdAt:
+                          type: string
+                          format: date-time
+                        endedAt:
+                          type: string
+                          format: date-time
+                          nullable: true
     post:
       tags: [Rooms]
       summary: Create a new room
@@ -163,6 +203,72 @@ paths:
       responses:
         "201":
           description: Room created
+
+  /api/rooms/{id}:
+    get:
+      tags: [Rooms]
+      summary: Get room details including feature settings
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Room with participant count and enforced settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  room:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      hostId:
+                        type: string
+                      title:
+                        type: string
+                      isLocked:
+                        type: boolean
+                      maxParticipants:
+                        type: integer
+                      participantCount:
+                        type: integer
+                      hostName:
+                        type: string
+                      hasPasscode:
+                        type: boolean
+                      createdAt:
+                        type: string
+                        format: date-time
+                      endedAt:
+                        type: string
+                        format: date-time
+                        nullable: true
+                      settings:
+                        type: object
+                        properties:
+                          allowChat:
+                            type: boolean
+                            description: Enforced by the chat WS handler and AdminPanel toggle
+                          allowScreenShare:
+                            type: boolean
+                            description: Enforced by media-state gating and the control bar
+                          muteOnJoin:
+                            type: boolean
+                            description: Client mutes local mic on room entry
+                          waitingRoomEnabled:
+                            type: boolean
+                          maxRecordingDurationMins:
+                            type: integer
+                            description: Client stops local recording at this cap
+        "404":
+          description: Room not found or ended
 
   /api/rooms/{id}/state:
     get:

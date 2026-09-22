@@ -85,6 +85,9 @@ basic-webrtc-app/
 │   │   │   ├── RecordingManager.ts # Client-side recording (IndexedDB)
 │   │   │   ├── screenshots.ts   # Slide snapshots for notes (IndexedDB)
 │   │   │   ├── ask.ts           # Local transcript retrieval ("Ask")
+│   │   │   ├── shortcuts.ts     # In-call keyboard shortcut matchers
+│   │   │   ├── reactions.ts     # Floating-reaction feed + emoji whitelist
+│   │   │   ├── time.ts          # Duration formatting (elapsed timer)
 │   │   │   ├── api.ts           # REST API client (fetch wrapper)
 │   │   │   ├── signal-handler.ts # WebRTC signal dispatch
 │   │   │   └── live-captions.ts # Browser/Deepgram/Whisper STT
@@ -115,6 +118,8 @@ basic-webrtc-app/
 │   │   │   └── schema.ts        # 15 tables (users, rooms, messages, meeting_notes, etc.)
 │   │   ├── lib/
 │   │   │   ├── redis-rooms.ts   # Room state in Redis (peers, roles, settings)
+│   │   │   ├── room-settings.ts # Room feature settings (Redis mirror + Postgres truth)
+│   │   │   ├── audience.ts      # Audience-reaction emoji whitelist
 │   │   │   ├── meeting-notes.ts # Local extractive notes engine (no external AI)
 │   │   │   ├── redis-streams.ts # Redis Streams for durable signal log
 │   │   │   ├── signals.ts       # Signal type definitions
