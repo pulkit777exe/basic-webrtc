@@ -130,6 +130,51 @@ export const recordingTracks = pgTable('recording_tracks', {
   updatedAt: timestamp('updated_at').defaultNow(),
 });
 
+// Caption finals persisted per room; feeds the local meeting-notes engine.
+export const transcriptSegments = pgTable(
+  'transcript_segments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    roomId: varchar('room_id', { length: 10 })
+      .notNull()
+      .references(() => rooms.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    text: text('text').notNull(),
+    occurredAt: bigint('occurred_at', { mode: 'number' }).notNull(),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    roomOccurredIdx: index('idx_transcript_room_occurred').on(table.roomId, table.occurredAt),
+  }),
+);
+
+// Generated meeting notes: extractive summary, action items, decisions.
+// screenshots holds [{ key, capturedAt }] pointing at per-browser IndexedDB blobs.
+export const meetingNotes = pgTable(
+  'meeting_notes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    roomId: varchar('room_id', { length: 10 })
+      .notNull()
+      .references(() => rooms.id, { onDelete: 'cascade' }),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    summary: jsonb('summary').notNull().$type<string[]>(),
+    actionItems: jsonb('action_items').notNull().$type<string[]>(),
+    decisions: jsonb('decisions').notNull().$type<string[]>(),
+    keyPoints: jsonb('key_points').notNull().$type<string[]>(),
+    screenshots: jsonb('screenshots').notNull().$type<Array<{ key: string; capturedAt: number }>>(),
+    segmentCount: integer('segment_count').notNull().default(0),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    roomCreatedIdx: index('idx_meeting_notes_room_created').on(table.roomId, table.createdAt),
+  }),
+);
+
 export const otpCodes = pgTable('otp_codes', {
   id: uuid('id').primaryKey().defaultRandom(),
   email: varchar('email', { length: 255 }).notNull(),

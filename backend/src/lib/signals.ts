@@ -61,7 +61,11 @@ export type Signal =
   | { type: 'pong' }
   | { type: 'token_expired' }
   | { type: 'error'; message: string }
-  | { type: 'kicked' };
+  | { type: 'kicked' }
+  // AI workspace: meeting notes generated server-side (REST route publishes
+  // this after persisting). Typed for receivers but intentionally absent from
+  // isSignal below — client-sent copies are rejected as unknown.
+  | { type: 'notes_ready'; notes: unknown; from?: string; roomId?: string };
 
 export function isSignal(obj: unknown): obj is Signal {
   if (!obj || typeof obj !== 'object' || !('type' in obj)) return false;

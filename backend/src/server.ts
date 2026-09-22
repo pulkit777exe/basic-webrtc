@@ -15,6 +15,7 @@ import authRoutes from './routes/auth';
 import oauthRoutes from './routes/oauth';
 import accountRoutes from './routes/account';
 import roomRoutes from './routes/rooms';
+import notesRoutes from './routes/notes';
 import iceRoutes from './routes/ice';
 import recordingsRoutes from './routes/recordings';
 import { healthRouter } from './routes/health';
@@ -69,6 +70,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/oauth', oauthRoutes);
 app.use('/api/account', accountRoutes);
 app.use('/api/rooms', authenticateToken, requireVerifiedEmail, apiLimiter, roomRoutes);
+app.use('/api/rooms', authenticateToken, requireVerifiedEmail, apiLimiter, notesRoutes);
 app.use('/api/ice-servers', optionalAuthenticate, apiLimiter, iceRoutes);
 app.use('/api/recordings', apiLimiter, recordingsRoutes);
 

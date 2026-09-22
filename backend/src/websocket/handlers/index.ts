@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { db } from '../../db';
-import { rooms, roomParticipants, roomSettings } from '../../db/schema';
+import { rooms, roomParticipants, roomSettings, transcriptSegments } from '../../db/schema';
 import { eq, and } from 'drizzle-orm';
 import {
   setForceMuted,
@@ -115,7 +115,34 @@ const handleCaption: MessageHandler = async (ctx) => {
     from: ctx.userId,
     roomId: ctx.roomId,
   });
+  // Persist finals for the meeting-notes engine (best-effort, throttled
+  // in-process to 1 insert/sec/user — finals naturally arrive slower).
+  persistTranscriptSegment(ctx.roomId, ctx.userId, text, ctx.signal.timestamp);
 };
+
+const lastTranscriptPersist = new Map<string, number>();
+const TRANSCRIPT_THROTTLE_MS = 1000;
+const TRANSCRIPT_MAP_MAX = 5000;
+
+function persistTranscriptSegment(
+  roomId: string,
+  userId: string,
+  text: string,
+  clientTimestamp: unknown,
+): void {
+  const now = Date.now();
+  const throttleKey = `${roomId}:${userId}`;
+  const last = lastTranscriptPersist.get(throttleKey) ?? 0;
+  if (now - last < TRANSCRIPT_THROTTLE_MS) return;
+  if (lastTranscriptPersist.size > TRANSCRIPT_MAP_MAX) lastTranscriptPersist.clear();
+  lastTranscriptPersist.set(throttleKey, now);
+
+  const ts = Number(clientTimestamp);
+  const occurredAt = Number.isFinite(ts) && ts > 0 && Math.abs(now - ts) < 24 * 3600 * 1000 ? Math.floor(ts) : now;
+  db.insert(transcriptSegments)
+    .values({ roomId, userId, text, occurredAt })
+    .catch((e) => logger.debug('transcript persist failed', { roomId, err: String(e) }));
+}
 
 // ── Media ────────────────────────────────────────────────────────
 
