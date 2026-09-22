@@ -17,6 +17,7 @@ import {
 import { redis } from '../config/redis';
 import { queueEmail } from '../services/email';
 import { getAccountQueueConnection } from './account-jobs';
+import { logger } from '../lib/logger';
 
 interface ExportJobData {
   userId: string;
@@ -192,7 +193,7 @@ export async function runExportJob(userId: string): Promise<void> {
 export function startExportWorker() {
   const conn = getAccountQueueConnection();
   if (!conn) {
-    console.warn('[ExportWorker] REDIS_URL not set, BullMQ worker disabled (in-process fallback handles exports)');
+    logger.warn('[ExportWorker] REDIS_URL not set, BullMQ worker disabled (in-process fallback handles exports)');
     return;
   }
 
@@ -208,7 +209,7 @@ export function startExportWorker() {
   );
 
   worker.on('failed', (job, error) => {
-    console.error('[Export Worker Failed]', job?.id, error);
+    logger.error('[Export Worker Failed]', { jobId: job?.id, err: error });
   });
 
   return worker;

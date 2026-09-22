@@ -1,4 +1,5 @@
 import { Redis } from '@upstash/redis';
+import { logger } from '../lib/logger';
 
 const REST_URL = process.env.UPSTASH_REDIS_REST_URL;
 const REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -14,7 +15,7 @@ const REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 export const isRedisConfigured = Boolean(REST_URL && REST_TOKEN);
 
 if (!isRedisConfigured) {
-  console.warn(
+  logger.warn(
     '[Redis] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN not set. ' +
       'Set them from your free Upstash instance (docs/FREE_TIER_DEPLOY.md).',
   );
@@ -58,7 +59,7 @@ export function getRedisSub(): Redis | null {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) {
-    console.warn('[Redis] UPSTASH credentials not set, pub/sub disabled');
+    logger.warn('[Redis] UPSTASH credentials not set, pub/sub disabled');
     return null;
   }
   redisSub = new Redis({ url, token });

@@ -8,6 +8,7 @@ import { db } from '../../db/index.js';
 import { backupCodes, users } from '../../db/schema.js';
 import { listActiveSessionsForUser, revokeAllSessionsForUser, revokeSessionById } from '../../services/session.js';
 import { parseBoolean, generateBackupCodesForUser } from './shared.js';
+import { logger } from '../../lib/logger';
 
 const router = Router();
 
@@ -34,7 +35,7 @@ router.get('/sessions', authenticateToken, async (req: Request, res: Response): 
       })),
     });
   } catch (error) {
-    console.error('[Sessions List Error]', error);
+    logger.error('[Sessions List Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -61,7 +62,7 @@ router.post(
 
       res.status(200).json({ success: true, currentSessionRevoked: isCurrent });
     } catch (error) {
-      console.error('[Session Revoke Error]', error);
+      logger.error('[Session Revoke Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -89,7 +90,7 @@ router.post(
 
       res.status(200).json({ revokedCount });
     } catch (error) {
-      console.error('[Sessions Revoke All Error]', error);
+      logger.error('[Sessions Revoke All Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -121,7 +122,7 @@ router.get(
         backupCodesGeneratedAt: user?.backupCodesGeneratedAt ?? null,
       });
     } catch (error) {
-      console.error('[Backup Codes Status Error]', error);
+      logger.error('[Backup Codes Status Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -169,7 +170,7 @@ router.post(
         generatedAt: result.generatedAt.toISOString(),
       });
     } catch (error) {
-      console.error('[Generate Backup Codes Error]', error);
+      logger.error('[Generate Backup Codes Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },

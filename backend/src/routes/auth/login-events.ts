@@ -13,6 +13,7 @@ import { markSessionSuspiciousVerified } from '../../services/session.js';
 import { decrypt } from '../../lib/encryption.js';
 import { verifyTotpToken } from '../../services/two-factor.js';
 import { normalizeBackupCode, maskIpAddress } from './shared.js';
+import { logger } from '../../lib/logger';
 
 const router = Router();
 
@@ -107,7 +108,7 @@ router.post(
       res.cookie('refreshToken', refreshToken, cookieOptions);
       res.status(200).json({ success: true });
     } catch (error) {
-      console.error('[Verify Suspicious Login Error]', error);
+      logger.error('[Verify Suspicious Login Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -157,7 +158,7 @@ router.get(
         nextOffset: hasMore ? offset + limit : null,
       });
     } catch (error) {
-      console.error('[Login Events Error]', error);
+      logger.error('[Login Events Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -187,7 +188,7 @@ router.post(
         .where(eq(loginEvents.id, event.id));
       res.status(200).json({ success: true });
     } catch (error) {
-      console.error('[Confirm Login Event Error]', error);
+      logger.error('[Confirm Login Event Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },

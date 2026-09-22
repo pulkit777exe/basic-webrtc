@@ -16,6 +16,7 @@ import { validateName } from '../../utils/bloomFilter.js';
 import { generateAccessToken, generateRefreshToken } from '../../utils/jwt.js';
 import { createSessionForAccessToken, getClientIp, parseUserAgent } from '../../services/session.js';
 import { analyzeLogin } from '../../services/login-analyzer.js';
+import { logger } from '../../lib/logger';
 
 // Shared constants and helpers for the auth feature routers.
 
@@ -418,7 +419,7 @@ export async function completeSuccessfulLogin(input: {
       });
       alertSent = true;
     } catch (emailError) {
-      console.error('[Suspicious Login Alert Email Error]', emailError);
+      logger.error('[Suspicious Login Alert Email Error]', { err: emailError });
     }
   }
 

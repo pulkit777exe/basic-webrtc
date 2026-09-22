@@ -92,7 +92,7 @@ export class WebSocketHandler {
 
     const redisSub = getRedisSub();
     if (!redisSub) {
-      console.warn('[WS] Pub/sub disabled, cross-server messaging unavailable');
+      logger.warn('[WS] Pub/sub disabled, cross-server messaging unavailable');
     } else {
       this.signalSubscriber = redisSub.psubscribe<string>('room:*:signal');
       this.signalSubscriber.on('pmessage', (event) => {
@@ -282,11 +282,11 @@ export class WebSocketHandler {
           ws.on('message', (data: Buffer) => this.handleMessage(ext, data));
           ws.on('close', () => this.handleDisconnect(ext));
           ws.on('error', (err) => {
-            console.error('[WS] Error', err);
+            logger.error('[WS] Error', { err: err });
             this.handleDisconnect(ext);
           });
         } catch (err) {
-          console.error('[WS] Connection setup error', err);
+          logger.error('[WS] Connection setup error', { err: err });
           this.sendError(ext, 'Server error');
           ws.close();
         }
@@ -355,7 +355,7 @@ export class WebSocketHandler {
       };
       this.forwardFromRedis(channel, data);
     } catch (err) {
-      console.error('[WS] Redis message parse error', err);
+      logger.error('[WS] Redis message parse error', { err: err });
     }
   }
 
@@ -372,7 +372,7 @@ export class WebSocketHandler {
     const redisPayload = { ...fullPayload, __senderInstanceId: serverInstanceId };
     redis
       .publish(channel, JSON.stringify(redisPayload))
-      .catch((e) => console.error('[WS] Publish', e));
+      .catch((e) => logger.error('[WS] Publish', { err: e }));
   }
 
   private forwardFromRedis(
@@ -742,7 +742,7 @@ export class WebSocketHandler {
         return;
       }
     } catch (err) {
-      console.error('[WS] handleWaitingMessage error', err);
+      logger.error('[WS] handleWaitingMessage error', { err: err });
     }
   }
 

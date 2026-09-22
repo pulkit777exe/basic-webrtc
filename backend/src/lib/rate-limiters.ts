@@ -2,6 +2,7 @@ import rateLimit, { ipKeyGenerator, MemoryStore } from 'express-rate-limit';
 import type { Request } from 'express';
 import { RedisStore } from 'rate-limit-redis';
 import { isRedisConfigured, redis } from '../config/redis.js';
+import { logger } from './logger.js';
 
 /**
  * Free-tier note: when Upstash Redis is not configured (or a command fails
@@ -50,7 +51,7 @@ function createRedisStore(prefix: string): RedisStore {
       throw new Error('Unsupported command for Upstash Redis Store: ' + cmd);
     } catch (err) {
       // Fail open: a Redis hiccup must not take down auth/login on the free tier.
-      console.warn(`[RateLimit:${prefix}] Redis command ${cmd} failed, allowing request`, {
+      logger.warn(`[RateLimit:${prefix}] Redis command ${cmd} failed, allowing request`, {
         err: String(err),
       });
       if (cmd === 'PTTL') return 60_000;
@@ -68,7 +69,7 @@ function createRedisStore(prefix: string): RedisStore {
 
 function createStore(prefix: string): RedisStore | MemoryStore {
   if (!isRedisConfigured) {
-    console.warn(
+    logger.warn(
       `[RateLimit:${prefix}] Upstash Redis not configured, using in-memory store (single-instance mode)`,
     );
     return new MemoryStore();

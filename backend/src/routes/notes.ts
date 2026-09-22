@@ -6,6 +6,7 @@ import { meetingNotes, roomParticipants, rooms, transcriptSegments } from '../db
 import { getPeerRole, roomSignalChannel } from '../lib/redis-rooms';
 import { generateMeetingNotes, type MeetingNotes } from '../lib/meeting-notes';
 import { redis } from '../config/redis';
+import { logger } from '../lib/logger';
 
 const router = Router();
 
@@ -62,7 +63,7 @@ router.get('/:roomId/transcript', async (req: Request<{ roomId: string }>, res: 
       .limit(limit);
     res.json({ segments: [...rows].reverse() });
   } catch (error) {
-    console.error('[Transcript Error]', error);
+    logger.error('[Transcript Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -82,7 +83,7 @@ router.get('/:roomId/notes', async (req: Request<{ roomId: string }>, res: Respo
       .limit(1);
     res.json({ notes: latest ?? null });
   } catch (error) {
-    console.error('[Notes Error]', error);
+    logger.error('[Notes Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -162,7 +163,7 @@ router.post(
 
       res.status(201).json({ notes: saved });
     } catch (error) {
-      console.error('[Notes Generate Error]', error);
+      logger.error('[Notes Generate Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },

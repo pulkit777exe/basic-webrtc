@@ -12,6 +12,7 @@ import { cancelDeletionJob, enqueueDeletion, enqueueExport } from '../jobs/accou
 import { invalidateAllSessionsForUser } from '../services/session';
 import { queueEmail } from '../services/email';
 import { cookieOptions } from '../utils/cookies';
+import { logger } from '../lib/logger';
 
 const router = Router();
 const ACCOUNT_DELETE_CONFIRMATION = 'DELETE MY ACCOUNT';
@@ -108,7 +109,7 @@ router.post('/export', authenticateToken, async (req: Request, res: Response): P
 
     res.status(200).json({ message: "Export started. You'll get an email when it's ready." });
   } catch (error) {
-    console.error('[Account Export Error]', error);
+    logger.error('[Account Export Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -127,7 +128,7 @@ router.get(
         retryAfter: ttl > 0 ? ttl : 0,
       });
     } catch (error) {
-      console.error('[Account Export Status Error]', error);
+      logger.error('[Account Export Status Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -174,7 +175,7 @@ router.get('/export/download', async (req: Request, res: Response): Promise<void
 
     stream.pipe(res);
   } catch (error) {
-    console.error('[Account Export Download Error]', error);
+    logger.error('[Account Export Download Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -269,7 +270,7 @@ router.post('/delete', authenticateToken, async (req: Request, res: Response): P
 
     res.status(200).json({ message: 'Account scheduled for deletion' });
   } catch (error) {
-    console.error('[Account Delete Error]', error);
+    logger.error('[Account Delete Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -366,7 +367,7 @@ router.post('/cancel-deletion', async (req: Request, res: Response): Promise<voi
 
     res.status(200).json({ success: true });
   } catch (error) {
-    console.error('[Cancel Account Deletion Error]', error);
+    logger.error('[Cancel Account Deletion Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });

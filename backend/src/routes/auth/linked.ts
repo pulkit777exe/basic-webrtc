@@ -10,6 +10,7 @@ import { queueEmail } from '../../services/email.js';
 import { validatePassword } from '../../utils/password.js';
 import { generateAccessToken, generateRefreshToken } from '../../utils/jwt.js';
 import { OAUTH_LINK_STATE_WINDOW_SECONDS, attachAuthSession } from './shared.js';
+import { logger } from '../../lib/logger';
 
 const router = Router();
 
@@ -26,7 +27,7 @@ router.get(
       });
       res.redirect(`/api/oauth/google?state=${encodeURIComponent(`link:${stateToken}`)}`);
     } catch (error) {
-      console.error('[Initiate Google Link Error]', error);
+      logger.error('[Initiate Google Link Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -76,7 +77,7 @@ router.get('/link-google/pending', async (req: Request, res: Response): Promise<
       existing: existingUser,
     });
   } catch (error) {
-    console.error('[Get Pending Google Link Error]', error);
+    logger.error('[Get Pending Google Link Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -164,7 +165,7 @@ router.post('/link-google/confirm', async (req: Request, res: Response): Promise
         },
       });
     } catch (emailError) {
-      console.error('[Google Linked Email Error]', emailError);
+      logger.error('[Google Linked Email Error]', { err: emailError });
     }
 
     res.status(200).json({
@@ -179,7 +180,7 @@ router.post('/link-google/confirm', async (req: Request, res: Response): Promise
       message: 'Google account linked successfully',
     });
   } catch (error) {
-    console.error('[Confirm Google Link Error]', error);
+    logger.error('[Confirm Google Link Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -248,12 +249,12 @@ router.delete(
           },
         });
       } catch (emailError) {
-        console.error('[Google Unlinked Email Error]', emailError);
+        logger.error('[Google Unlinked Email Error]', { err: emailError });
       }
 
       res.status(200).json({ success: true });
     } catch (error) {
-      console.error('[Unlink Google Error]', error);
+      logger.error('[Unlink Google Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -312,12 +313,12 @@ router.post(
           },
         });
       } catch (emailError) {
-        console.error('[Password Added Email Error]', emailError);
+        logger.error('[Password Added Email Error]', { err: emailError });
       }
 
       res.status(200).json({ success: true });
     } catch (error) {
-      console.error('[Set Password Error]', error);
+      logger.error('[Set Password Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },

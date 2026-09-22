@@ -12,6 +12,7 @@ import { generateAccessToken, generateRefreshToken } from '../../utils/jwt.js';
 import { getClientIp } from '../../services/session.js';
 import { strictLimiter } from '../../lib/rate-limiters.js';
 import { BACKUP_CODE_RECOVERY_MAX_ATTEMPTS, BACKUP_CODE_RECOVERY_WINDOW_SECONDS, RECOVERY_EMAIL_RECOVERY_MAX_ATTEMPTS, RECOVERY_EMAIL_RECOVERY_WINDOW_SECONDS, RECOVERY_EMAIL_VERIFY_MAX_ATTEMPTS, RECOVERY_EMAIL_VERIFY_WINDOW_SECONDS, RECOVERY_GENERIC_SUCCESS_MESSAGE, RECOVERY_EMAIL_RESEND_MAX, RECOVERY_EMAIL_RESEND_WINDOW_SECONDS, normalizeEmail, normalizeBackupCode, isValidEmailFormat, applyRateLimit, createAndQueuePasswordResetEmail, attachAuthSession } from './shared.js';
+import { logger } from '../../lib/logger';
 
 const router = Router();
 
@@ -114,7 +115,7 @@ router.post(
           },
         });
       } catch (emailError) {
-        console.error('[Backup Code Alert Email Error]', emailError);
+        logger.error('[Backup Code Alert Email Error]', { err: emailError });
       }
 
       res.status(200).json({
@@ -130,7 +131,7 @@ router.post(
         ...(codesRemaining < 3 ? { warning: 'LOW_BACKUP_CODES' } : {}),
       });
     } catch (error) {
-      console.error('[Backup Code Recovery Error]', error);
+      logger.error('[Backup Code Recovery Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -215,7 +216,7 @@ router.post(
 
       res.status(200).json({ message: 'Verification sent to recovery email' });
     } catch (error) {
-      console.error('[Add Recovery Email Error]', error);
+      logger.error('[Add Recovery Email Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -259,7 +260,7 @@ router.post(
       await createAndSendOtp(user.recoveryEmail);
       res.status(200).json({ message: 'Verification sent to recovery email' });
     } catch (error) {
-      console.error('[Resend Recovery Email Error]', error);
+      logger.error('[Resend Recovery Email Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -316,7 +317,7 @@ router.post(
       await redis.del(verifyAttemptsKey);
       res.status(200).json({ success: true });
     } catch (error) {
-      console.error('[Verify Recovery Email Error]', error);
+      logger.error('[Verify Recovery Email Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -340,7 +341,7 @@ router.delete(
 
       res.status(200).json({ success: true });
     } catch (error) {
-      console.error('[Remove Recovery Email Error]', error);
+      logger.error('[Remove Recovery Email Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -390,13 +391,13 @@ router.post('/recover/recovery-email', async (req: Request, res: Response): Prom
           req,
         });
       } catch (emailError) {
-        console.error('[Recovery Email Reset Dispatch Error]', emailError);
+        logger.error('[Recovery Email Reset Dispatch Error]', { err: emailError });
       }
     }
 
     res.status(200).json({ message: RECOVERY_GENERIC_SUCCESS_MESSAGE });
   } catch (error) {
-    console.error('[Recover With Recovery Email Error]', error);
+    logger.error('[Recover With Recovery Email Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });

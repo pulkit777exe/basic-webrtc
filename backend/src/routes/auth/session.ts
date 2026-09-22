@@ -15,6 +15,7 @@ import { createSessionForAccessToken, extractAccessToken, getClientIp, hashSessi
 import { loginLimiter } from '../../lib/rate-limiters.js';
 import { twoFactorPendingLoginKey } from '../../services/two-factor.js';
 import { TWO_FACTOR_PENDING_LOGIN_WINDOW_SECONDS, LOGIN_FAILURE_CAPTCHA_THRESHOLD, DUMMY_BCRYPT_HASH, normalizeEmail, lockoutSecondsForAttempts, incrementLoginFailureIpCounter, clearLoginFailureIpCounter, shouldRequireCaptcha, verifyCaptchaToken, markAccountLockInRedis, clearAccountLockState, getActiveLockFromRedis, completeSuccessfulLogin, mapUserForAuthResponse } from './shared.js';
+import { logger } from '../../lib/logger';
 
 const router = Router();
 
@@ -130,7 +131,7 @@ router.post('/login', loginLimiter, async (req: Request, res: Response): Promise
             },
           });
         } catch (emailError) {
-          console.error('[Account Lockout Email Error]', emailError);
+          logger.error('[Account Lockout Email Error]', { err: emailError });
         }
 
         res.status(423).json({
@@ -227,7 +228,7 @@ router.post('/login', loginLimiter, async (req: Request, res: Response): Promise
           },
         });
       } catch (emailError) {
-        console.error('[Account Recovered Email Error]', emailError);
+        logger.error('[Account Recovered Email Error]', { err: emailError });
       }
     }
 
@@ -245,7 +246,7 @@ router.post('/login', loginLimiter, async (req: Request, res: Response): Promise
       accessToken: loginResult.accessToken,
     });
   } catch (error) {
-    console.error('[Login Error]', error);
+    logger.error('[Login Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -270,7 +271,7 @@ router.post('/refresh', async (req: Request, res: Response): Promise<void> => {
     }
     res.json({ user: result.user, accessToken: result.accessToken });
   } catch (error) {
-    console.error('[Refresh Error]', error);
+    logger.error('[Refresh Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -294,7 +295,7 @@ router.post('/logout', async (req: Request, res: Response): Promise<void> => {
     res.clearCookie('refreshToken', cookieOptions);
     res.json({ message: 'Logged out successfully' });
   } catch (error) {
-    console.error('[Logout Error]', error);
+    logger.error('[Logout Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });

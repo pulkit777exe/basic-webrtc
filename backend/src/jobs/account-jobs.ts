@@ -2,6 +2,7 @@ import { Queue } from 'bullmq';
 import { and, isNull, lte } from 'drizzle-orm';
 import { db } from '../db';
 import { deletionRequests } from '../db/schema';
+import { logger } from '../lib/logger';
 
 /**
  * Job queue abstraction with free-tier fallback.
@@ -71,7 +72,7 @@ export async function enqueueExport(userId: string): Promise<EnqueuedJob> {
   // Free-tier single-instance path: process inline, detached.
   const { runExportJob } = await import('./export-worker');
   void runExportJob(userId).catch((err) => {
-    console.error('[Export] In-process export failed', { userId, err: String(err) });
+    logger.error('[Export] In-process export failed', { userId, err: String(err) });
   });
   return { id: `inline-${userId}-${Date.now()}` };
 }
@@ -132,7 +133,7 @@ async function runDeletionPollerOnce(): Promise<void> {
     try {
       await runDeletionJob(row.userId, row.id);
     } catch (err) {
-      console.error('[Deletion] Poller run failed', {
+      logger.error('[Deletion] Poller run failed', {
         deletionRequestId: row.id,
         err: String(err),
       });
@@ -148,7 +149,7 @@ async function runDeletionPollerOnce(): Promise<void> {
 export function startAccountFallbackPoller(): void {
   const poll = () => {
     runDeletionPollerOnce().catch((err) => {
-      console.error('[Deletion] Poller failed', { err: String(err) });
+      logger.error('[Deletion] Poller failed', { err: String(err) });
     });
   };
   setTimeout(poll, DELETION_POLLER_INITIAL_DELAY_MS);

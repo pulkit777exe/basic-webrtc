@@ -16,6 +16,7 @@ import {
   users,
 } from '../db/schema';
 import { getAccountQueueConnection } from './account-jobs';
+import { logger } from '../lib/logger';
 
 interface DeletionJobData {
   userId: string;
@@ -113,7 +114,7 @@ export async function runDeletionJob(userId: string, deletionRequestId: string):
 export function startDeletionWorker() {
   const conn = getAccountQueueConnection();
   if (!conn) {
-    console.warn('[DeletionWorker] REDIS_URL not set, BullMQ worker disabled (DB poller handles deletions)');
+    logger.warn('[DeletionWorker] REDIS_URL not set, BullMQ worker disabled (DB poller handles deletions)');
     return;
   }
 
@@ -129,7 +130,7 @@ export function startDeletionWorker() {
   );
 
   worker.on('failed', (job, error) => {
-    console.error('[Deletion Worker Failed]', job?.id, error);
+    logger.error('[Deletion Worker Failed]', { jobId: job?.id, err: error });
   });
 
   return worker;

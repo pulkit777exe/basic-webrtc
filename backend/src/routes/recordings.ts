@@ -5,6 +5,7 @@ import { eq, and } from 'drizzle-orm';
 import { authenticateToken, requireUser } from '../middleware/auth';
 import { requireVerifiedEmail } from '../middleware/verified-email';
 import { getRecordingState } from '../lib/redis-rooms';
+import { logger } from '../lib/logger';
 
 const router = Router();
 
@@ -57,7 +58,7 @@ router.get(
         participantCount: recordingState?.participantCount,
       });
     } catch (error) {
-      console.error('[Get Recording Status Error]', error);
+      logger.error('[Get Recording Status Error]', { err: error });
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },

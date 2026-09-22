@@ -14,6 +14,7 @@ import { queueEmail } from '../../services/email.js';
 import { validatePassword } from '../../utils/password.js';
 import { revokeAllSessionsForUser } from '../../services/session.js';
 import { AVATAR_UPLOAD_DIR, normalizeEmail, sanitizeProfileName, isLocalAvatarPath, avatarUpload, isValidEmailFormat } from './shared.js';
+import { logger } from '../../lib/logger';
 
 const router = Router();
 
@@ -74,7 +75,7 @@ router.get('/me', authenticateToken, async (req: Request, res: Response): Promis
       },
     });
   } catch (error) {
-    console.error('[Auth Me Error]', error);
+    logger.error('[Auth Me Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -111,7 +112,7 @@ router.patch('/profile', authenticateToken, async (req: Request, res: Response):
 
     res.status(200).json({ user: updatedUser });
   } catch (error) {
-    console.error('[Update Profile Error]', error);
+    logger.error('[Update Profile Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -174,7 +175,7 @@ router.post('/profile/avatar', authenticateToken, (req: Request, res: Response):
       await db.update(users).set({ avatarUrl }).where(eq(users.id, userId));
       res.status(200).json({ avatarUrl });
     } catch (error) {
-      console.error('[Upload Avatar Error]', error);
+      logger.error('[Upload Avatar Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -204,7 +205,7 @@ router.delete(
       await db.update(users).set({ avatarUrl: null }).where(eq(users.id, userId));
       res.status(200).json({ success: true });
     } catch (error) {
-      console.error('[Delete Avatar Error]', error);
+      logger.error('[Delete Avatar Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -276,12 +277,12 @@ router.patch(
           },
         });
       } catch (emailError) {
-        console.error('[Profile Password Changed Email Error]', emailError);
+        logger.error('[Profile Password Changed Email Error]', { err: emailError });
       }
 
       res.status(200).json({ success: true });
     } catch (error) {
-      console.error('[Change Password Error]', error);
+      logger.error('[Change Password Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -345,7 +346,7 @@ router.patch(
 
       res.status(200).json({ message: 'Verify your new email to confirm the change' });
     } catch (error) {
-      console.error('[Change Email Error]', error);
+      logger.error('[Change Email Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -361,7 +362,7 @@ router.get(
       const pendingEmail = await redis.get(`email:pending:${authUser.id}`);
       res.status(200).json({ pendingEmail });
     } catch (error) {
-      console.error('[Pending Email Error]', error);
+      logger.error('[Pending Email Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -404,7 +405,7 @@ router.post(
 
       res.status(200).json({ success: true, email: pendingEmail });
     } catch (error) {
-      console.error('[Verify Changed Email Error]', error);
+      logger.error('[Verify Changed Email Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },

@@ -13,6 +13,7 @@ import { generateAccessToken, generateRefreshToken } from '../../utils/jwt.js';
 import { getClientIp, invalidateAllSessionsForUser } from '../../services/session.js';
 import { passwordResetLimiter, otpLimiter } from '../../lib/rate-limiters.js';
 import { FORGOT_PASSWORD_RATE_LIMIT_WINDOW_SECONDS, FORGOT_PASSWORD_MAX_REQUESTS_PER_WINDOW, FORGOT_PASSWORD_SUCCESS_MESSAGE, OTP_ATTEMPT_MAX, OTP_ATTEMPT_WINDOW_SECONDS, RESEND_VERIFICATION_MAX, RESEND_VERIFICATION_WINDOW_SECONDS, SIGNUP_PASSWORD_HASH_ROUNDS, normalizeEmail, hashResetToken, maskEmail, createAndQueuePasswordResetEmail, attachAuthSession, clearAccountLockState, getPasswordValidationErrors, validateSignupPayload, mapUserForAuthResponse } from './shared.js';
+import { logger } from '../../lib/logger';
 
 const router = Router();
 
@@ -66,7 +67,7 @@ router.post('/signup', async (req: Request, res: Response): Promise<void> => {
       message: 'Check your email',
     });
   } catch (error) {
-    console.error('[Signup Error]', error);
+    logger.error('[Signup Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -111,7 +112,7 @@ router.post('/resend-verification', async (req: Request, res: Response): Promise
     await createAndSendOtp(emailInput);
     res.status(200).json({ message: 'Verification email sent' });
   } catch (error) {
-    console.error('[Resend Verification Error]', error);
+    logger.error('[Resend Verification Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -205,7 +206,7 @@ router.post('/verify-email', otpLimiter, async (req: Request, res: Response): Pr
       accessToken,
     });
   } catch (error) {
-    console.error('[Verify Email Error]', error);
+    logger.error('[Verify Email Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -247,13 +248,13 @@ router.post(
             req,
           });
         } catch (emailError) {
-          console.error('[Forgot Password Email Error]', emailError);
+          logger.error('[Forgot Password Email Error]', { err: emailError });
         }
       }
 
       res.status(isRateLimited ? 429 : 200).json({ message: FORGOT_PASSWORD_SUCCESS_MESSAGE });
     } catch (error) {
-      console.error('[Forgot Password Error]', error);
+      logger.error('[Forgot Password Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -293,7 +294,7 @@ router.get('/reset-password/validate', async (req: Request, res: Response): Prom
       email: maskEmail(result.email),
     });
   } catch (error) {
-    console.error('[Validate Reset Token Error]', error);
+    logger.error('[Validate Reset Token Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -382,12 +383,12 @@ router.post('/reset-password', async (req: Request, res: Response): Promise<void
         },
       });
     } catch (emailError) {
-      console.error('[Reset Password Success Email Error]', emailError);
+      logger.error('[Reset Password Success Email Error]', { err: emailError });
     }
 
     res.status(200).json({ message: 'Password reset successfully' });
   } catch (error) {
-    console.error('[Reset Password Error]', error);
+    logger.error('[Reset Password Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -33,6 +33,7 @@ import { redis } from '../config/redis';
 import { verifyRoomToken } from '../utils/jwt';
 import { apiLimiter } from '../lib/rate-limiters';
 import { globalLimiter } from '../lib/rate-limiters';
+import { logger } from '../lib/logger';
 
 async function resolveCanonicalRoomId(raw: string): Promise<string | null> {
   const trimmed = raw.trim();
@@ -170,7 +171,7 @@ router.post('/', authenticateToken, async (req: Request, res: Response): Promise
       hasPasscode: Boolean(passcode),
     });
   } catch (error) {
-    console.error('[Create Room Error]', error);
+    logger.error('[Create Room Error]', { err: error });
     res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
   }
 });
@@ -220,7 +221,7 @@ router.get('/:id', async (req: Request<{ id: string }>, res: Response): Promise<
       },
     });
   } catch (error) {
-    console.error('[Get Room Error]', error);
+    logger.error('[Get Room Error]', { err: error });
     res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
   }
 });
@@ -258,7 +259,7 @@ router.delete(
 
       res.status(204).send();
     } catch (error) {
-      console.error('[Delete Room Error]', error);
+      logger.error('[Delete Room Error]', { err: error });
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
@@ -322,22 +323,19 @@ router.post(
 
       // Audit logging for bypass attempts
       if (shouldBypass) {
-        console.info(
-          '[BYPASS GRANTED] userId=%s roomId=%s reason=%s ip=%s timestamp=%s',
+        logger.info('[BYPASS GRANTED]', {
           userId,
-          id,
-          userId === room.hostId ? 'host' : 'invite_token',
+          roomId: id,
+          reason: userId === room.hostId ? 'host' : 'invite_token',
           ip,
-          new Date().toISOString(),
-        );
+        });
       } else {
-        console.info(
-          '[BYPASS DENIED] userId=%s roomId=%s reason=key_not_found ip=%s timestamp=%s',
+        logger.info('[BYPASS DENIED]', {
           userId,
-          id,
+          roomId: id,
+          reason: 'key_not_found',
           ip,
-          new Date().toISOString(),
-        );
+        });
       }
 
       if (room.passcodeHash && !shouldBypass) {
@@ -429,7 +427,7 @@ router.post(
       const roomToken = generateRoomToken(userId, id);
       res.json({ status: 'joined', roomToken });
     } catch (error) {
-      console.error('[Join Room Error]', error);
+      logger.error('[Join Room Error]', { err: error });
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
@@ -499,7 +497,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
 
     res.json({ rooms: result });
   } catch (error) {
-    console.error('[List Rooms Error]', error);
+    logger.error('[List Rooms Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -534,7 +532,7 @@ router.get('/:id/state', authenticateToken, async (req: Request<{ id: string }>,
       participantCount,
     });
   } catch (error) {
-    console.error('[Get Room State Error]', error);
+    logger.error('[Get Room State Error]', { err: error });
     res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
   }
 });
@@ -606,7 +604,7 @@ router.get(
 
       res.json({ messages: list.reverse() });
     } catch (error) {
-      console.error('[Get Messages Error]', error);
+      logger.error('[Get Messages Error]', { err: error });
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
@@ -633,7 +631,7 @@ router.get(
       const waitingRoom = await getWaitingRoom(roomId);
       res.json({ waitingRoom });
     } catch (error) {
-      console.error('[Waiting Room List Error]', error);
+      logger.error('[Waiting Room List Error]', { err: error });
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
@@ -702,7 +700,7 @@ router.post(
 
       res.json({ success: true });
     } catch (error) {
-      console.error('[Admit Participant Error]', error);
+      logger.error('[Admit Participant Error]', { err: error });
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
@@ -760,7 +758,7 @@ router.post(
 
       res.json({ success: true });
     } catch (error) {
-      console.error('[Reject Participant Error]', error);
+      logger.error('[Reject Participant Error]', { err: error });
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
@@ -826,7 +824,7 @@ router.post(
 
       res.json({ success: true, admitted: waiting.length });
     } catch (error) {
-      console.error('[Admit All Error]', error);
+      logger.error('[Admit All Error]', { err: error });
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
@@ -883,7 +881,7 @@ router.post(
           }
           // Wrap deletion with error handling so failures don't abort new token generation
           await redis.del(`invite:${previousToken}`).catch((err) => {
-            console.error('[Invite Token Cleanup]', { error: err.message, roomId });
+            logger.error('[Invite Token Cleanup]', { error: err.message, roomId });
             return 0;
           });
         }
@@ -905,7 +903,7 @@ router.post(
         expiresAt: expiresAt.toISOString(),
       });
     } catch (error) {
-      console.error('[Generate Invite Token Error]', error);
+      logger.error('[Generate Invite Token Error]', { err: error });
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
@@ -967,7 +965,7 @@ router.get(
         inviteValid: true,
       });
     } catch (error) {
-      console.error('[Join By Invite Error]', error);
+      logger.error('[Join By Invite Error]', { err: error });
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },
@@ -1042,7 +1040,7 @@ router.post(
         );
         if (!upstream.ok) {
           const errText = await upstream.text();
-          console.error('[transcribe deepgram]', upstream.status, errText);
+          logger.error('[transcribe deepgram]', { status: upstream.status, body: errText });
           res.status(502).json({ error: 'Transcription failed', code: 'TRANSCRIBE_FAILED' });
           return;
         }
@@ -1067,7 +1065,7 @@ router.post(
 
         if (!upstream.ok) {
           const errText = await upstream.text();
-          console.error('[transcribe openai]', upstream.status, errText);
+          logger.error('[transcribe openai]', { status: upstream.status, body: errText });
           res.status(502).json({ error: 'Transcription failed', code: 'TRANSCRIBE_FAILED' });
           return;
         }
@@ -1078,7 +1076,7 @@ router.post(
 
       res.json({ text });
     } catch (error) {
-      console.error('[transcribe]', error);
+      logger.error('[transcribe]', { err: error });
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },

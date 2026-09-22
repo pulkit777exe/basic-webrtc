@@ -14,6 +14,7 @@ import { strictLimiter } from '../../lib/rate-limiters.js';
 import { decrypt, encrypt } from '../../lib/encryption.js';
 import { buildOtpUri, buildQrCodeDataUrl, formatManualEntryKey, generateTwoFactorSecret, getTwoFactorSetupTtlSeconds, twoFactorPendingLoginKey, twoFactorPendingSetupKey, twoFactorUsedCodeKey, verifyTotpToken } from '../../services/two-factor.js';
 import { TWO_FACTOR_VALIDATE_RATE_LIMIT_WINDOW_SECONDS, TWO_FACTOR_VALIDATE_RATE_LIMIT_MAX, APP_NAME, normalizeBackupCode, applyRateLimit, twoFactorValidateRateLimitKey, generateBackupCodesForUser, completeSuccessfulLogin, mapUserForAuthResponse } from './shared.js';
+import { logger } from '../../lib/logger';
 
 const router = Router();
 
@@ -71,7 +72,7 @@ router.post('/2fa/setup', authenticateToken, async (req: Request, res: Response)
       manualEntryKey: formatManualEntryKey(secret),
     });
   } catch (error) {
-    console.error('[2FA Setup Error]', error);
+    logger.error('[2FA Setup Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -135,7 +136,7 @@ router.post(
             },
           });
         } catch (emailError) {
-          console.error('[2FA Enabled Email Error]', emailError);
+          logger.error('[2FA Enabled Email Error]', { err: emailError });
         }
       }
 
@@ -144,7 +145,7 @@ router.post(
         backupCodes: backupCodesResult.formattedCodes,
       });
     } catch (error) {
-      console.error('[2FA Verify Setup Error]', error);
+      logger.error('[2FA Verify Setup Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -223,12 +224,12 @@ router.post(
           },
         });
       } catch (emailError) {
-        console.error('[2FA Disabled Email Error]', emailError);
+        logger.error('[2FA Disabled Email Error]', { err: emailError });
       }
 
       res.status(200).json({ success: true });
     } catch (error) {
-      console.error('[2FA Disable Error]', error);
+      logger.error('[2FA Disable Error]', { err: error });
       res.status(500).json({ error: 'Internal server error' });
     }
   },
@@ -377,7 +378,7 @@ router.post('/2fa/validate', strictLimiter, async (req: Request, res: Response):
       ...(backupCodesRemaining !== null ? { backupCodesRemaining } : {}),
     });
   } catch (error) {
-    console.error('[2FA Validate Error]', error);
+    logger.error('[2FA Validate Error]', { err: error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });

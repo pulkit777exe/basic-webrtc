@@ -6,6 +6,7 @@ import { setRefreshSession } from '../config/redis.js';
 import { queueEmail } from '../services/email.js';
 import { hashToken, getFrontendBaseUrl } from '../utils/crypto.js';
 import { cookieOptions } from '../utils/cookies.js';
+import { logger } from '../lib/logger';
 
 type OAuthUser = {
   id: string;
@@ -38,7 +39,7 @@ router.get('/google/callback', (req, res, next) => {
       },
     ) => {
       if (err) {
-        console.error('[Google OAuth Callback Error]', err);
+        logger.error('[Google OAuth Callback Error]', { err: err });
         res.redirect(`${getFrontendBaseUrl()}/auth/login?oauthError=oauth_failed`);
         return;
       }
@@ -77,7 +78,7 @@ router.get('/google/callback', (req, res, next) => {
             },
           });
         } catch (emailError) {
-          console.error('[Google Linked Email Error]', emailError);
+          logger.error('[Google Linked Email Error]', { err: emailError });
         }
       }
 
