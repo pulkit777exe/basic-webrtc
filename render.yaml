@@ -37,20 +37,24 @@ services:
         generateValue: true
       - key: JWT_REFRESH_SECRET
         generateValue: true
+      # Room-token signing key (WS upgrade + captions upload). Auto-generated
+      # so prod uses a secret distinct from JWT_SECRET; code falls back to
+      # JWT_SECRET when unset (local dev).
+      - key: JWT_ROOM_SECRET
+        generateValue: true
+      # Mail via the Resend API — required for signup OTP and password
+      # resets (fails fast when missing). Set values in the dashboard;
+      # see docs/FREE_TIER_DEPLOY.md § Email (Resend). Never commit the key.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
       # ── Optional (free-tier integrations) ──
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
       - key: GOOGLE_CALLBACK_URL
-        sync: false
-      - key: SMTP_HOST
-        sync: false
-      - key: SMTP_PORT
-        sync: false
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASS
         sync: false
       - key: DEEPGRAM_API_KEY
         sync: false

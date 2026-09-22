@@ -7,7 +7,6 @@ interface IceServerConfig {
   urls: string | string[];
   username?: string;
   credential?: string;
-  transport?: 'udp' | 'tcp' | 'tls';
 }
 
 const DEFAULT_STUN_SERVERS: IceServerConfig[] = [
@@ -41,7 +40,6 @@ const getTurnServers = (): IceServerConfig[] => {
     urls: url.trim(),
     username,
     credential,
-    transport: url.trim().startsWith('turns') ? 'tls' : 'udp',
   }));
 };
 
