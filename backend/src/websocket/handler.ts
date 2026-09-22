@@ -65,7 +65,6 @@ export class WebSocketHandler {
   private signalSubscriber: ReturnType<Redis['psubscribe']> | null = null;
   private endedSubscriber: ReturnType<Redis['subscribe']> | null = null;
   private chatBuffer: ChatBufferEntry[] = [];
-  private heartbeatTimers: Map<string, NodeJS.Timeout> = new Map();
   /** Per-user token buckets for exempt message types: { userId: { tokens: number, lastRefill: number } } */
   private exemptRateLimits: Map<string, { tokens: number; lastRefill: number }> = new Map();
 
@@ -78,7 +77,11 @@ export class WebSocketHandler {
       this.wss.clients.forEach((ws: WebSocket) => {
         const ext = ws as ExtendedWebSocket;
         if (ext.isAlive === false) {
-          this.handleDisconnect(ext);
+          // This sweep is the only liveness check — it covers waiting sockets
+          // too — so clean up whichever map the connection lives in before
+          // dropping it (waiting sockets are NOT in this.rooms).
+          if (ext.isWaiting) this.handleWaitingDisconnect(ext);
+          else this.handleDisconnect(ext);
           return ws.terminate();
         }
         ext.isAlive = false;
@@ -144,16 +147,9 @@ export class WebSocketHandler {
             ext.isAlive = true;
           });
 
-          // Set up heartbeat timer for token re-validation
-          const timer = setInterval(() => {
-            if (ext.isAlive === false) {
-              clearInterval(timer);
-              this.heartbeatTimers.delete(userId);
-              return;
-            }
-            ext.isAlive = false;
-          }, HEARTBEAT_INTERVAL_MS);
-          this.heartbeatTimers.set(userId, timer);
+          // Liveness for waiting sockets is handled by the global sweep in
+          // initialize(), which pings every connected client (waiting ones
+          // included) and routes dead ones through handleWaitingDisconnect.
           this.addToWaitingMap(roomId, userId, ext);
           ws.on('message', (data: Buffer) => void this.handleWaitingMessage(ext, data));
           ws.on('close', () => this.handleWaitingDisconnect(ext));
@@ -686,12 +682,6 @@ export class WebSocketHandler {
     setHandRaised(roomId, userId, false).catch((e) =>
       logger.error('setHandRaised failed', { roomId, userId, err: String(e) }),
     );
-    // Clear heartbeat timer
-    const timer = this.heartbeatTimers.get(userId);
-    if (timer) {
-      clearInterval(timer);
-      this.heartbeatTimers.delete(userId);
-    }
     this.publish(roomId, { type: 'leave', userId, roomId });
   }
 
