@@ -22,7 +22,11 @@ function base64UrlDecode(segment: string): string | null {
   try {
     const padded = segment.replace(/-/g, '+').replace(/_/g, '/');
     const withPadding = padded.padEnd(padded.length + ((4 - (padded.length % 4)) % 4), '=');
-    return atob(withPadding);
+    const binary = atob(withPadding);
+    // JWT payloads are UTF-8, not latin-1: atob alone mangles any non-ASCII
+    // claim (a name or id outside ASCII would decode to replacement chars).
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
   } catch {
     return null;
   }

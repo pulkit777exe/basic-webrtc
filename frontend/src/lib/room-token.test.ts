@@ -3,9 +3,14 @@ import { decodeRoomToken, refreshDelayMs, REFRESH_LEAD_MS, REFRESH_MIN_DELAY_MS 
 
 /** Build an unsigned JWT-shaped string; only the payload is ever read. */
 function makeToken(payload: Record<string, unknown>): string {
-  const encode = (value: unknown) =>
-    btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  return `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode(payload)}.signature`;
+  // Encode UTF-8 bytes properly: btoa() throws on non-Latin1 characters, so a
+  // naive helper could never produce the very payload we need to test.
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const encode = (value: string) =>
+    btoa(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `${encode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))}.${encode(binary)}.signature`;
 }
 
 const NOW = 1_700_000_000_000; // fixed clock for determinism
@@ -39,6 +44,17 @@ describe('decodeRoomToken', () => {
     // A payload whose base64 contains the URL-safe alphabet.
     const token = makeToken({ userId: 'a?~b', roomId: 'rÿ', exp: 42 });
     expect(decodeRoomToken(token)).toMatchObject({ userId: 'a?~b', exp: 42 });
+  });
+
+  it('decodes non-ASCII claims as UTF-8, not latin-1', () => {
+    // atob() alone would mangle these into replacement characters, which would
+    // silently produce the wrong roomId.
+    const token = makeToken({ userId: 'zoë', roomId: 'café-über', exp: 42 });
+    expect(decodeRoomToken(token)).toEqual({
+      userId: 'zoë',
+      roomId: 'café-über',
+      exp: 42,
+    });
   });
 });
 

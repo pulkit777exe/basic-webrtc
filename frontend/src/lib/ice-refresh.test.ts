@@ -9,13 +9,23 @@ afterEach(() => {
 });
 
 describe('startIceRefresh', () => {
-  it('refreshes on the interval', () => {
+  /** Let the in-flight guard clear between simulated ticks. */
+  const settle = async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  };
+
+  it('refreshes on the interval', async () => {
     vi.useFakeTimers();
     const refresh = vi.fn().mockResolvedValue(false);
     startIceRefresh(refresh, { intervalMs: 1000 });
 
     expect(refresh).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(3000);
+    for (let tick = 0; tick < 3; tick++) {
+      vi.advanceTimersByTime(1000);
+      await settle();
+    }
     expect(refresh).toHaveBeenCalledTimes(3);
   });
 
@@ -77,10 +87,36 @@ describe('startIceRefresh', () => {
     const refresh = vi.fn().mockRejectedValue(new Error('offline'));
     startIceRefresh(refresh, { intervalMs: 1000 });
 
-    vi.advanceTimersByTime(2000);
-    await Promise.resolve();
-    vi.advanceTimersByTime(1000);
+    for (let tick = 0; tick < 3; tick++) {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
 
-    expect(refresh.mock.calls.length).toBeGreaterThanOrEqual(3);
+    // A failed refresh must not wedge the loop or become an unhandled rejection.
+    expect(refresh).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not overlap refreshes when triggers fire together', async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const refresh = vi.fn(() => gate);
+
+    const handle = startIceRefresh(refresh);
+
+    window.dispatchEvent(new Event('online'));
+    window.dispatchEvent(new Event('online'));
+    window.dispatchEvent(new Event('online'));
+
+    // One in flight, not three — overlapping refreshes would each restart ICE.
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    release!();
+    await Promise.resolve();
+    await Promise.resolve();
+    handle.stop();
   });
 });

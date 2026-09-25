@@ -35,10 +35,24 @@ export function startIceRefresh(
 ): IceRefreshHandle {
   const intervalMs = options.intervalMs ?? ICE_REFRESH_INTERVAL_MS;
   let stopped = false;
+  let inFlight = false;
 
   const run = () => {
-    if (stopped) return;
-    void refresh();
+    if (stopped || inFlight) return;
+    inFlight = true;
+    try {
+      const result = refresh();
+      void Promise.resolve(result)
+        .catch(() => {
+          // A failed refresh keeps the current credentials; the next tick retries.
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    } catch {
+      // A refresh that threw synchronously is treated the same as a rejection.
+      inFlight = false;
+    }
   };
 
   const timer = setInterval(run, intervalMs);

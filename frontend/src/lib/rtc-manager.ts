@@ -45,6 +45,10 @@ async function flushPendingIceCandidates(userId: string) {
 async function restartIceConnection(userId: string) {
   const connection = peerConnections.get(userId);
   if (!connection) return;
+  // Don't burn a restart attempt (or gather candidates we cannot deliver) while
+  // signaling is down: the offer would be prepared and then dropped on the
+  // floor, and the attempt budget would be gone before signaling returns.
+  if (!WSManager.isConnected()) return;
   const attempts = iceRestartAttempts.get(userId) ?? 0;
   if (attempts >= MAX_ICE_RESTARTS) return;
   iceRestartAttempts.set(userId, attempts + 1);
@@ -60,7 +64,11 @@ async function restartIceConnection(userId: string) {
       offerToReceiveVideo: true,
     });
     await connection.setLocalDescription(offer);
-    WSManager.send({ type: 'offer', to: userId, sdp: offer });
+    if (!WSManager.send({ type: 'offer', to: userId, sdp: offer })) {
+      // Signaling dropped between the check and the send. Give the attempt
+      // back so a later ICE failure (or the next refresh) can retry.
+      iceRestartAttempts.set(userId, attempts);
+    }
   } catch {
     // ICE restart can fail during transient negotiation races.
   }

@@ -838,6 +838,11 @@ export const WSManager = {
     return lastRoomToken;
   },
 
+  /** True when the signaling socket can actually deliver a message right now. */
+  isConnected(): boolean {
+    return ws?.readyState === WebSocket.OPEN;
+  },
+
   disconnect() {
     intentionalDisconnect = true;
     recordingNoticeShown = false;
