@@ -21,7 +21,7 @@ jobs:
       - name: Type check
         run: bunx tsc --noEmit
       - name: Lint
-        run: bun run lint || true
+        run: bun run lint
       - name: Test
         run: bun run test
         env:
@@ -45,7 +45,7 @@ jobs:
       - name: Type check
         run: bunx tsc --noEmit
       - name: Lint
-        run: bun run lint || true
+        run: bun run lint
       - name: Test
         run: bun run test
       - name: Build
