@@ -226,6 +226,16 @@ function gracefulShutdown(signal: string) {
 process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.once('SIGINT', () => gracefulShutdown('SIGINT'));
 
+// Nothing in this process should leave a promise rejection unobserved: an
+// unhandled rejection in Bun/Node terminates the process by default, taking
+// every open call with it. Log it, keep serving.
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled promise rejection', { err: String(reason) });
+});
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught exception', { err: String(err) });
+});
+
 server.listen(PORT, () => {
   logger.info(`Server running on http://localhost:${PORT}`);
   logger.info(`WebSocket server ready at ws://localhost:${PORT}/ws`);
