@@ -261,6 +261,27 @@ Additional server-side throttles (independent of the burst limit):
 
 When the limit is exceeded, the server sends `{ "type": "rate_limited" }` and drops the message.
 
+### Per-connection limits
+
+Exempt signalling is metered per connection with token buckets so one noisy
+socket cannot starve the room:
+
+- `offer` / `answer` / `ice` — 100/second
+- `media-state`, `audio-activity` — 10/second
+- **hard cap** — 500 messages/second across *all* types
+
+Exceeding a per-type bucket drops the message silently (they are advisory).
+Exceeding the hard cap sends `rate_limited` and **closes the connection with
+4008** — the allowance refills once per second, so a legitimate client never
+gets near it.
+
+### Authorization
+
+The room token is verified on upgrade *and* re-verified on every inbound
+message (a local signature + expiry check, no Redis call). A socket therefore
+cannot outlive its token by simply omitting `ping`. The kick check also runs
+per message, and waiting-room sockets are subject to the same token check.
+
 ---
 
 ## Close Codes
@@ -271,4 +292,5 @@ When the limit is exceeded, the server sends `{ "type": "rate_limited" }` and dr
 | 4002 | Not authorized for this room |
 | 4003 | Kicked by host/co-host |
 | 4004 | Room token expired (rejoin to get a fresh token) |
+| 4008 | Rate limit exceeded (flooding; connection closed) |
 | 1001 | Server shutting down |

@@ -346,6 +346,10 @@ const handleAdminKick: MessageHandler = async (ctx) => {
   });
   const target = ctx.handler.getRoomSocket(ctx.roomId, targetId);
   if (target && ctx.handler.isOpen(target)) {
+    // Tell the socket *before* closing it: `publishSignal` above only writes the
+    // Redis stream log, which the WS layer does not forward, so without this the
+    // kicked client just sees a bare close and never clears its room state.
+    ctx.handler.send(target, { type: 'kicked' });
     target.close(4003);
   }
   ctx.handler.removeFromMap(ctx.roomId, targetId);

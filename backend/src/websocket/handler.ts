@@ -31,6 +31,7 @@ import { isSignal } from '../lib/signals';
 import { logger } from '../lib/logger';
 import { parseRoomSettings } from '../lib/room-settings';
 import { publishSignal } from '../lib/redis-streams';
+import { takeToken, type TokenBucket } from '../lib/rate-limit';
 import { generateRoomToken, verifyRoomToken } from '../utils/jwt';
 import { nanoid } from 'nanoid';
 import { WS_MAX_MESSAGE_BYTES } from '../config/scaling';
@@ -40,6 +41,20 @@ const HEARTBEAT_INTERVAL_MS = 30000;
 const CHAT_FLUSH_INTERVAL_MS = 2000;
 const CHAT_BUFFER_SIZE = 50;
 const CHAT_REDIS_KEY_PREFIX = 'room:chatBuffer:';
+/**
+ * Signalling/advisory traffic that must not be starved by the per-room burst
+ * limit. These still have their own per-connection buckets (and the hard cap).
+ */
+const EXEMPT_FROM_ROOM_BURST_LIMIT: ReadonlySet<string> = new Set([
+  'offer',
+  'answer',
+  'ice',
+  'ping',
+  'pong',
+  'media-state',
+  'audio-activity',
+  'active_speaker',
+]);
 const serverInstanceId = nanoid();
 
 interface ExtendedWebSocket extends WebSocket {
@@ -49,6 +64,8 @@ interface ExtendedWebSocket extends WebSocket {
   isWaiting?: boolean;
   user?: PublicUser;
   roomToken?: string;
+  /** Per-connection flood-control buckets; dies with the socket. */
+  rateBuckets?: Map<string, TokenBucket>;
 }
 
 interface ChatBufferEntry {
@@ -65,8 +82,6 @@ export class WebSocketHandler {
   private signalSubscriber: ReturnType<Redis['psubscribe']> | null = null;
   private endedSubscriber: ReturnType<Redis['subscribe']> | null = null;
   private chatBuffer: ChatBufferEntry[] = [];
-  /** Per-user token buckets for exempt message types: { userId: { tokens: number, lastRefill: number } } */
-  private exemptRateLimits: Map<string, { tokens: number; lastRefill: number }> = new Map();
 
   constructor(private wss: WebSocketServer) {
     this.initialize();
@@ -90,7 +105,8 @@ export class WebSocketHandler {
     }, HEARTBEAT_INTERVAL_MS);
 
     setInterval(() => {
-      this.flushChatBuffer();
+      // fire-and-forget: an unhandled rejection here would otherwise be silent
+      this.flushChatBuffer().catch((e) => logger.error('Chat flush failed', { err: String(e) }));
     }, CHAT_FLUSH_INTERVAL_MS);
 
     const redisSub = getRedisSub();
@@ -437,19 +453,19 @@ export class WebSocketHandler {
       const userId = ws.userId!;
       const roomId = ws.roomId!;
 
-      // Hard cap: 500 msg/sec total per WebSocket
-      if (!this.checkHardRateLimit(userId)) {
+      // Hard cap: 500 msg/sec per connection. A connection that keeps flooding
+      // gets closed — previously it was only told to slow down, so it could
+      // flood (and spend Redis calls) indefinitely.
+      if (!this.takeToken(ws, 'hard', 500)) {
+        logger.warn('WS hard rate limit exceeded', { roomId, userId });
         this.send(ws, { type: 'rate_limited' });
+        ws.close(4008, 'rate limit exceeded');
         return;
       }
 
       // Rate-limit only low-volume messages. ICE + audio-activity + media-state
       // easily exceed 50/s/room and were starving chat/captions.
-      const exemptFromRoomBurstLimit = new Set<string>([
-        'offer', 'answer', 'ice', 'ping', 'pong',
-        'media-state', 'audio-activity', 'active_speaker',
-      ]);
-      if (!exemptFromRoomBurstLimit.has(signal.type)) {
+      if (!EXEMPT_FROM_ROOM_BURST_LIMIT.has(signal.type)) {
         const count = await redis.incr(`ratelimit:room:${roomId}:messages`);
         await redis.expire(`ratelimit:room:${roomId}:messages`, 1);
         if (count > 80) {
@@ -458,46 +474,44 @@ export class WebSocketHandler {
         }
       }
 
+      // Authorization is re-checked on every message, not only when the client
+      // happens to send `ping`: a client that stopped pinging could otherwise
+      // keep using an expired room token. jwt.verify is a local HMAC check, so
+      // this costs no Redis round trip.
+      if (!this.hasValidRoomToken(ws)) {
+        this.send(ws, { type: 'token_expired' });
+        ws.close(4004);
+        return;
+      }
+
       // Check if user is kicked on every message
       if (await isKicked(roomId, userId)) {
+        this.send(ws, { type: 'kicked' });
         ws.close(4003);
         return;
       }
 
-      // ── Ping / heartbeat: token re-validation + room existence ──
+      // ── Ping / heartbeat: room existence ──
       if (signal.type === 'ping') {
-        if (ws.roomToken) {
-          const payload = verifyRoomToken(ws.roomToken);
-          if (!payload) {
-            this.send(ws, { type: 'token_expired' });
-            ws.close(4004);
-            return;
-          }
-          if (await isKicked(roomId, userId)) {
-            this.send(ws, { type: 'kicked' });
-            ws.close(4003);
-            return;
-          }
-          const meta = await getRoomMeta(roomId);
-          if (!meta) {
-            this.sendError(ws, 'Room not found or ended');
-            ws.close(4002);
-            return;
-          }
+        const meta = await getRoomMeta(roomId);
+        if (!meta) {
+          this.sendError(ws, 'Room not found or ended');
+          ws.close(4002);
+          return;
         }
       }
 
-      // ── ICE / WebRTC: per-user token bucket ──
+      // ── ICE / WebRTC: per-connection token bucket ──
       if (signal.type === 'offer' || signal.type === 'answer' || signal.type === 'ice') {
-        if (!this.checkExemptRateLimit(`ice:${userId}`, 100)) {
+        if (!this.takeToken(ws, 'ice', 100)) {
           return; // Drop silently — these are advisory
         }
       }
       if (signal.type === 'media-state') {
-        if (!this.checkExemptRateLimit(`media:${userId}`, 10)) return;
+        if (!this.takeToken(ws, 'media', 10)) return;
       }
       if (signal.type === 'audio-activity') {
-        if (!this.checkExemptRateLimit(`audio:${userId}`, 10)) return;
+        if (!this.takeToken(ws, 'audio', 10)) return;
       }
 
       // ── Dispatch to registered handler ──
@@ -695,6 +709,14 @@ export class WebSocketHandler {
       const userId = ws.userId!;
       const roomId = ws.roomId!;
 
+      // Waiting sockets are authorized the same way as admitted ones: their
+      // waiting-room token is verified on upgrade, but can expire while queued.
+      if (!this.hasValidRoomToken(ws)) {
+        this.send(ws, { type: 'token_expired' });
+        ws.close(4004);
+        return;
+      }
+
       if (raw.type === 'ping') {
         this.send(ws, { type: 'pong' });
         return;
@@ -825,26 +847,21 @@ export class WebSocketHandler {
     return ws.readyState === WebSocket.OPEN;
   }
 
-  /** Per-user token bucket for exempt messages. Returns true if allowed. */
-  private checkExemptRateLimit(userId: string, maxTokensPerSec: number): boolean {
-    const now = Date.now();
-    let bucket = this.exemptRateLimits.get(userId);
-    if (!bucket) {
-      bucket = { tokens: maxTokensPerSec, lastRefill: now };
-      this.exemptRateLimits.set(userId, bucket);
-    }
-    const elapsed = now - bucket.lastRefill;
-    if (elapsed >= 1000) {
-      bucket.tokens = maxTokensPerSec;
-      bucket.lastRefill = now;
-    }
-    if (bucket.tokens <= 0) return false;
-    bucket.tokens--;
-    return true;
+  /**
+   * Take one token from this connection's bucket for `key`.
+   * Buckets hang off the socket, so there is no map to leak on disconnect.
+   */
+  private takeToken(ws: ExtendedWebSocket, key: string, maxTokensPerSec: number): boolean {
+    const buckets = (ws.rateBuckets ??= new Map<string, TokenBucket>());
+    return takeToken(buckets, key, maxTokensPerSec, Date.now());
   }
 
-  /** Hard cap: 500 msg/sec total per WebSocket. */
-  private checkHardRateLimit(userId: string): boolean {
-    return this.checkExemptRateLimit(userId, 500);
+  /**
+   * The room token is verified on upgrade, but a socket can outlive it. This is
+   * a local signature+expiry check (no Redis), safe to run per message.
+   */
+  private hasValidRoomToken(ws: ExtendedWebSocket): boolean {
+    if (!ws.roomToken) return false;
+    return verifyRoomToken(ws.roomToken) !== null;
   }
 }
