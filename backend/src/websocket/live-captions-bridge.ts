@@ -18,6 +18,9 @@ type LiveCaptionWs = WebSocket & {
   liveCaptionRoomToken?: string;
 };
 
+/** How often a live caption socket re-checks that it is still authorized. */
+const AUTH_RECHECK_INTERVAL_MS = 30_000;
+
 export function attachLiveCaptionsBridge(
   wss: WebSocketServer,
   publishBuffer: PublishBuffer = createRoomFanoutBuffer(),
@@ -79,6 +82,8 @@ export function attachLiveCaptionsBridge(
           return;
         }
 
+        let lastAuthCheck = Date.now();
+
         const deepgram = new DeepgramClient({ apiKey });
         const dgSocket = await deepgram.listen.v1.connect({
           model,
@@ -118,6 +123,28 @@ export function attachLiveCaptionsBridge(
 
         const onClientMessage = (data: Buffer | ArrayBuffer, isBinary: boolean) => {
           if (!isBinary) return;
+          // Re-authorize periodically. The upgrade already verified the token,
+          // but this socket is long-lived: without a re-check a user whose token
+          // expired, or who was kicked, keeps streaming audio to Deepgram for
+          // the rest of the call while their signaling socket is long gone.
+          // The signature check is local; the peer-role lookup is what catches
+          // a kick, which a local verify can never see.
+          if (Date.now() - lastAuthCheck >= AUTH_RECHECK_INTERVAL_MS) {
+            lastAuthCheck = Date.now();
+            void (async () => {
+              try {
+                if (!verifyRoomToken(ext.liveCaptionRoomToken ?? '')) {
+                  ws.close(4004, 'room token expired');
+                  return;
+                }
+                if (!(await getPeerRole(roomId, userId))) {
+                  ws.close(4003, 'no longer in room');
+                }
+              } catch (e) {
+                logger.error('Live caption re-auth failed', { roomId, userId, err: String(e) });
+              }
+            })();
+          }
           const buf = Buffer.isBuffer(data)
             ? data
             : Buffer.from(new Uint8Array(data as ArrayBuffer));
@@ -129,8 +156,7 @@ export function attachLiveCaptionsBridge(
           }
         };
 
-        ws.on('message', onClientMessage);
-        ws.on('close', () => {
+        ws.on('message', onClientMessage);        ws.on('close', () => {
           clearInterval(keepAlive);
           try {
             dgSocket.close();

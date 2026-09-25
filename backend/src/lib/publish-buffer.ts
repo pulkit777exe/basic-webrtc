@@ -23,6 +23,12 @@
 export interface PublishBufferOptions {
   /** Send one batch. Must preserve per-channel ordering. */
   publishBatch: (channels: Map<string, string[]>) => Promise<unknown>;
+  /**
+   * Liveness check used to close a tripped circuit (e.g. `redis.ping()`).
+   * Required: the circuit must recover on a quiet room, and probing with an
+   * empty batch fails on the Redis client, which would reopen it forever.
+   */
+  probe?: () => Promise<unknown>;
   flushIntervalMs?: number;
   maxQueueSize?: number;
   /** Consecutive failed flushes before the circuit opens. */
@@ -94,6 +100,20 @@ export class PublishBuffer {
   }
 
   /**
+   * Drain what is queued, waiting out any batch already in flight (a single
+   * `flush()` would return that batch and abandon the rest). Bounded so a
+   * wedged transport cannot block shutdown.
+   */
+  async flushAll(maxRounds = 5): Promise<void> {
+    for (let round = 0; round < maxRounds; round++) {
+      if (this.queued === 0 && !this.inFlight) return;
+      await this.flush();
+      // Let an in-flight batch settle before deciding whether more remains.
+      await this.inFlight;
+    }
+  }
+
+  /**
    * Enqueue a payload. Synchronous and allocation-cheap: never throws.
    *
    * Note this queues even while the circuit is open. An earlier version dropped
@@ -104,6 +124,10 @@ export class PublishBuffer {
    */
   publish(channel: string, payload: string): void {
     if (this.stopped) return;
+    if (this.isOpen) {
+      this.dropped += 1;
+      return;
+    }
     this.enqueue(channel, payload);
   }
 
@@ -112,13 +136,27 @@ export class PublishBuffer {
     if (this.stopped) return;
     if (this.inFlight) return this.inFlight;
 
-    if (this.isOpen && this.now() - this.circuitOpenedAt >= this.resetAfterMs) {
+    if (this.isOpen) {
+      if (this.now() - this.circuitOpenedAt < this.resetAfterMs) return;
       this.isOpen = false;
+      this.inFlight = (async () => {
+        try {
+          await this.sendProbe();
+          this.consecutiveFailures = 0;
+          this.options.onCircuitClose?.();
+        } catch {
+          this.consecutiveFailures += 1;
+          this.isOpen = true;
+          this.circuitOpenedAt = this.now();
+          this.options.onCircuitOpen?.();
+        } finally {
+          this.inFlight = null;
+        }
+      })();
+      return this.inFlight;
     }
-    if (this.isOpen) return;
     if (this.queued === 0) return;
 
-    const wasOpen = !this.isOpen && this.consecutiveFailures >= this.failureThreshold;
     const batch = this.queues;
     this.queues = new Map();
     this.queued = 0;
@@ -127,7 +165,6 @@ export class PublishBuffer {
       try {
         await this.send(batch);
         this.consecutiveFailures = 0;
-        if (wasOpen) this.options.onCircuitClose?.();
       } catch {
         // The batch is dropped rather than requeued: during an outage,
         // requeueing is exactly the unbounded growth this buffer exists to
@@ -145,12 +182,23 @@ export class PublishBuffer {
     return this.inFlight;
   }
 
+  private async sendProbe(): Promise<void> {
+    if (!this.options.probe) {
+      throw new Error('PublishBuffer requires a probe() to close an open circuit');
+    }
+    await this.withTimeout(this.options.probe());
+  }
+
   /**
    * Send with a deadline. Without it a hung REST request pins `inFlight`
    * forever: every later tick returns the same promise, the queue fills, and
    * the failure is never recorded.
    */
   private async send(batch: Map<string, string[]>): Promise<void> {
+    await this.withTimeout(this.options.publishBatch(batch));
+  }
+
+  private async withTimeout(promise: Promise<unknown>): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(
@@ -159,7 +207,7 @@ export class PublishBuffer {
       );
     });
     try {
-      await Promise.race([this.options.publishBatch(batch), timeout]);
+      await Promise.race([promise, timeout]);
     } finally {
       if (timer) clearTimeout(timer);
     }

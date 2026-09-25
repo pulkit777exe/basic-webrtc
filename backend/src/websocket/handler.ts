@@ -62,17 +62,33 @@ const EXEMPT_FROM_ROOM_BURST_LIMIT: ReadonlySet<string> = new Set([
   'token_refresh',
 ]);
 /**
- * Traffic that bypasses the publish buffer. These messages are either
- * unrecoverable if lost (an offer with no peer to receive it means a call that
- * never connects) or order-sensitive state transitions (roster changes), and
- * none of them are high volume.
+ * Traffic that bypasses the publish buffer: one-shot control messages and
+ * roster changes. Losing any of them is unrecoverable (an offer with no peer to
+ * receive it means a call that never connects; a mute/lock that never lands
+ * leaves the UI disagreeing with the server) and reordering them against the
+ * immediate local hop can hand a client newer state before older. None of them
+ * are high volume.
+ *
+ * `ice` is deliberately NOT here: candidates arrive continuously (up to
+ * 100/s per connection) and the receiver tolerates losing one, so buffering it
+ * is both cheaper and better behaved under a Redis outage. It is also the
+ * volume that would otherwise defeat the circuit breaker.
  */
 const MUST_DELIVER: ReadonlySet<string> = new Set([
   'offer',
   'answer',
-  'ice',
   'join',
   'leave',
+  'admin_mute',
+  'admin_mute_all',
+  'admin_unmute_all',
+  'admin_kick',
+  'admin_promote',
+  'admin_pin_message',
+  'room_locked',
+  'admin_reactions_toggle',
+  'admin_chat_toggle',
+  'admin_screen_toggle',
 ]);
 
 function isMustDeliver(type: unknown): boolean {
@@ -202,6 +218,22 @@ export class WebSocketHandler {
             return;
           }
 
+        // Wire cleanup BEFORE any awaited work. Setup below does several
+        // sequential Redis/DB round trips, and a failure (or the client simply
+        // leaving) after `addPeerToRoom` would otherwise leave a peer in Redis
+        // and, once added to the map, a socket no later event could reap — the
+        // heartbeat sweep only walks `wss.clients`, which a closed socket has
+        // already left. The one-shot and superseded-socket guards in
+        // handleDisconnect make early attachment safe.
+        ws.on('close', () =>
+          ext.isWaiting ? this.handleWaitingDisconnect(ext) : this.handleDisconnect(ext),
+        );
+        ws.on('error', (err) => {
+          logger.error('[WS] Error', { err: err });
+          if (ext.isWaiting) this.handleWaitingDisconnect(ext);
+          else this.handleDisconnect(ext);
+        });
+
         // --- Waiting-room branch: waiting participants connect before being admitted ---
         if (ext.isWaiting) {
           const inWaiting = await isInWaitingRoom(roomId, userId);
@@ -220,8 +252,6 @@ export class WebSocketHandler {
           // included) and routes dead ones through handleWaitingDisconnect.
           this.addToWaitingMap(roomId, userId, ext);
           ws.on('message', (data: Buffer) => void this.handleWaitingMessage(ext, data));
-          ws.on('close', () => this.handleWaitingDisconnect(ext));
-          ws.on('error', () => this.handleWaitingDisconnect(ext));
           logger.info('WS waiting', { roomId, userId });
           return;
         }
@@ -344,18 +374,17 @@ export class WebSocketHandler {
           // it now would leave a ghost entry no later event can clean up.
           if (setupFailed) {
             logger.info('WS setup abandoned, client already closed', { roomId, userId });
-            this.removeFromMap(roomId, userId);
+            // Identity-checked: a newer socket for the same user may already be
+            // the map entry, and this dead one must not evict it.
+            if (this.rooms.get(roomId)?.get(userId) === ext) {
+              this.removeFromMap(roomId, userId);
+            }
             return;
           }
           const joinSignal: Signal = { type: 'join', roomId, user: publicUser };
           this.publish(roomId, { ...joinSignal, from: userId });
 
           ws.on('message', (data: Buffer) => this.handleMessage(ext, data));
-          ws.on('close', () => this.handleDisconnect(ext));
-          ws.on('error', (err) => {
-            logger.error('[WS] Error', { err: err });
-            this.handleDisconnect(ext);
-          });
         } catch (err) {
           failSetup(String(err));
         }
@@ -445,13 +474,19 @@ export class WebSocketHandler {
     const serialized = JSON.stringify(redisPayload);
 
     if (isMustDeliver(payload.type)) {
-      // Negotiation, ICE, and roster changes are the one class that must not be
-      // batched: losing an offer leaves a peer with no way to connect, and a
-      // reordering between the immediate local hop and a buffered Redis hop can
-      // hand a client newer SDP before older. They are low volume and already
-      // rate-limited (100/s per connection for signalling), so publishing them
-      // straight through costs little and removes the whole class of bug.
-      void redis.publish(channel, serialized).catch((e) => logger.error('[WS] Publish', { err: e }));
+      // Negotiation and one-shot control traffic cannot be batched: losing an
+      // offer leaves a peer with no way to connect, and a reordering between
+      // the immediate local hop and a buffered Redis hop can hand a client
+      // newer state before older. Low volume and already rate-limited.
+      //
+      // `redis` is a lazy Proxy that throws synchronously when Upstash is
+      // unconfigured, and this runs from close handlers, so the call is
+      // wrapped: publish() must never throw into an event emitter.
+      try {
+        void redis.publish(channel, serialized).catch((e) => logger.error('[WS] Publish', { err: e }));
+      } catch (e) {
+        logger.error('[WS] Publish unavailable', { err: e });
+      }
       return;
     }
 
@@ -825,12 +860,23 @@ export class WebSocketHandler {
     this.removeFromMap(roomId, userId);
     // Retried: if Redis is briefly unavailable the peer would otherwise linger
     // in the room's participant set and could be refused re-entry as "full".
-    retry(() => removePeerFromRoom(roomId, userId), {
-      delayMs: 200,
-      onRetry: (e) => logger.warn('removePeerFromRoom retrying', { roomId, userId, err: String(e) }),
-    })
+    // The superseded check is re-evaluated *inside* the retry: a reconnect lands
+    // while these attempts are in flight, and a late retry would delete the new
+    // socket's membership (and with it the live-admission check that authorizes
+    // its token renewal).
+    retry(
+      async () => {
+        if (this.rooms.get(roomId)?.has(userId)) return;
+        await removePeerFromRoom(roomId, userId);
+      },
+      {
+        delayMs: 200,
+        onRetry: (e) => logger.warn('removePeerFromRoom retrying', { roomId, userId, err: String(e) }),
+      },
+    )
       .catch((e) => logger.error('removePeerFromRoom failed', { roomId, userId, err: String(e) }))
       .finally(() => {
+        if (this.rooms.get(roomId)?.has(userId)) return;
         retry(() => setHandRaised(roomId, userId, false), {
           retries: 1,
           onRetry: (e) => logger.warn('setHandRaised retrying', { roomId, userId, err: String(e) }),
@@ -932,6 +978,17 @@ export class WebSocketHandler {
     const userId = ws.userId;
     const roomId = ws.roomId;
     if (!userId || !roomId) return;
+    // Same one-shot + superseded-socket rules as handleDisconnect. Without them,
+    // a waiting socket that flaps (mobile network) has its delayed cleanup
+    // delete the *replacement* socket's queue entry, after which the admit
+    // notification is routed to an undefined socket and the user waits forever.
+    if (ws.disconnectHandled) return;
+    ws.disconnectHandled = true;
+    const current = this.waitingRooms.get(roomId)?.get(userId);
+    if (current && current !== ws) {
+      logger.debug('WS waiting disconnect superseded by a newer socket', { roomId, userId });
+      return;
+    }
     logger.info('WS waiting disconnect', { roomId, userId });
     this.removeFromWaitingMap(roomId, userId);
   }

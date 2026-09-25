@@ -117,7 +117,7 @@ async function requestWithRetry<T>(
         const payload = data as { error?: string; errors?: string[]; code?: string };
         // The session is still valid; only the short-lived access token is not.
         // Refresh once through the cookie, then replay the original request.
-        if (res.status === 401 && allowAuthRetry && !isAuthEndpoint(path) && !init.signal?.aborted) {
+        if (res.status === 401 && allowAuthRetry && !isAuthEndpoint(path)) {
           await refreshAccessToken();
           return requestWithRetry<T>(path, options, false);
         }
@@ -146,9 +146,20 @@ async function requestWithRetry<T>(
   throw new Error(NETWORK_ERROR_MESSAGE, { cause: lastNetworkError });
 }
 
-/** Endpoints that authenticate *by* access token: retrying them on 401 is pointless. */
+/**
+ * Endpoints that authenticate *by* the access token rather than the session
+ * cookie. Retrying these on a 401 cannot help — a 401 there is a real failure
+ * (bad credentials, revoked session), and retrying would surface the *refresh*
+ * endpoint's error instead, e.g. breaking logout.
+ */
 function isAuthEndpoint(path: string): boolean {
-  return path.startsWith("/api/auth/refresh") || path.startsWith("/api/auth/login");
+  return (
+    path.startsWith("/api/auth/refresh") ||
+    path.startsWith("/api/auth/login") ||
+    path.startsWith("/api/auth/logout") ||
+    path.startsWith("/api/auth/signup") ||
+    path.startsWith("/api/auth/sessions/revoke")
+  );
 }
 
 /** Refresh the access token from the httpOnly cookie, de-duplicating concurrent calls. */

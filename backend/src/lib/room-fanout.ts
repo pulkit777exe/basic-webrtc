@@ -19,6 +19,11 @@ export function createRoomFanoutBuffer(): PublishBuffer {
       }
       await tx.exec();
     },
+    // A real round trip, so a tripped circuit recovers even on a quiet room.
+    // (Probing with an empty transaction fails on the Redis client.)
+    probe: async () => {
+      await redis.ping();
+    },
     onDrop: (dropped, size) =>
       logger.warn('[WS] publish queue full, dropped oldest', { dropped, size }),
     onCircuitOpen: () =>

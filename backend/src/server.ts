@@ -238,8 +238,11 @@ function gracefulShutdown(signal: string) {
         void (async () => {
           try {
             // Give the leave messages produced by the socket closes one last
-            // chance to reach the other nodes.
-            await roomFanout.flush().catch((e) => logger.error('Final fanout flush failed', { err: String(e) }));
+            // chance to reach the other nodes, waiting out anything already in
+            // flight rather than abandoning the rest of the queue.
+            await roomFanout
+              .flushAll()
+              .catch((e) => logger.error('Final fanout flush failed', { err: String(e) }));
             roomFanout.stop();
             wsHandler.stop();
             await closeDatabase();

@@ -217,7 +217,10 @@ async function recoverFromExpiredToken(): Promise<void> {
     lastRoomToken = roomToken;
     scheduleTokenRefresh(roomToken);
     pendingReconnectToken = roomToken;
-    if (ws) {
+    // Only close if it is actually open: a socket that already closed would make
+    // close() a no-op, no event would fire, and the pending token would sit
+    // there for some later 4004 to pick up — potentially long expired.
+    if (ws && ws.readyState === WebSocket.OPEN) {
       // Let onclose do the reconnect so the close and the new socket are ordered.
       ws.close(4004, "token expired");
     } else {
@@ -781,6 +784,9 @@ export const WSManager = {
         return;
       }
       const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+      // Any other close path abandons a pending recovery token: it was set for
+      // this specific 4004 and must not be reused by a later one.
+      pendingReconnectToken = null;
       if (reconnectAttempts >= MAX_RECONNECT) {
         store.set(connectionStatusAtom, "disconnected");
         toast.error(

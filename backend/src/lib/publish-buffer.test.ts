@@ -10,6 +10,7 @@ function makeBuffer(overrides: Partial<ConstructorParameters<typeof PublishBuffe
   const publishBatch =
     (overrides.publishBatch as ReturnType<typeof vi.fn> | undefined) ??
     vi.fn().mockResolvedValue(undefined);
+  const probe = (overrides.probe as ReturnType<typeof vi.fn> | undefined) ?? vi.fn().mockResolvedValue('PONG');
   const onDrop = vi.fn();
   const onCircuitOpen = vi.fn();
   const onCircuitClose = vi.fn();
@@ -17,6 +18,7 @@ function makeBuffer(overrides: Partial<ConstructorParameters<typeof PublishBuffe
   const buffer = new PublishBuffer({
     ...overrides,
     publishBatch: publishBatch as PublishBatch,
+    probe: probe as () => Promise<unknown>,
     onDrop,
     onCircuitOpen,
     onCircuitClose,
@@ -133,7 +135,7 @@ describe('PublishBuffer circuit breaker', () => {
     expect(onCircuitOpen).toHaveBeenCalledTimes(1);
   });
 
-  it('stops sending while open, but keeps buffering (bounded)', async () => {
+  it('drops traffic while open, without accumulating a stale backlog', async () => {
     const publishBatch = vi.fn().mockRejectedValue(new Error('down'));
     const buffer = new PublishBuffer({ publishBatch, failureThreshold: 1, maxQueueSize: 5 });
 
@@ -141,29 +143,30 @@ describe('PublishBuffer circuit breaker', () => {
     await buffer.flush();
     expect(buffer.circuitOpen).toBe(true);
 
-    // No further sends while the circuit is open...
+    // No sends while open...
     await buffer.flush();
     expect(publishBatch).toHaveBeenCalledTimes(1);
 
-    // ...but traffic still accumulates, so the first post-cooldown flush has a
-    // real batch to send. (An earlier version dropped here, which meant the
-    // circuit could only ever be retried with an empty batch — and the Redis
-    // client rejects an empty transaction, so a recovered Redis could never
-    // close it.)
+    // ...and no backlog either. The buffered traffic is ephemeral *state*
+    // (active speaker, media state, captions): replaying 30 seconds of it after
+    // an outage leaves the UI on a stale value, which is worse than losing it.
     buffer.publish('c', 'b');
     buffer.publish('c', 'c');
-    expect(buffer.size).toBe(2);
+    expect(buffer.size).toBe(0);
+    expect(buffer.droppedCount).toBe(2);
   });
 
-  it('recovers after the cool-off with a real batch', async () => {
-    const publishBatch = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('down'))
-      .mockResolvedValue(undefined);
+  it('recovers via the probe on a quiet room', async () => {
+    // No traffic at all after the outage: recovery cannot depend on a batch
+    // arriving, and probing with an empty transaction fails on the Redis client
+    // (which is what kept this circuit open forever in the first place).
+    const publishBatch = vi.fn().mockRejectedValue(new Error('down'));
+    const probe = vi.fn().mockResolvedValue('PONG');
     const onCircuitClose = vi.fn();
     let clock = 0;
     const buffer = new PublishBuffer({
       publishBatch,
+      probe,
       onCircuitClose,
       failureThreshold: 1,
       resetAfterMs: 10_000,
@@ -174,17 +177,36 @@ describe('PublishBuffer circuit breaker', () => {
     await buffer.flush();
     expect(buffer.circuitOpen).toBe(true);
 
-    // Traffic during the outage is buffered, not dropped.
-    buffer.publish('c', 'b');
     clock += 11_000;
     await buffer.flush();
 
-    expect(publishBatch).toHaveBeenCalledTimes(2);
-    const retried = publishBatch.mock.calls[1]![0] as Map<string, string[]>;
-    expect(retried.get('c')).toEqual(['b']);
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(publishBatch).toHaveBeenCalledTimes(1); // no retry batch needed
     expect(buffer.circuitOpen).toBe(false);
     expect(onCircuitClose).toHaveBeenCalledTimes(1);
   });
+
+  it('re-opens when the probe fails', async () => {
+    const publishBatch = vi.fn().mockRejectedValue(new Error('down'));
+    const probe = vi.fn().mockRejectedValue(new Error('still down'));
+    let clock = 0;
+    const buffer = new PublishBuffer({
+      publishBatch,
+      probe,
+      failureThreshold: 1,
+      resetAfterMs: 10_000,
+      now: () => clock,
+    });
+
+    buffer.publish('c', 'a');
+    await buffer.flush();
+    clock += 11_000;
+    await buffer.flush();
+
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(buffer.circuitOpen).toBe(true);
+  });
+
 
   it('stays open during the cool-off period', async () => {
     const publishBatch = vi.fn().mockRejectedValue(new Error('down'));
@@ -207,8 +229,30 @@ describe('PublishBuffer circuit breaker', () => {
     expect(buffer.circuitOpen).toBe(true);
   });
 
-  it('re-opens if the post-cooldown flush also fails', async () => {
+  it('re-opens if the post-cool-down flush also fails', async () => {
     const publishBatch = vi.fn().mockRejectedValue(new Error('still down'));
+    const probe = vi.fn().mockRejectedValue(new Error('still down'));
+    let clock = 0;
+    const buffer = new PublishBuffer({
+      publishBatch,
+      probe,
+      failureThreshold: 1,
+      resetAfterMs: 10_000,
+      now: () => clock,
+    });
+
+    buffer.publish('c', 'a');
+    await buffer.flush();
+    clock += 11_000;
+    await buffer.flush();
+
+    expect(publishBatch).toHaveBeenCalledTimes(1);
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(buffer.circuitOpen).toBe(true);
+  });
+
+  it('stays open without a probe configured rather than pretending to recover', async () => {
+    const publishBatch = vi.fn().mockRejectedValue(new Error('down'));
     let clock = 0;
     const buffer = new PublishBuffer({
       publishBatch,
@@ -220,10 +264,8 @@ describe('PublishBuffer circuit breaker', () => {
     buffer.publish('c', 'a');
     await buffer.flush();
     clock += 11_000;
-    buffer.publish('c', 'b');
     await buffer.flush();
 
-    expect(publishBatch).toHaveBeenCalledTimes(2);
     expect(buffer.circuitOpen).toBe(true);
   });
 
@@ -255,8 +297,10 @@ describe('PublishBuffer circuit breaker', () => {
     // Without a deadline the in-flight promise never settles: every later tick
     // returns it, the queue fills, and the failure is never recorded.
     const publishBatch = vi.fn<() => Promise<unknown>>(() => new Promise<never>(() => {}));
+    const probe = vi.fn().mockResolvedValue('PONG');
     const buffer = new PublishBuffer({
       publishBatch,
+      probe,
       failureThreshold: 1,
       timeoutMs: 20,
       resetAfterMs: 0,
@@ -267,9 +311,14 @@ describe('PublishBuffer circuit breaker', () => {
 
     expect(buffer.circuitOpen).toBe(true);
 
-    // And it recovers: the deadline timer is not left pending.
-    publishBatch.mockImplementation(() => Promise.resolve(undefined));
+    // And it recovers: the deadline timer is not left pending, and the probe
+    // confirms the link rather than the send.
+    probe.mockRejectedValue(new Error('down'));
     buffer.publish('c', 'b');
+    await buffer.flush();
+    expect(buffer.circuitOpen).toBe(true);
+
+    probe.mockResolvedValue('PONG');
     await buffer.flush();
     expect(buffer.circuitOpen).toBe(false);
   });

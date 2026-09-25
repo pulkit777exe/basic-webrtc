@@ -412,7 +412,10 @@ export const MediaManager = {
    * Useful for displaying in a settings panel.
    */
   getActiveVideoResolution(): { width: number; height: number } | null {
-    const track = localStream?.getVideoTracks()[0];
+    // From the store, not the module-level `localStream`: toggleVideo and
+    // switchVideoInput replace it, so the settings panel would otherwise report
+    // the pre-toggle resolution.
+    const track = store.get(localMediaAtom).stream?.getVideoTracks()[0];
     if (!track) return null;
     const settings = track.getSettings();
     return settings.width && settings.height

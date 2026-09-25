@@ -117,6 +117,14 @@ export function chooseQuality(input: AdaptationInput): AdaptationDecision {
     input.lastChangeAt != null && input.now - input.lastChangeAt < MIN_CHANGE_INTERVAL_MS;
 
   // One uplink carries every peer's copy of this stream: budget per sender.
+  //
+  // Why divide: the sample is the congestion controller's estimate for a single
+  // ICE transport, and Chrome runs bandwidth estimation per PeerConnection — it
+  // does NOT coordinate across them. N connections each believe they may send at
+  // the full estimate while all competing for the same physical link, so the
+  // usable per-stream budget is the estimate / N. Without the division, a 1.1
+  // Mbps link looks like a comfortable 720p link to 8 peers while actually
+  // asking for ~9.6 Mbps.
   const senderCount = Math.max(1, Math.floor(input.senderCount ?? 1));
   const kbps = bitrate / 1000 / senderCount;
 

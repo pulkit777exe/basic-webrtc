@@ -30,6 +30,8 @@ const refresh = handlerRegistry.get('token_refresh')!;
 describe('token_refresh', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Rejections are expected here and logged; keep the output readable.
+    vi.spyOn(console, 'warn').mockImplementation((() => undefined) as never);
   });
 
   it('is registered', () => {
