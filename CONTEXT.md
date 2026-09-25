@@ -29,6 +29,24 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
 
 - Builds **`localStream`** (camera/mic ladder), updates **`localMediaAtom`**, calls `RTCManager.setLocalStream`.
 - **Screen share**: `replaceTrack('video', …)` or **`addTrack`** when there was no video sender → triggers **renegotiation** path above.
+- The module-level `localStream` is **not** the source of truth for late callers:
+  `toggleVideo` / `switchVideoInput` replace the stream, so anything acting on the
+  *current* capture (e.g. `applyVideoQuality`) must read `localMediaAtom.stream`.
+
+### Adaptive quality
+
+- **`lib/bandwidth.ts`** decides the ladder rung from measured uplink: degrade
+  below 0.9× headroom, climb only at 1.5× over the target, 10s cooldown. A
+  quality cap is a **ceiling**, not a floor, and a screen share suspends camera
+  adaptation because it owns the uplink.
+- The budget is divided by **`RTCManager.getVideoSenderCount()`** — in a mesh the
+  same capture is uploaded once per peer, so 1.1 Mbps across 8 peers is ~137 kbps
+  per stream, not a comfortable 720p link.
+- **`lib/webrtc-stats.ts`** reads `availableOutgoingBitrate` from
+  `remote-inbound-rtp`, else the selected/nominated `candidate-pair`.
+- **`setVideoMaxBitrate()`** caps each video sender via `setParameters`: capture
+  resolution bounds pixels, this bounds the stream congestion control reacts to.
+  Never fatal — a sender that rejects keeps its value.
 
 ### WebSocket (`lib/ws-manager.ts`)
 
@@ -62,6 +80,38 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
 
 - Signaling uses **Redis pub/sub** (`this.publish` → `forwardFromRedis`), **not** `publishSignal` streams, for messages clients must receive (chat, ICE, offers, **`admin_mute_all`**, **`room_locked`**, **`admin_reactions_toggle`**, etc.).
 - **`join`**: Published so other peers get a **`join`** message with `user`; new socket also receives synthetic **`join`**s for peers already in the in-memory room map.
+- **Two publish paths.** Local delivery is always immediate. Cross-node delivery splits:
+  `offer` / `answer` / `ice` / `join` / `leave` (`MUST_DELIVER`) publish **straight
+  through** — they are unrecoverable if dropped and order-sensitive between the
+  local hop and the Redis hop. Everything else (reactions, captions, media
+  state, chat notifications) goes through the **bounded, circuit-broken
+  `PublishBuffer`** (`lib/publish-buffer.ts`, shared with live captions), which
+  batches per channel into one MULTI/EXEC every 50ms and drops the oldest past
+  1000 queued. Do not move a must-deliver type into the buffer.
+- **Disconnect cleanup is one-shot** (`disconnectHandled`) and skips shared-state
+  cleanup when a **newer socket has already replaced it** — otherwise a
+  reconnecting user's new connection loses its membership and peers are told
+  they left. `close`, `error`, and the heartbeat sweep all fire it.
+- **Connection setup** is guarded by a `setupFailed` flag: a client that
+  disconnects mid-setup (or a Redis failure before the inner `try`) must not end
+  up half-added to `this.rooms` with no later event to clean it up.
+
+### Room tokens in a call
+
+- The token is verified on upgrade, **on every inbound message**, and on waiting
+  sockets — a client cannot outlive it by skipping `ping`. The client renews
+  proactively (`lib/room-token.ts` schedules 5 minutes ahead) and hands the new
+  token to the live socket with `token_refresh`.
+- `POST /api/rooms/:id/refresh-token` requires **live** admission (current peer
+  role or host, room exists, not kicked) — deliberately **not** `canAccessRoom`,
+  which admits past participants so they can read the recap and must not imply
+  permission to hold a live-call token.
+- Anything authenticating *during* a call must read the live token via
+  `WSManager.getRoomToken()`; room tokens rotate, so a long-lived uploader that
+  captured one at setup goes stale.
+- `request()` refreshes the **access** token once on a 401 via the httpOnly
+  cookie and replays. Access tokens last 15m and calls last hours; without this
+  every authenticated call late in a call failed.
 
 ### ICE / TURN
 

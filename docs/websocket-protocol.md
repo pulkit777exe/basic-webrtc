@@ -260,8 +260,20 @@ Additional server-side throttles (independent of the burst limit):
 
 - `reaction` — max 1 per second per user (Redis `SET NX` key, validated against the emoji whitelist)
 - `caption` persistence — max 1 transcript insert per second per user
+- `waiting_room_status_check` — 5/second per connection (waiting sockets do not go through the admitted-socket path, and each check costs a Redis `ZRANGE`)
 
 When the limit is exceeded, the server sends `{ "type": "rate_limited" }` and drops the message.
+
+### What is never dropped
+
+`offer`, `answer`, `ice`, `join`, and `leave` are published to Redis directly
+rather than through the fan-out buffer. They are unrecoverable if lost — a
+dropped offer leaves a peer with no way to connect — and reordering them against
+the immediate local hop can hand a client newer SDP before older. Everything
+else (reactions, captions, media state, chat notifications) is batched through a
+bounded queue that sheds the oldest entries under sustained pressure; durable
+content is persisted before it is published, so a shed message costs a live
+update rather than data.
 
 ### Per-connection limits
 
@@ -288,8 +300,14 @@ per message, and waiting-room sockets are subject to the same token check.
 at the token's `exp` (`JWT_ROOM_EXPIRY`, 2h by default). The client therefore
 renews ahead of expiry:
 
-1. `POST /api/rooms/{id}/refresh-token` (session access token + room membership)
-   returns a new room token.
+1. `POST /api/rooms/{id}/refresh-token` returns a new room token. It authenticates
+   with the **session access token** and requires **live** admission — current
+   peer role or host, room exists, not kicked. (Historical membership is
+   deliberately *not* enough: that admits past participants so they can read the
+   recap, which is not permission to hold a live-call token.)
+   The client refreshes its own access token first if it has expired, via
+   `POST /api/auth/refresh` (httpOnly cookie) — access tokens are short-lived
+   next to room tokens.
 2. The client sends `{"type":"token_refresh","roomToken":"…"}` on the live socket.
 3. The server accepts it only if the token is valid, unexpired, for the same user
    and room, and is not a waiting-room token — then it becomes the socket's token
@@ -299,6 +317,10 @@ renews ahead of expiry:
 If a tab sleeps through the renewal, the server closes with `token_expired` /
 4004. The client then fetches a replacement and reconnects with it, showing the
 "please rejoin" message only if that also fails.
+
+`token_refresh` is exempt from the per-room burst limit — a busy room must not
+be able to starve renewal, since the client would silently keep the old token
+and the call would still end at expiry.
 
 ---
 

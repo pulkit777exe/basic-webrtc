@@ -1518,8 +1518,10 @@ paths:
       description: >-
         Room tokens expire (JWT_ROOM_EXPIRY, 2h by default) and the server
         re-verifies them on every WebSocket message, so a long call renews here
-        instead of being dropped at the deadline. Requires room membership —
-        this cannot be used to obtain entry to a room the caller is not part of.
+        instead of being dropped at the deadline. Requires LIVE admission —
+        current peer role or host, existing room, not kicked. Historical
+        membership is intentionally insufficient: it admits past participants so
+        they can read a recap, which is not permission to hold a live-call token.
       security:
         - BearerAuth: []
       parameters:
@@ -1541,7 +1543,7 @@ paths:
         "400":
           description: INVALID_ROOM_ID
         "403":
-          description: FORBIDDEN — not a room participant
+          description: KICKED or NOT_IN_CALL — removed from, or not currently in, this call
         "404":
           description: ROOM_NOT_FOUND
 
