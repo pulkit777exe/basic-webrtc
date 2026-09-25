@@ -34,6 +34,8 @@ import { playHandRaiseSound } from "./hand-raise-sound";
 import { appendFloatingReaction } from "./reactions";
 import { signalingWsUrl } from "@/config/api";
 import { MAX_RECONNECT, nextReconnectDelay } from "./connection";
+import { refreshDelayMs, decodeRoomToken } from "./room-token";
+import { api } from "@/lib/api";
 
 type Signal =
   | { type: "offer"; to: string; sdp: RTCSessionDescriptionInit; from?: string }
@@ -103,6 +105,8 @@ type Signal =
   | { type: "hand_raise"; raised: boolean; from?: string; timestamp?: number | null }
   | { type: "ping" }
   | { type: "pong" }
+  | { type: "token_refresh"; roomToken: string }
+  | { type: "token_refresh_ack" }
   | { type: "token_expired" }
   | { type: "error"; message: string }
   | { type: "kicked" }
@@ -120,6 +124,96 @@ let intentionalDisconnect = false;
 let recordingNoticeShown = false;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let lastRoomToken: string | null = null;
+let tokenRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let tokenRefreshInFlight = false;
+
+/**
+ * Renew the room token before it expires.
+ *
+ * The server re-verifies the token on every message, so at `exp` it closes the
+ * socket. Fetching a replacement and handing it to the live socket keeps a long
+ * call connected; the server only accepts a new token that is valid, unexpired,
+ * and scoped to the same user and room.
+ */
+function scheduleTokenRefresh(roomToken: string): void {
+  if (tokenRefreshTimer) { clearTimeout(tokenRefreshTimer); tokenRefreshTimer = null; }
+  const delay = refreshDelayMs(roomToken);
+  if (delay === null) return; // unparseable: nothing sensible to schedule
+  tokenRefreshTimer = setTimeout(() => {
+    tokenRefreshTimer = null;
+    void renewRoomToken(roomToken);
+  }, delay);
+}
+
+async function renewRoomToken(currentToken: string): Promise<void> {
+  if (tokenRefreshInFlight) return;
+  const roomId = decodeRoomToken(currentToken)?.roomId;
+  if (!roomId) return;
+
+  tokenRefreshInFlight = true;
+  try {
+    const { roomToken } = await api.refreshRoomToken(roomId);
+    if (!roomToken) throw new Error("no roomToken in response");
+    lastRoomToken = roomToken;
+    // Hand it to the live socket when connected; otherwise the next connect()
+    // picks it up from lastRoomToken.
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "token_refresh", roomToken }));
+    }
+    scheduleTokenRefresh(roomToken);
+  } catch (error) {
+    console.warn("[WS] room token refresh failed, retrying shortly", error);
+    // Back off rather than spin: the current token is still valid for a while.
+    if (tokenRefreshTimer) clearTimeout(tokenRefreshTimer);
+    tokenRefreshTimer = setTimeout(() => {
+      tokenRefreshTimer = null;
+      void renewRoomToken(currentToken);
+    }, 30_000);
+  } finally {
+    tokenRefreshInFlight = false;
+  }
+}
+
+let expiryRecoveryInFlight = false;
+/** Fresh token waiting for the close handler to reconnect with it. */
+let pendingReconnectToken: string | null = null;
+
+/**
+ * Last-resort recovery when the server says the room token is no longer valid
+ * (a suspended tab can sleep through the proactive refresh). Fetch a fresh one
+ * and reconnect; only surface the "please rejoin" message if that fails too.
+ */
+async function recoverFromExpiredToken(): Promise<void> {
+  if (expiryRecoveryInFlight || intentionalDisconnect) return;
+  const roomId = lastRoomToken ? decodeRoomToken(lastRoomToken)?.roomId : null;
+  if (!roomId) {
+    store.set(roomAtom, null);
+    toast.error("Your session has expired. Please rejoin the room.");
+    return;
+  }
+
+  expiryRecoveryInFlight = true;
+  try {
+    const { roomToken } = await api.refreshRoomToken(roomId);
+    if (!roomToken) throw new Error("no roomToken in response");
+    lastRoomToken = roomToken;
+    scheduleTokenRefresh(roomToken);
+    pendingReconnectToken = roomToken;
+    if (ws) {
+      // Let onclose do the reconnect so the close and the new socket are ordered.
+      ws.close(4004, "token expired");
+    } else {
+      pendingReconnectToken = null;
+      WSManager.connect(roomToken);
+    }
+  } catch (error) {
+    console.error("[WS] could not renew expired room token", error);
+    store.set(roomAtom, null);
+    toast.error("Your session has expired. Please rejoin the room.");
+  } finally {
+    expiryRecoveryInFlight = false;
+  }
+}
 
 // Pending subscriptions for role assignment when roomAtom is not yet available
 // Map<userId, unsubscribe>
@@ -223,6 +317,7 @@ export const WSManager = {
   connect(roomToken: string) {
     intentionalDisconnect = false;
     lastRoomToken = roomToken;
+    scheduleTokenRefresh(roomToken);
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -281,8 +376,13 @@ export const WSManager = {
         }
 
         if (data.type === "token_expired") {
-          store.set(roomAtom, null);
-          toast.error("Your session has expired. Please rejoin the room.");
+          // The server rejected our token. Try to recover transparently before
+          // bothering the user: fetch a replacement and reconnect with it.
+          void recoverFromExpiredToken();
+          return;
+        }
+
+        if (data.type === "token_refresh_ack") {
           return;
         }
 
@@ -636,6 +736,23 @@ export const WSManager = {
         });
       }
       if (intentionalDisconnect) return;
+      // 4004 means the server rejected our room token. Recovery owns this case:
+      // re-running the normal backoff loop here would reconnect with the same
+      // expired token and bounce straight back to 4004.
+      if (event.code === 4004) {
+        // 4004 means the server rejected our room token. Reconnect with a fresh
+        // one if recovery already fetched it; otherwise start recovery. Either
+        // way, do NOT run the normal backoff loop: it would replay the same
+        // expired token and bounce straight back to 4004.
+        const pending = pendingReconnectToken;
+        pendingReconnectToken = null;
+        if (pending) {
+          WSManager.connect(pending);
+        } else {
+          void recoverFromExpiredToken();
+        }
+        return;
+      }
       const offline = typeof navigator !== "undefined" && navigator.onLine === false;
       if (reconnectAttempts >= MAX_RECONNECT) {
         store.set(connectionStatusAtom, "disconnected");
@@ -663,7 +780,9 @@ export const WSManager = {
       const delay = nextReconnectDelay(reconnectAttempts - 1);
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
-        WSManager.connect(roomToken);
+        // Use the latest token: a refresh may have replaced the one this socket
+        // was opened with, and replaying a stale token would 4004 straight back.
+        WSManager.connect(lastRoomToken ?? roomToken);
       }, delay);
     };
 
@@ -683,6 +802,8 @@ export const WSManager = {
   disconnect() {
     intentionalDisconnect = true;
     recordingNoticeShown = false;
+    pendingReconnectToken = null;
+    if (tokenRefreshTimer) { clearTimeout(tokenRefreshTimer); tokenRefreshTimer = null; }
     // Reset connection state so the next join starts from a clean "connecting".
     store.set(connectionStatusAtom, "connecting");
     store.set(reconnectAttemptAtom, 0);

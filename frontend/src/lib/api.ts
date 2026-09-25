@@ -274,6 +274,17 @@ export const api = {
     }>("/api/rooms");
   },
 
+  /**
+   * Replacement room token for a call already in progress. Room tokens expire
+   * and the server re-verifies them per message, so long calls renew here
+   * instead of being dropped at the deadline.
+   */
+  async refreshRoomToken(id: string) {
+    return request<{ roomToken: string }>(`/api/rooms/${id}/refresh-token`, {
+      method: "POST",
+    });
+  },
+
   async joinRoom(id: string, passcode?: string) {
     return request<{
       status: "waiting" | "joined";

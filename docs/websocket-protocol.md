@@ -204,6 +204,8 @@ transcript/notes endpoints (`GET /api/rooms/:id/transcript`,
 |------|-----------|-------------|
 | `ping` | client→server | Keep-alive, refreshes participant TTL |
 | `pong` | server→client | Keep-alive response |
+| `token_refresh` | client→server | Replace this socket's room token (see below) |
+| `token_refresh_ack` | server→client | New room token accepted |
 | `join` | server→client | New participant joined |
 | `leave` | server→client | Participant left |
 | `error` | server→client | Error message |
@@ -281,6 +283,22 @@ The room token is verified on upgrade *and* re-verified on every inbound
 message (a local signature + expiry check, no Redis call). A socket therefore
 cannot outlive its token by simply omitting `ping`. The kick check also runs
 per message, and waiting-room sockets are subject to the same token check.
+
+**Renewing a token.** Because the token is checked per message, a call would end
+at the token's `exp` (`JWT_ROOM_EXPIRY`, 2h by default). The client therefore
+renews ahead of expiry:
+
+1. `POST /api/rooms/{id}/refresh-token` (session access token + room membership)
+   returns a new room token.
+2. The client sends `{"type":"token_refresh","roomToken":"…"}` on the live socket.
+3. The server accepts it only if the token is valid, unexpired, for the same user
+   and room, and is not a waiting-room token — then it becomes the socket's token
+   and replies `token_refresh_ack`. Anything else is rejected and the socket
+   keeps the token it had.
+
+If a tab sleeps through the renewal, the server closes with `token_expired` /
+4004. The client then fetches a replacement and reconnects with it, showing the
+"please rejoin" message only if that also fails.
 
 ---
 

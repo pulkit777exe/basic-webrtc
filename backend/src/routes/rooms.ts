@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { db } from '../db';
 import { rooms, users, roomParticipants, roomSettings, messages } from '../db/schema';
 import { authenticateToken, optionalAuthenticate, requireUser } from '../middleware/auth';
-import { generateRoomId } from '../utils/validation';
+import { generateRoomId, validateRoomId } from '../utils/validation';
 import { generateRoomToken, generateWaitingToken } from '../utils/jwt';
 import { eq, and, desc, sql, inArray } from 'drizzle-orm';
 import bcrypt from 'bcrypt';
@@ -431,6 +431,34 @@ router.post(
 );
 
 // Room state
+
+/**
+ * Mint a replacement room token for a call the caller is already in.
+ *
+ * Room tokens expire (JWT_ROOM_EXPIRY, 2h by default) and the server re-verifies
+ * them on every WebSocket message, so a long call would otherwise be cut off at
+ * the deadline. Membership is required, so this cannot be used to obtain entry
+ * to a room the caller is not already part of.
+ */
+router.post(
+  '/:id/refresh-token',
+  async (req: Request<{ id: string }>, res: Response): Promise<void> => {
+    try {
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const roomId = req.params.id;
+      if (!validateRoomId(roomId)) {
+        res.status(400).json({ error: 'Invalid room ID', code: 'INVALID_ROOM_ID' });
+        return;
+      }
+      if (!(await canAccessRoom(roomId, authUser.id, res))) return;
+      res.json({ roomToken: generateRoomToken(authUser.id, roomId) });
+    } catch (error) {
+      logger.error('[Refresh Room Token Error]', { err: error });
+      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
+    }
+  },
+);
 
 /**
  * Rooms the caller hosts or has taken part in — powers the dashboard's

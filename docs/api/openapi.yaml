@@ -1511,6 +1511,40 @@ paths:
         "403":
           description: Room locked or passcode required
 
+  /api/rooms/{id}/refresh-token:
+    post:
+      tags: [Rooms]
+      summary: Mint a replacement room token for a call in progress
+      description: >-
+        Room tokens expire (JWT_ROOM_EXPIRY, 2h by default) and the server
+        re-verifies them on every WebSocket message, so a long call renews here
+        instead of being dropped at the deadline. Requires room membership —
+        this cannot be used to obtain entry to a room the caller is not part of.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Replacement room token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  roomToken:
+                    type: string
+        "400":
+          description: INVALID_ROOM_ID
+        "403":
+          description: FORBIDDEN — not a room participant
+        "404":
+          description: ROOM_NOT_FOUND
+
   /api/ice-servers:
     get:
       tags: [ICE]

@@ -8,6 +8,8 @@ export interface ExtendedWebSocket extends WebSocket {
   isAlive?: boolean;
   isWaiting?: boolean;
   user?: { id: string; name: string; avatarUrl?: string | null };
+  /** Token this socket is authorized by; replaced on a successful token_refresh. */
+  roomToken?: string;
 }
 
 export interface ChatBufferEntry {

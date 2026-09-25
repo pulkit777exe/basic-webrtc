@@ -76,6 +76,7 @@ export type Signal =
   | { type: 'hand_raise'; raised: boolean; targetUserId?: string }
   | { type: 'ping' }
   | { type: 'pong' }
+  | { type: 'token_refresh'; roomToken: string }
   | { type: 'token_expired' }
   | { type: 'error'; message: string }
   | { type: 'kicked' }
@@ -124,6 +125,7 @@ export function isSignal(obj: unknown): obj is Signal {
     'hand_raise',
     'ping',
     'pong',
+    'token_refresh',
     'token_expired',
     'error',
     'kicked',
