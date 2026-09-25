@@ -397,7 +397,12 @@ export function RoomPage() {
   useEffect(() => {
     const controller = new AdaptiveQualityController({
       getSamples: () => RTCManager.sampleOutgoingBitrate(),
-      applyLevel: (level) => MediaManager.applyVideoQuality(level),
+      applyLevel: async (level) => {
+        // Capture resolution bounds the pixels; the encoder cap bounds the
+        // stream congestion control reacts to. Both, together.
+        await MediaManager.applyVideoQuality(level);
+        await RTCManager.setVideoMaxBitrate(level.maxBitrateKbps * 1000);
+      },
       getCap: () => MediaManager.getVideoQualityCap(),
       isScreenSharing: () => store.get(localMediaAtom).screen,
     });

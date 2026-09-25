@@ -181,6 +181,45 @@ export const RTCManager = {
   },
 
   /**
+   * Cap the encoder bitrate on every outgoing video sender.
+   *
+   * Capture resolution bounds how many pixels the encoder has to work with; this
+   * bounds the encoded stream itself, which is what congestion control actually
+   * reacts to. The two complement each other in a mesh, where the same local
+   * stream is encoded and uploaded once per peer.
+   *
+   * Applied as a per-sender `setParameters` call and never fatal: a sender that
+   * rejects the new parameters (closing connection, browser quirk) keeps its
+   * current value.
+   */
+  async setVideoMaxBitrate(bitsPerSecond: number): Promise<void> {
+    const senders = [...peerConnections.values()].flatMap((connection) =>
+      connection
+        .getSenders()
+        .filter((sender) => sender.track?.kind === 'video')
+        .map((sender) => ({ connection, sender })),
+    );
+
+    await Promise.all(
+      senders.map(async ({ connection, sender }) => {
+        if (connection.connectionState === 'closed') return;
+        try {
+          const parameters = sender.getParameters();
+          if (!parameters.encodings || parameters.encodings.length === 0) {
+            parameters.encodings = [{}];
+          }
+          for (const encoding of parameters.encodings) {
+            encoding.maxBitrate = bitsPerSecond;
+          }
+          await sender.setParameters(parameters);
+        } catch (error) {
+          console.warn('[RTCManager] setVideoMaxBitrate failed', error);
+        }
+      }),
+    );
+  },
+
+  /**
    * One uplink estimate per peer connection, for adaptive quality. Entries are
    * null where a link has not produced an estimate yet (or the connection is
    * closing) — the caller reduces these to the binding constraint.
