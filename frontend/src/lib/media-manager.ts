@@ -1,6 +1,7 @@
 import { store } from '@/store';
 import { audioOutputDeviceIdAtom, localMediaAtom, mutedByHostAtom } from '@/store/atoms';
 import { RTCManager } from '@/lib/rtc-manager';
+import type { QualityLevel } from '@/lib/bandwidth';
 
 let localStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
@@ -417,5 +418,28 @@ export const MediaManager = {
     return settings.width && settings.height
       ? { width: settings.width, height: settings.height }
       : null;
+  },
+
+  /**
+   * Apply a rung of the adaptive-quality ladder to the live camera track.
+   *
+   * Uses `ideal` constraints so the browser may land on a nearby supported
+   * resolution instead of failing outright. A rejected constraint leaves the
+   * stream at its current resolution, which is why this is not surfaced to the
+   * user — it is an optimisation, not a feature they toggled.
+   */
+  async applyVideoQuality(level: QualityLevel): Promise<void> {
+    const track = localStream?.getVideoTracks()[0];
+    if (!track) return;
+    if (track.readyState === 'ended') return;
+    try {
+      await track.applyConstraints({
+        width: { ideal: level.width },
+        height: { ideal: level.height },
+        frameRate: { ideal: 30 },
+      });
+    } catch (error) {
+      console.warn('[MediaManager] could not apply video constraints', error);
+    }
   },
 };

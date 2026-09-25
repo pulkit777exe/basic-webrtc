@@ -3,6 +3,7 @@ import { store } from '@/store';
 import { peerAtomFamily, peerIdsAtom } from '@/store/atoms';
 import { WSManager } from '@/lib/ws-manager';
 import { PendingIceQueue } from '@/lib/pending-ice';
+import { extractAvailableOutgoingBitrate } from '@/lib/webrtc-stats';
 
 const FALLBACK_ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 const BUNDLE_POLICIES = ['balanced', 'max-compat', 'max-bundle'] as const;
@@ -177,6 +178,24 @@ export const RTCManager = {
       }
     }
     return changed;
+  },
+
+  /**
+   * One uplink estimate per peer connection, for adaptive quality. Entries are
+   * null where a link has not produced an estimate yet (or the connection is
+   * closing) — the caller reduces these to the binding constraint.
+   */
+  async sampleOutgoingBitrate(): Promise<Array<number | null>> {
+    return Promise.all(
+      [...peerConnections.values()].map(async (connection) => {
+        try {
+          const report = await connection.getStats();
+          return extractAvailableOutgoingBitrate(report);
+        } catch {
+          return null;
+        }
+      }),
+    );
   },
 
   setLocalStream(stream: MediaStream | null) {

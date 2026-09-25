@@ -43,6 +43,7 @@ import {
 import { RTCManager } from "@/lib/rtc-manager";
 import { AudioActivityMonitor } from "@/lib/audio-activity";
 import { startIceRefresh } from "@/lib/ice-refresh";
+import { AdaptiveQualityController } from "@/lib/adaptive-quality";
 import { MESH_WARN_THRESHOLD } from "@/lib/mesh-limits";
 import { MediaManager } from "@/lib/media-manager";
 import { RoomVideoGrid } from "@/components/room/RoomVideoGrid";
@@ -388,6 +389,20 @@ export function RoomPage() {
   useEffect(() => {
     const handle = startIceRefresh(() => RTCManager.refreshIceConfiguration());
     return () => handle.stop();
+  }, []);
+
+  // Mesh calls send the same camera stream to every peer, so uplink grows with
+  // the room. Step the capture resolution down when the link cannot carry it,
+  // and back up when it can.
+  useEffect(() => {
+    const controller = new AdaptiveQualityController({
+      getSamples: () => RTCManager.sampleOutgoingBitrate(),
+      applyLevel: (level) => MediaManager.applyVideoQuality(level),
+      getCap: () => MediaManager.getVideoQualityCap(),
+      isScreenSharing: () => store.get(localMediaAtom).screen,
+    });
+    controller.start();
+    return () => controller.stop();
   }, []);
 
   // Mesh topology warning. Every participant sends N-1 encoded streams, so CPU
