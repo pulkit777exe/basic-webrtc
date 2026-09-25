@@ -35,7 +35,6 @@ export interface WebSocketHandlerMethods {
   startRoomRecording(roomId: string, userId: string): Promise<string | null>;
   stopRoomRecording(roomId: string): Promise<boolean>;
   persistChatToRedis(roomId: string, entry: ChatBufferEntry): Promise<void>;
-  drainChatRedisBuffer(roomId: string): Promise<ChatBufferEntry[]>;
 }
 
 export interface HandlerContext {

@@ -553,7 +553,6 @@ export class WebSocketHandler {
         startRoomRecording: (roomId, userId) => this.startRoomRecording(roomId, userId),
         stopRoomRecording: (roomId) => this.stopRoomRecording(roomId),
         persistChatToRedis: (roomId, entry) => this.persistChatToRedis(roomId, entry),
-        drainChatRedisBuffer: (roomId) => this.drainChatRedisBuffer(roomId),
       },
     };
   }
@@ -567,15 +566,19 @@ export class WebSocketHandler {
       roomIds.add(roomId);
     }
 
-    // Drain Redis chat buffers for all known rooms
-    const redisBatches = await Promise.all(
-      Array.from(roomIds).map((roomId) => this.drainChatRedisBuffer(roomId)),
+    // Read (do not yet delete) Redis chat buffers for all known rooms
+    const redisEntries = new Map<string, ChatBufferEntry[]>();
+    await Promise.all(
+      Array.from(roomIds).map(async (roomId) => {
+        const entries = await this.readChatRedisBuffer(roomId);
+        if (entries.length > 0) redisEntries.set(roomId, entries);
+      }),
     );
 
     // Merge and deduplicate by entry ID
     const seen = new Set<string>();
     const allEntries: ChatBufferEntry[] = [];
-    for (const entry of [...inMemoryBatch, ...redisBatches.flat()]) {
+    for (const entry of [...inMemoryBatch, ...[...redisEntries.values()].flat()]) {
       if (!seen.has(entry.id)) {
         seen.add(entry.id);
         allEntries.push(entry);
@@ -594,7 +597,23 @@ export class WebSocketHandler {
             content: e.content,
             type: 'text' as const,
           })),
-        );
+        )
+        // Idempotent by primary key: a batch that was persisted but not yet
+        // released from Redis is re-read after a crash, and a batch that hits an
+        // already-stored id must not fail forever and re-queue itself in a loop.
+        .onConflictDoNothing();
+
+      // Persisted (or already present): release exactly the entries we read.
+      // LTRIM by count rather than DEL so a message pushed while the insert was
+      // in flight stays in the list for the next flush.
+      await Promise.all(
+        [...redisEntries].map(([roomId, entries]) =>
+          this.dropChatRedisEntries(roomId, entries.length).catch((e) =>
+            logger.error('Failed to release chat Redis buffer', { roomId, err: String(e) }),
+          ),
+        ),
+      );
+
       for (const e of allEntries) {
         this.publish(e.roomId, {
           type: 'chat',
@@ -628,24 +647,29 @@ export class WebSocketHandler {
   }
 
   /**
-   * Read all entries from the Redis chat buffer for a room, then delete the key.
-   * Uses LRANGE + DEL instead of a Lua EVAL script: Upstash's REST interface
-   * has limited/fragile Lua support on the free tier, and the tiny
-   * double-flush race this allows is harmless here — `flushChatBuffer`
-   * deduplicates by entry id before inserting into Postgres, and this app runs
-   * a single instance on Render free so concurrent flushes don't happen.
+   * Read a room's buffered chat entries without removing them.
+   *
+   * The list is only trimmed *after* the Postgres insert succeeds (see
+   * `flushChatBuffer`), so a crash mid-insert leaves the entries in Redis for
+   * startup recovery instead of losing them. Uses LRANGE/LTRIM rather than a
+   * Lua EVAL: Upstash's REST interface has limited Lua support on the free tier.
    */
-  private async drainChatRedisBuffer(roomId: string): Promise<ChatBufferEntry[]> {
+  private async readChatRedisBuffer(roomId: string): Promise<ChatBufferEntry[]> {
     const key = `${CHAT_REDIS_KEY_PREFIX}${roomId}`;
     try {
       const items = await redis.lrange(key, 0, -1);
       if (!items || items.length === 0) return [];
-      await redis.del(key);
       return items.map((item) => JSON.parse(String(item)) as ChatBufferEntry);
     } catch (e) {
-      logger.error('Failed to drain chat Redis buffer', { roomId, err: String(e) });
+      logger.error('Failed to read chat Redis buffer', { roomId, err: String(e) });
       return [];
     }
+  }
+
+  /** Drop the first `count` entries of a room's buffer, keeping anything newer. */
+  private async dropChatRedisEntries(roomId: string, count: number): Promise<void> {
+    if (count <= 0) return;
+    await redis.ltrim(`${CHAT_REDIS_KEY_PREFIX}${roomId}`, count, -1);
   }
 
   /** On startup, drain leftover chat buffer entries from Redis and flush to Postgres. */
@@ -658,7 +682,7 @@ export class WebSocketHandler {
       const keys = result[1] as string[];
       for (const key of keys) {
         const roomId = key.replace(CHAT_REDIS_KEY_PREFIX, '');
-        const entries = await this.drainChatRedisBuffer(roomId);
+        const entries = await this.readChatRedisBuffer(roomId);
         if (entries.length === 0) continue;
         try {
           await db
@@ -671,14 +695,15 @@ export class WebSocketHandler {
                 content: e.content,
                 type: 'text' as const,
               })),
-            );
+            )
+            // Entries recovered twice (crash after insert, before trim) are
+            // already stored; skipping them keeps recovery idempotent.
+            .onConflictDoNothing();
+          await this.dropChatRedisEntries(roomId, entries.length);
           logger.info('Recovered chat buffer entries', { roomId, count: entries.length });
         } catch (e) {
           logger.error('Failed to recover chat buffer', { roomId, err: String(e) });
-          // Re-queue to Redis for next recovery attempt
-          for (const entry of entries) {
-            await redis.rpush(`${CHAT_REDIS_KEY_PREFIX}${roomId}`, JSON.stringify(entry));
-          }
+          // Left in Redis: recovery (or the next flush) retries them.
         }
       }
     } while (cursor !== 0);
