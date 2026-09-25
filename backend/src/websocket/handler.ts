@@ -33,6 +33,8 @@ import { parseRoomSettings } from '../lib/room-settings';
 import { publishSignal } from '../lib/redis-streams';
 import { takeToken, type TokenBucket } from '../lib/rate-limit';
 import { retry } from '../lib/retry';
+import { PublishBuffer } from '../lib/publish-buffer';
+import { createRoomFanoutBuffer } from '../lib/room-fanout';
 import { generateRoomToken, verifyRoomToken } from '../utils/jwt';
 import { nanoid } from 'nanoid';
 import { WS_MAX_MESSAGE_BYTES } from '../config/scaling';
@@ -83,13 +85,17 @@ export class WebSocketHandler {
   private signalSubscriber: ReturnType<Redis['psubscribe']> | null = null;
   private endedSubscriber: ReturnType<Redis['subscribe']> | null = null;
   private chatBuffer: ChatBufferEntry[] = [];
+  private readonly publishBuffer: PublishBuffer;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private chatFlushTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private wss: WebSocketServer) {
+  constructor(private wss: WebSocketServer, publishBuffer?: PublishBuffer) {
+    this.publishBuffer = publishBuffer ?? createRoomFanoutBuffer();
     this.initialize();
   }
 
   private initialize(): void {
-    setInterval(() => {
+    this.heartbeatTimer = setInterval(() => {
       this.wss.clients.forEach((ws: WebSocket) => {
         const ext = ws as ExtendedWebSocket;
         if (ext.isAlive === false) {
@@ -105,10 +111,12 @@ export class WebSocketHandler {
       });
     }, HEARTBEAT_INTERVAL_MS);
 
-    setInterval(() => {
+    this.chatFlushTimer = setInterval(() => {
       // fire-and-forget: an unhandled rejection here would otherwise be silent
       this.flushChatBuffer().catch((e) => logger.error('Chat flush failed', { err: String(e) }));
     }, CHAT_FLUSH_INTERVAL_MS);
+
+    this.publishBuffer.start();
 
     const redisSub = getRedisSub();
     if (!redisSub) {
@@ -381,11 +389,11 @@ export class WebSocketHandler {
     // 1. Immediately broadcast to all WebSockets connected to this exact node
     this.forwardFromRedis(channel, fullPayload as Record<string, unknown>);
 
-    // 2. Publish to Redis for any OTHER nodes
+    // 2. Publish to Redis for any OTHER nodes. Buffered: local delivery above is
+    //    unaffected, and cross-node fan-out is batched, bounded, and breakered
+    //    so a busy room cannot turn into a burst of REST calls.
     const redisPayload = { ...fullPayload, __senderInstanceId: serverInstanceId };
-    redis
-      .publish(channel, JSON.stringify(redisPayload))
-      .catch((e) => logger.error('[WS] Publish', { err: e }));
+    this.publishBuffer.publish(channel, JSON.stringify(redisPayload));
   }
 
   private forwardFromRedis(
@@ -737,6 +745,23 @@ export class WebSocketHandler {
         }).catch((e) => logger.error('setHandRaised failed', { roomId, userId, err: String(e) }));
       });
     this.publish(roomId, { type: 'leave', userId, roomId });
+  }
+
+  /**
+   * Stop background work on shutdown. Without this the heartbeat, chat-flush,
+   * and publish intervals kept running (and kept the process alive) after the
+   * server stopped accepting connections.
+   */
+  stop(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    if (this.chatFlushTimer) {
+      clearInterval(this.chatFlushTimer);
+      this.chatFlushTimer = null;
+    }
+    this.publishBuffer.stop();
   }
 
   private async handleWaitingMessage(ws: ExtendedWebSocket, data: Buffer): Promise<void> {

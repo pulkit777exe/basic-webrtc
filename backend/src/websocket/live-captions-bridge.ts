@@ -1,9 +1,10 @@
 import type { WebSocket } from 'ws';
 import { WebSocketServer } from 'ws';
 import { DeepgramClient } from '@deepgram/sdk';
-import { redis } from '../config/redis';
 import { logger } from '../lib/logger';
 import { getPeerRole, roomSignalChannel } from '../lib/redis-rooms';
+import type { PublishBuffer } from '../lib/publish-buffer';
+import { createRoomFanoutBuffer } from '../lib/room-fanout';
 import { validateRoomId } from '../utils/validation';
 
 export interface LiveCaptionAuth {
@@ -13,9 +14,15 @@ export interface LiveCaptionAuth {
 
 type LiveCaptionWs = WebSocket & { liveCaptionAuth?: LiveCaptionAuth };
 
-function publishCaption(roomId: string, userId: string, text: string): void {
-  void redis
-    .publish(
+export function attachLiveCaptionsBridge(
+  wss: WebSocketServer,
+  publishBuffer: PublishBuffer = createRoomFanoutBuffer(),
+): void {
+  const publishCaption = (roomId: string, userId: string, text: string): void => {
+    // Buffered like signaling fan-out: caption phrases are low volume, but they
+    // were the last unprotected publish path, and a Redis outage should not
+    // accumulate in-flight REST calls here either.
+    publishBuffer.publish(
       roomSignalChannel(roomId),
       JSON.stringify({
         type: 'caption',
@@ -24,15 +31,9 @@ function publishCaption(roomId: string, userId: string, text: string): void {
         from: userId,
         roomId,
       }),
-    )
-    .catch((e) => logger.error('Live caption publish failed', { err: String(e) }));
-}
+    );
+  };
 
-/**
- * Browser sends binary linear16 PCM (16 kHz mono). Bridges to Deepgram Listen v1
- * (streaming / nova-3) and broadcasts phrase finals to the room via Redis.
- */
-export function attachLiveCaptionsBridge(wss: WebSocketServer): void {
   wss.on('connection', (ws: WebSocket) => {
     const ext = ws as LiveCaptionWs;
     const auth = ext.liveCaptionAuth;

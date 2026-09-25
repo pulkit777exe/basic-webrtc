@@ -28,6 +28,7 @@ import { requireVerifiedEmail } from './middleware/verified-email';
 import { globalLimiter, apiLimiter, authLimiter } from './lib/rate-limiters';
 import { logger } from './lib/logger';
 import { configureTrustProxy } from './config/scaling';
+import { createRoomFanoutBuffer } from './lib/room-fanout';
 import { asc, gt } from 'drizzle-orm';
 import { closeDatabase, db } from './db';
 import { startCleanupJob } from './lib/cleanup-job';
@@ -137,7 +138,9 @@ const server = createServer(app);
 
 const wss = new WebSocketServer({ noServer: true });
 const wssLive = new WebSocketServer({ noServer: true });
-attachLiveCaptionsBridge(wssLive);
+// One buffer for every room publish, shared by signaling and live captions.
+const roomFanout = createRoomFanoutBuffer();
+attachLiveCaptionsBridge(wssLive, roomFanout);
 
 server.on('upgrade', (request, socket, head) => {
   // CSWSH hardening: browsers must come from an allowlisted origin. Tokens are
@@ -199,13 +202,16 @@ server.on('upgrade', (request, socket, head) => {
   });
 });
 
-new WebSocketHandler(wss);
+const wsHandler = new WebSocketHandler(wss, roomFanout);
 
 let shuttingDown = false;
 function gracefulShutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   logger.info('Shutdown signal received', { signal });
+
+  wsHandler.stop();
+  roomFanout.stop();
 
   wss.clients.forEach((ws) => {
     ws.close(1001, 'Server shutting down');
