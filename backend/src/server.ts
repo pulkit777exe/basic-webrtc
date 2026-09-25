@@ -11,7 +11,7 @@ import cookieParser from 'cookie-parser';
 import { WebSocketHandler } from './websocket/handler';
 import { attachLiveCaptionsBridge, type LiveCaptionAuth } from './websocket/live-captions-bridge';
 import { verifyRoomToken } from './utils/jwt';
-import { isAllowedOrigin } from './utils/origin';
+import { isAllowedOrigin, parseAllowedOrigins } from './utils/origin';
 import authRoutes from './routes/auth/index.js';
 import oauthRoutes from './routes/oauth';
 import accountRoutes from './routes/account';
@@ -28,6 +28,7 @@ import { requireVerifiedEmail } from './middleware/verified-email';
 import { globalLimiter, apiLimiter, authLimiter } from './lib/rate-limiters';
 import { logger } from './lib/logger';
 import { configureTrustProxy } from './config/scaling';
+import { asc, gt } from 'drizzle-orm';
 import { closeDatabase, db } from './db';
 import { startCleanupJob } from './lib/cleanup-job';
 import { startExportWorker } from './jobs/export-worker';
@@ -40,10 +41,23 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 4000;
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5173', 'http://localhost:3000'];
+const DEV_ORIGINS = ['http://localhost:5173', 'http://localhost:3000'];
+const { origins: configuredOrigins, problems: originProblems } = parseAllowedOrigins(
+  process.env.ALLOWED_ORIGINS,
+);
+const ALLOWED_ORIGINS = configuredOrigins.length > 0 ? configuredOrigins : DEV_ORIGINS;
 
-if (process.env.NODE_ENV === 'production' && !process.env.ALLOWED_ORIGINS) {
-  logger.error('ALLOWED_ORIGINS must be set in production');
+if (originProblems.length > 0) {
+  logger.error('ALLOWED_ORIGINS contains invalid entries', { problems: originProblems.join('; ') });
+}
+
+// Fail closed in production: a missing, blank, or unusable allowlist means every
+// browser request and WebSocket upgrade would be rejected, which is much harder
+// to diagnose from a 403 in production than at boot.
+if (process.env.NODE_ENV === 'production' && (originProblems.length > 0 || configuredOrigins.length === 0)) {
+  logger.error('ALLOWED_ORIGINS must list at least one valid origin in production', {
+    problems: originProblems.join('; ') || 'no valid origins parsed',
+  });
   process.exit(1);
 }
 
@@ -250,16 +264,27 @@ server.listen(PORT, () => {
     try {
       let count = 0;
       const BATCH_SIZE = 500;
-      let offset = 0;
+      // Keyset pagination on the primary key: OFFSET both rescans skipped rows
+      // and silently skips/duplicates users created or deleted while the seed
+      // runs, and degrades quadratically on a large table.
+      let cursor: string | undefined;
       while (true) {
-        const batch = await db.select({ email: users.email }).from(users).limit(BATCH_SIZE).offset(offset);
+        const batch = await db
+          .select({ id: users.id, email: users.email })
+          .from(users)
+          .where(cursor ? gt(users.id, cursor) : undefined)
+          .orderBy(asc(users.id))
+          .limit(BATCH_SIZE);
         if (batch.length === 0) break;
         for (const row of batch) {
           const username = row.email.split('@')[0];
           if (username) addUsername(username);
         }
         count += batch.length;
-        offset += BATCH_SIZE;
+        cursor = batch[batch.length - 1]!.id;
+        if (count % 5_000 === 0) {
+          logger.info('[BloomFilter] seeding progress', { count });
+        }
         if (batch.length < BATCH_SIZE) break;
       }
       markSeeded();
