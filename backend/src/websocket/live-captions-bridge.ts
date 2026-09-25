@@ -3,6 +3,7 @@ import { WebSocketServer } from 'ws';
 import { DeepgramClient } from '@deepgram/sdk';
 import { logger } from '../lib/logger';
 import { getPeerRole, roomSignalChannel } from '../lib/redis-rooms';
+import { verifyRoomToken } from '../utils/jwt';
 import type { PublishBuffer } from '../lib/publish-buffer';
 import { createRoomFanoutBuffer } from '../lib/room-fanout';
 import { validateRoomId } from '../utils/validation';
@@ -12,7 +13,10 @@ export interface LiveCaptionAuth {
   roomId: string;
 }
 
-type LiveCaptionWs = WebSocket & { liveCaptionAuth?: LiveCaptionAuth };
+type LiveCaptionWs = WebSocket & {
+  liveCaptionAuth?: LiveCaptionAuth;
+  liveCaptionRoomToken?: string;
+};
 
 export function attachLiveCaptionsBridge(
   wss: WebSocketServer,
@@ -46,6 +50,15 @@ export function attachLiveCaptionsBridge(
 
     if (!validateRoomId(roomId)) {
       ws.close(4001, 'invalid room');
+      return;
+    }
+
+    // This socket was authorized by the room token at upgrade time, but it can
+    // outlive that token: the signaling socket re-verifies per message, this one
+    // did not, so an expired or kicked user could keep streaming audio to the
+    // provider. Re-checking is a local HMAC verify — no Redis round trip.
+    if (!ext.liveCaptionRoomToken || !verifyRoomToken(ext.liveCaptionRoomToken)) {
+      ws.close(4004, 'room token expired');
       return;
     }
 

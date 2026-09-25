@@ -169,10 +169,17 @@ server.on('upgrade', (request, socket, head) => {
       return;
     }
     wssLive.handleUpgrade(request, socket, head, (ws) => {
-      (ws as WebSocket & { liveCaptionAuth?: LiveCaptionAuth }).liveCaptionAuth = {
+      const captionWs = ws as WebSocket & {
+        liveCaptionAuth?: LiveCaptionAuth;
+        liveCaptionRoomToken?: string;
+      };
+      captionWs.liveCaptionAuth = {
         userId: payload.userId,
         roomId: payload.roomId,
       };
+      // Kept so the bridge can re-check expiry; the upgrade-time payload alone
+      // would leave the socket authorized forever.
+      captionWs.liveCaptionRoomToken = token ?? undefined;
       wssLive.emit('connection', ws);
     });
     return;

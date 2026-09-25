@@ -437,8 +437,11 @@ router.post(
  *
  * Room tokens expire (JWT_ROOM_EXPIRY, 2h by default) and the server re-verifies
  * them on every WebSocket message, so a long call would otherwise be cut off at
- * the deadline. Membership is required, so this cannot be used to obtain entry
- * to a room the caller is not already part of.
+ * the deadline.
+ *
+ * The guard is *live* admission, not `canAccessRoom`: that helper deliberately
+ * admits past participants so they can read the recap, which is not permission
+ * to hold a live-call token for a room they were since kicked from or have left.
  */
 router.post(
   '/:id/refresh-token',
@@ -451,7 +454,20 @@ router.post(
         res.status(400).json({ error: 'Invalid room ID', code: 'INVALID_ROOM_ID' });
         return;
       }
-      if (!(await canAccessRoom(roomId, authUser.id, res))) return;
+      const meta = await getRoomMeta(roomId);
+      if (!meta) {
+        res.status(404).json({ error: 'Room not found', code: 'ROOM_NOT_FOUND' });
+        return;
+      }
+      if (await isKicked(roomId, authUser.id)) {
+        res.status(403).json({ error: 'Removed from room', code: 'KICKED' });
+        return;
+      }
+      const role = await getPeerRole(roomId, authUser.id);
+      if (!role && meta.hostId !== authUser.id) {
+        res.status(403).json({ error: 'Not in this call', code: 'NOT_IN_CALL' });
+        return;
+      }
       res.json({ roomToken: generateRoomToken(authUser.id, roomId) });
     } catch (error) {
       logger.error('[Refresh Room Token Error]', { err: error });

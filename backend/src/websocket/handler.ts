@@ -57,6 +57,9 @@ const EXEMPT_FROM_ROOM_BURST_LIMIT: ReadonlySet<string> = new Set([
   'media-state',
   'audio-activity',
   'active_speaker',
+  // Renewal must not be starved by a busy room: if it is dropped, the client
+  // keeps the old token and the call dies at its expiry.
+  'token_refresh',
 ]);
 /**
  * Traffic that bypasses the publish buffer. These messages are either
@@ -84,6 +87,8 @@ interface ExtendedWebSocket extends WebSocket {
   isWaiting?: boolean;
   user?: PublicUser;
   roomToken?: string;
+  /** Disconnect cleanup is one-shot: close, error, and the sweep all call it. */
+  disconnectHandled?: boolean;
   /** Per-connection flood-control buckets; dies with the socket. */
   rateBuckets?: Map<string, TokenBucket>;
 }
@@ -102,6 +107,7 @@ export class WebSocketHandler {
   private signalSubscriber: ReturnType<Redis['psubscribe']> | null = null;
   private endedSubscriber: ReturnType<Redis['subscribe']> | null = null;
   private chatBuffer: ChatBufferEntry[] = [];
+  private chatFlushInFlight: Promise<void> | null = null;
   private readonly publishBuffer: PublishBuffer;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private chatFlushTimer: ReturnType<typeof setInterval> | null = null;
@@ -169,12 +175,32 @@ export class WebSocketHandler {
         return;
       }
 
-      // Check if user is kicked
-      isKicked(roomId, userId).then(async (kicked) => {
-        if (kicked) {
-          ws.close(4003);
-          return;
+      // The client can disconnect while setup awaits Redis/DB, and a Redis
+      // failure before the try/catch below rejects this chain. Either way the
+      // socket must not be left half-initialised in the room map.
+      let setupFailed = false;
+      const failSetup = (reason: string) => {
+        if (setupFailed) return;
+        setupFailed = true;
+        logger.error('[WS] Connection setup aborted', { roomId, userId, reason });
+        try {
+          ws.close(1011);
+        } catch {
+          // Socket already gone.
         }
+      };
+      ws.once('close', () => {
+        setupFailed = true;
+      });
+
+      // Check if user is kicked
+      isKicked(roomId, userId)
+        .then(async (kicked) => {
+          if (setupFailed) return;
+          if (kicked) {
+            ws.close(4003);
+            return;
+          }
 
         // --- Waiting-room branch: waiting participants connect before being admitted ---
         if (ext.isWaiting) {
@@ -314,6 +340,13 @@ export class WebSocketHandler {
           }
 
           logger.info('WS join', { roomId, userId, name: publicUser.name });
+          // The client may have gone away while we awaited Redis/DB above; adding
+          // it now would leave a ghost entry no later event can clean up.
+          if (setupFailed) {
+            logger.info('WS setup abandoned, client already closed', { roomId, userId });
+            this.removeFromMap(roomId, userId);
+            return;
+          }
           const joinSignal: Signal = { type: 'join', roomId, user: publicUser };
           this.publish(roomId, { ...joinSignal, from: userId });
 
@@ -324,11 +357,12 @@ export class WebSocketHandler {
             this.handleDisconnect(ext);
           });
         } catch (err) {
-          logger.error('[WS] Connection setup error', { err: err });
-          this.sendError(ext, 'Server error');
-          ws.close();
+          failSetup(String(err));
         }
-      });
+        })
+        // A Redis failure before the try/catch above rejects this chain; without
+        // a terminal handler the socket sat open and uninitialised forever.
+        .catch((err) => failSetup(String(err)));
     });
   }
 
@@ -605,6 +639,18 @@ export class WebSocketHandler {
   }
 
   private async flushChatBuffer(): Promise<void> {
+    // Single-flight: the timer, the size threshold in handleChat, and startup
+    // recovery can all reach this. Two concurrent flushes would read the same
+    // Redis entries, publish them twice, and then each trim by its own stale
+    // count — which can delete an entry appended in between.
+    if (this.chatFlushInFlight) return this.chatFlushInFlight;
+    this.chatFlushInFlight = this.runChatFlush().finally(() => {
+      this.chatFlushInFlight = null;
+    });
+    return this.chatFlushInFlight;
+  }
+
+  private async runChatFlush(): Promise<void> {
     const inMemoryBatch = this.chatBuffer.splice(0);
 
     // Collect room IDs from both in-memory buffer and active rooms with Redis entries
@@ -760,6 +806,21 @@ export class WebSocketHandler {
     const userId = ws.userId;
     const roomId = ws.roomId;
     if (!userId || !roomId) return;
+    // Runs from `close`, from `error`, *and* from the heartbeat sweep before it
+    // calls terminate() — so it fires more than once per socket in normal
+    // operation, and the retry chain widens the window.
+    if (ws.disconnectHandled) return;
+    ws.disconnectHandled = true;
+
+    // A reconnect may already have replaced this socket. Cleaning up then would
+    // delete the *new* connection's room membership and announce a `leave` for
+    // a user who is still in the call.
+    const current = this.rooms.get(roomId)?.get(userId);
+    if (current && current !== ws) {
+      logger.debug('WS disconnect superseded by a newer socket', { roomId, userId });
+      return;
+    }
+
     logger.info('WS leave', { roomId, userId });
     this.removeFromMap(roomId, userId);
     // Retried: if Redis is briefly unavailable the peer would otherwise linger
@@ -828,6 +889,10 @@ export class WebSocketHandler {
       }
 
       if (raw.type === 'waiting_room_status_check') {
+        // Waiting sockets never reach handleMessage, so they are unmetered
+        // without this — and each check costs a Redis ZRANGE. The client polls
+        // every few seconds, so 5/s is ~100x the legitimate rate.
+        if (!this.takeToken(ws, 'waiting', 5)) return;
         const inQueue = await isInWaitingRoom(roomId, userId);
         if (inQueue) {
           const queue = await getWaitingRoom(roomId);
