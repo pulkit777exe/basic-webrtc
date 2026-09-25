@@ -64,7 +64,10 @@ export async function negotiateBestVideoTrack(
     }
   }
 
-  if (failures.length > 0) {
+  if (failures.length > 0 && import.meta.env.DEV) {
+    // Which rungs of the ladder the browser rejected is a local diagnostic;
+    // there is no logger in the frontend bundle, and shipping it to production
+    // just prints noise in the user's console.
     console.debug('[MediaManager] Video ladder failures:', failures);
   }
 
@@ -105,7 +108,9 @@ export async function negotiateBestAudioTrack(
     return stream.getAudioTracks()[0] ?? null;
   } catch (err) {
     // DSP constraints rejected — collect the error before the plain fallback attempt
-    console.debug('[MediaManager] Audio DSP constraints rejected:', err instanceof Error ? err.message : String(err), '— falling back to plain audio');
+    if (import.meta.env.DEV) {
+      console.debug('[MediaManager] Audio DSP constraints rejected:', err instanceof Error ? err.message : String(err), '— falling back to plain audio');
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: deviceId ? { deviceId: { exact: deviceId } } : true,

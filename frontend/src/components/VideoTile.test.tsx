@@ -168,3 +168,64 @@ describe('VideoTile track visibility', () => {
     expect(isVideoHidden()).toBe(true);
   });
 });
+
+describe('VideoTile pop-out window', () => {
+  it('builds the popup with DOM APIs (never document.write) and attaches the stream', async () => {
+    const stream = new FakeStream();
+    stream.addTrack(new FakeTrack('t-video', 'video'));
+
+    // about:blank popup: a real document to build into, plus a write() spy that
+    // must stay untouched.
+    const popupDoc = document.implementation.createHTMLDocument('');
+    const write = vi.spyOn(popupDoc, 'write');
+    const popup = { document: popupDoc, opener: window } as unknown as Window;
+    const open = vi.spyOn(window, 'open').mockReturnValue(popup);
+
+    await renderTile(
+      baseProps({ stream: stream.asStream(), isScreenShare: true, videoMuted: false })
+    );
+
+    const button = [...container.querySelectorAll('button')].find(
+      (b) => b.getAttribute('aria-label') === 'Pop out shared screen'
+    );
+    expect(button).toBeDefined();
+
+    await act(async () => {
+      button!.click();
+    });
+
+    expect(open).toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+
+    const popupVideo = popupDoc.querySelector('video') as HTMLVideoElement | null;
+    expect(popupVideo).not.toBeNull();
+    expect(popupVideo!.srcObject).toBe(stream.asStream());
+    expect(popupVideo!.autoplay).toBe(true);
+    expect(popupVideo!.controls).toBe(true);
+
+    // Still sandboxed from this page and from injected markup.
+    expect(popup.opener).toBeNull();
+    const csp = popupDoc.querySelector('meta[http-equiv="Content-Security-Policy"]');
+    expect(csp?.getAttribute('content')).toContain('media-src blob: mediastream:');
+  });
+
+  it('does nothing when the popup is blocked', async () => {
+    const stream = new FakeStream();
+    stream.addTrack(new FakeTrack('t-video', 'video'));
+    vi.spyOn(window, 'open').mockReturnValue(null);
+
+    await renderTile(
+      baseProps({ stream: stream.asStream(), isScreenShare: true, videoMuted: false })
+    );
+    const button = [...container.querySelectorAll('button')].find(
+      (b) => b.getAttribute('aria-label') === 'Pop out shared screen'
+    );
+
+    await act(async () => {
+      button!.click();
+    });
+
+    // No throw, no state change — the tile is untouched.
+    expect(isVideoHidden()).toBe(false);
+  });
+});

@@ -163,14 +163,26 @@ function VideoTileInner({
     if (!popup) return;
     // The popup gets no handle back to this page (no reverse tabnabbing).
     popup.opener = null;
-    popup.document.write(
-      '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src \'self\' \'unsafe-inline\'; media-src blob: mediastream:;"><title>Shared screen</title><style>html,body{margin:0;background:#000;height:100%}video{width:100%;height:100%;object-fit:contain;background:#000}</style></head><body><video id="screen" autoplay playsinline controls></video></body></html>'
-    );
-    popup.document.close();
-    const video = popup.document.getElementById('screen') as HTMLVideoElement | null;
-    if (video) {
-      video.srcObject = screenStream;
-    }
+
+    // Built with DOM calls rather than document.write: the window renders a
+    // shared screen (untrusted, participant-supplied content), and string
+    // templating into a fresh document is a sharp edge to keep out of the app.
+    const doc = popup.document;
+    const policy = doc.createElement('meta');
+    policy.httpEquiv = 'Content-Security-Policy';
+    policy.content = "default-src 'self' 'unsafe-inline'; media-src blob: mediastream:;";
+    const style = doc.createElement('style');
+    style.textContent =
+      'html,body{margin:0;background:#000;height:100%}video{width:100%;height:100%;object-fit:contain;background:#000}';
+    const video = doc.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+    video.controls = true;
+    video.srcObject = screenStream;
+
+    doc.head.append(policy, style);
+    doc.body.append(video);
+    doc.title = 'Shared screen';
   };
 
   return (
