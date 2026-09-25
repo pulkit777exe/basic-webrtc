@@ -42,6 +42,7 @@ import {
 } from "@/lib/live-captions";
 import { RTCManager } from "@/lib/rtc-manager";
 import { AudioActivityMonitor } from "@/lib/audio-activity";
+import { startIceRefresh } from "@/lib/ice-refresh";
 import { MediaManager } from "@/lib/media-manager";
 import { RoomVideoGrid } from "@/components/room/RoomVideoGrid";
 import { RoomControlBar } from "@/components/room/RoomControlBar";
@@ -380,6 +381,13 @@ export function RoomPage() {
   useEffect(() => {
     audioActivityRef.current?.setEnabled(localMedia.audio);
   }, [localMedia.audio]);
+
+  // TURN credentials are short-lived (300s) and are invalidated outright by a
+  // network change, so renew them for as long as this call is open.
+  useEffect(() => {
+    const handle = startIceRefresh(() => RTCManager.refreshIceConfiguration());
+    return () => handle.stop();
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

@@ -65,7 +65,7 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
 
 ### ICE / TURN
 
-- **`routes/ice.ts`**: Returns `iceServers` (STUN/TURN from env). Frontend **`RTCManager.init()`** loads these before creating peer connections.
+- **`routes/ice.ts`**: Returns `iceServers` (STUN/TURN from env). Frontend **`RTCManager.init()`** loads these before creating peer connections. TURN credentials are short-lived (HMAC, `TURN_TTL_SEC` default 300s), so **`RTCManager.refreshIceConfiguration()`** re-fetches them, calls `setConfiguration` on each live connection, and restarts ICE; **`startIceRefresh()`** drives it on a 4-minute timer and on `navigator.connection` `change` / window `online` (a network switch invalidates relay credentials immediately).
 
 ## Mental model: one room session
 

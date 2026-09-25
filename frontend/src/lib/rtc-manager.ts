@@ -144,6 +144,41 @@ export const RTCManager = {
     }
   },
 
+  /**
+   * Re-fetch ICE/TURN credentials and apply them to live peer connections.
+   *
+   * TURN credentials are HMAC-signed with a short TTL (TURN_TTL_SEC, 5 min by
+   * default), so credentials obtained at join time stop being accepted partway
+   * through a call — and a network change (WiFi → cellular) invalidates them
+   * immediately. `setConfiguration` is the only way to change the servers of an
+   * existing connection, and it needs a fresh ICE restart to gather new
+   * candidates under the new credentials.
+   *
+   * Returns true when the configuration was replaced.
+   */
+  async refreshIceConfiguration(): Promise<boolean> {
+    let next: RTCConfiguration;
+    try {
+      next = buildIceConfiguration(await api.getIceServers());
+    } catch (error) {
+      console.warn('[RTCManager] ICE refresh failed, keeping current servers', error);
+      return false;
+    }
+
+    peerConfiguration = next;
+    let changed = false;
+    for (const [userId, connection] of peerConnections) {
+      try {
+        connection.setConfiguration(next);
+        changed = true;
+        void restartIceConnection(userId);
+      } catch (error) {
+        console.warn(`[RTCManager] setConfiguration failed for ${userId}`, error);
+      }
+    }
+    return changed;
+  },
+
   setLocalStream(stream: MediaStream | null) {
     localStream = stream;
     peerConnections.forEach((connection) => {
