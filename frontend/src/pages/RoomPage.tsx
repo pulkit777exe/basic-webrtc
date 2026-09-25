@@ -41,6 +41,7 @@ import {
   startWhisperChunkCaptions,
 } from "@/lib/live-captions";
 import { RTCManager } from "@/lib/rtc-manager";
+import { AudioActivityMonitor } from "@/lib/audio-activity";
 import { MediaManager } from "@/lib/media-manager";
 import { RoomVideoGrid } from "@/components/room/RoomVideoGrid";
 import { RoomControlBar } from "@/components/room/RoomControlBar";
@@ -349,71 +350,36 @@ export function RoomPage() {
     });
   }, [localMedia.audio, localMedia.screen, localMedia.video]);
 
-  const audioActivityRef = useRef<{
-    context: AudioContext;
-    analyser: AnalyserNode;
-    source: MediaStreamAudioSourceNode | null;
-    animationFrame: number;
-  } | null>(null);
+  /**
+   * Speaking detection. One AudioContext per call session; the monitor keeps
+   * its run state in sync with the *current* mic state. The previous version
+   * suspended/resumed from the effect cleanup, which closed over the previous
+   * render's `localMedia.audio` — so muting resumed the context and unmuting
+   * suspended it, silently killing speaking detection after the first toggle.
+   *
+   * The create effect is declared first so `audioActivityRef` is populated
+   * before the stream/enabled effects below run on mount.
+   */
+  const audioActivityRef = useRef<AudioActivityMonitor | null>(null);
 
   useEffect(() => {
-    if (!localMedia.stream) return;
-    const audioTrack = localMedia.stream.getAudioTracks()[0];
-    if (!audioTrack) return;
-
-    // Create AudioContext and AnalyserNode once per session
-    if (!audioActivityRef.current) {
-      const context = new AudioContext();
-      const analyser = context.createAnalyser();
-      analyser.fftSize = 256;
-      audioActivityRef.current = { context, analyser, source: null, animationFrame: 0 };
-    }
-
-    const { context, analyser } = audioActivityRef.current;
-
-    // Disconnect previous source if any
-    if (audioActivityRef.current.source) {
-      audioActivityRef.current.source.disconnect();
-    }
-
-    const activityStream = new MediaStream([audioTrack]);
-    const source = context.createMediaStreamSource(activityStream);
-    source.connect(analyser);
-    audioActivityRef.current.source = source;
-
-    const levels = new Uint8Array(analyser.frequencyBinCount);
-    let previous = 0;
-
-    const tick = () => {
-      if (!localMedia.audio) {
-        audioActivityRef.current!.animationFrame = requestAnimationFrame(tick);
-        return;
-      }
-      analyser.getByteFrequencyData(levels);
-      const total = levels.reduce((acc, value) => acc + value, 0);
-      const level = Math.min(1, total / levels.length / 120);
-      const speaking = level > 0.11;
-      const now = performance.now();
-      if (now - previous >= 250) {
-        previous = now;
-        WSManager.send({ type: "audio-activity", level, speaking });
-      }
-      audioActivityRef.current!.animationFrame = requestAnimationFrame(tick);
-    };
-
-    audioActivityRef.current.animationFrame = requestAnimationFrame(tick);
-
+    const monitor = new AudioActivityMonitor({
+      send: (message) => WSManager.send(message),
+    });
+    audioActivityRef.current = monitor;
     return () => {
-      cancelAnimationFrame(audioActivityRef.current!.animationFrame);
-      source.disconnect();
-      // Suspend when muted, resume when unmuted — don't close the context
-      if (!localMedia.audio) {
-        context.suspend().catch(() => {});
-      } else {
-        context.resume().catch(() => {});
-      }
+      monitor.dispose();
+      audioActivityRef.current = null;
     };
-  }, [localMedia.audio, localMedia.stream]);
+  }, []);
+
+  useEffect(() => {
+    audioActivityRef.current?.setStream(localMedia.stream ?? null);
+  }, [localMedia.stream]);
+
+  useEffect(() => {
+    audioActivityRef.current?.setEnabled(localMedia.audio);
+  }, [localMedia.audio]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

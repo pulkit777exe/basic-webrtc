@@ -2,6 +2,7 @@ import { api } from '@/lib/api';
 import { store } from '@/store';
 import { peerAtomFamily, peerIdsAtom } from '@/store/atoms';
 import { WSManager } from '@/lib/ws-manager';
+import { PendingIceQueue } from '@/lib/pending-ice';
 
 const FALLBACK_ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 const BUNDLE_POLICIES = ['balanced', 'max-compat', 'max-bundle'] as const;
@@ -13,8 +14,9 @@ const MAX_ICE_CANDIDATE_POOL_SIZE = 25;
 let peerConfiguration: RTCConfiguration = { iceServers: FALLBACK_ICE_SERVERS };
 const peerConnections = new Map<string, RTCPeerConnection>();
 /** ICE candidates received before setRemoteDescription completes (trickle race). */
-const pendingIceCandidates = new Map<string, RTCIceCandidateInit[]>();
-const pendingIceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const pendingIce = new PendingIceQueue({
+  onTimeout: (userId) => console.warn(`[RTCManager] ICE queue timeout for peer ${userId}`),
+});
 const iceRestartAttempts = new Map<string, number>();
 const seenTrackIds = new Map<string, Set<string>>();
 /** Screen share MediaStreams per remote peer. */
@@ -22,40 +24,16 @@ const screenStreams = new Map<string, MediaStream>();
 /** Local screen share senders per remote peer. */
 const screenSenders = new Map<string, RTCRtpSender>();
 const MAX_ICE_RESTARTS = 3;
-const MAX_PENDING_ICE = 50;
-const PENDING_ICE_TTL_MS = 30000;
 let localStream: MediaStream | null = null;
 
 function queueIceCandidate(userId: string, candidate: RTCIceCandidateInit) {
-  let q = pendingIceCandidates.get(userId);
-  if (!q) {
-    q = [];
-    pendingIceCandidates.set(userId, q);
-    // Set TTL timer
-    const timer = setTimeout(() => {
-      console.warn(`[RTCManager] ICE queue timeout for peer ${userId}`);
-      pendingIceCandidates.delete(userId);
-      pendingIceTimers.delete(userId);
-    }, PENDING_ICE_TTL_MS);
-    pendingIceTimers.set(userId, timer);
-  }
-  if (q.length >= MAX_PENDING_ICE) {
-    q.shift(); // Drop oldest on overflow
-  }
-  q.push(candidate);
+  pendingIce.push(userId, candidate);
 }
 
 async function flushPendingIceCandidates(userId: string) {
   const connection = peerConnections.get(userId);
   if (!connection?.remoteDescription) return;
-  const queued = pendingIceCandidates.get(userId);
-  if (!queued?.length) return;
-  pendingIceCandidates.delete(userId);
-  const timer = pendingIceTimers.get(userId);
-  if (timer) {
-    clearTimeout(timer);
-    pendingIceTimers.delete(userId);
-  }
+  const queued = pendingIce.take(userId);
   for (const c of queued) {
     await connection.addIceCandidate(new RTCIceCandidate(c)).catch((e) => {
       console.warn(`[RTCManager] addIceCandidate failed for ${userId}:`, e);
@@ -69,7 +47,9 @@ async function restartIceConnection(userId: string) {
   const attempts = iceRestartAttempts.get(userId) ?? 0;
   if (attempts >= MAX_ICE_RESTARTS) return;
   iceRestartAttempts.set(userId, attempts + 1);
-  pendingIceCandidates.delete(userId);
+  // Drop stale candidates *and* the queue's timer, so the old TTL cannot fire
+  // against a batch queued after this point.
+  pendingIce.clear(userId);
 
   try {
     connection.restartIce();
@@ -348,12 +328,7 @@ export const RTCManager = {
   },
 
   removePeer(userId: string) {
-    pendingIceCandidates.delete(userId);
-    const timer = pendingIceTimers.get(userId);
-    if (timer) {
-      clearTimeout(timer);
-      pendingIceTimers.delete(userId);
-    }
+    pendingIce.clear(userId);
     seenTrackIds.delete(userId);
     const ss = screenStreams.get(userId);
     if (ss) {
@@ -372,7 +347,11 @@ export const RTCManager = {
   },
 
   disconnectAll() {
-    for (const userId of [...peerConnections.keys()]) {
+    // Peers can have queued ICE candidates without a live connection (candidates
+    // that arrived before their offer), so sweep both sets — otherwise their
+    // queues and TTL timers outlive the call.
+    const userIds = new Set([...peerConnections.keys(), ...pendingIce.peers]);
+    for (const userId of userIds) {
       this.removePeer(userId);
     }
   },
