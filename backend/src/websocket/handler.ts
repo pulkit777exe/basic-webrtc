@@ -32,6 +32,7 @@ import { logger } from '../lib/logger';
 import { parseRoomSettings } from '../lib/room-settings';
 import { publishSignal } from '../lib/redis-streams';
 import { takeToken, type TokenBucket } from '../lib/rate-limit';
+import { retry } from '../lib/retry';
 import { generateRoomToken, verifyRoomToken } from '../utils/jwt';
 import { nanoid } from 'nanoid';
 import { WS_MAX_MESSAGE_BYTES } from '../config/scaling';
@@ -513,6 +514,13 @@ export class WebSocketHandler {
       if (signal.type === 'audio-activity') {
         if (!this.takeToken(ws, 'audio', 10)) return;
       }
+      // Keep-alives are exempt from the room burst limit but are not free: each
+      // one costs a kick check plus a room-meta read. Left unbounded, a client
+      // could turn pings into 2 Redis calls per message. 10/s is ~250x the real
+      // client heartbeat (1 per 25s), so only deliberate flooding is dropped.
+      if (signal.type === 'ping' || signal.type === 'pong') {
+        if (!this.takeToken(ws, 'ping', 10)) return;
+      }
 
       // ── Dispatch to registered handler ──
       const handler = handlerRegistry.get(signal.type);
@@ -715,12 +723,19 @@ export class WebSocketHandler {
     if (!userId || !roomId) return;
     logger.info('WS leave', { roomId, userId });
     this.removeFromMap(roomId, userId);
-    removePeerFromRoom(roomId, userId).catch((e) =>
-      logger.error('removePeerFromRoom failed', { roomId, userId, err: String(e) }),
-    );
-    setHandRaised(roomId, userId, false).catch((e) =>
-      logger.error('setHandRaised failed', { roomId, userId, err: String(e) }),
-    );
+    // Retried: if Redis is briefly unavailable the peer would otherwise linger
+    // in the room's participant set and could be refused re-entry as "full".
+    retry(() => removePeerFromRoom(roomId, userId), {
+      delayMs: 200,
+      onRetry: (e) => logger.warn('removePeerFromRoom retrying', { roomId, userId, err: String(e) }),
+    })
+      .catch((e) => logger.error('removePeerFromRoom failed', { roomId, userId, err: String(e) }))
+      .finally(() => {
+        retry(() => setHandRaised(roomId, userId, false), {
+          retries: 1,
+          onRetry: (e) => logger.warn('setHandRaised retrying', { roomId, userId, err: String(e) }),
+        }).catch((e) => logger.error('setHandRaised failed', { roomId, userId, err: String(e) }));
+      });
     this.publish(roomId, { type: 'leave', userId, roomId });
   }
 
