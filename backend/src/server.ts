@@ -16,6 +16,7 @@ import authRoutes from './routes/auth/index.js';
 import oauthRoutes from './routes/oauth';
 import accountRoutes from './routes/account';
 import roomRoutes from './routes/rooms';
+import roomCaptionRoutes from './routes/room-captions';
 import notesRoutes from './routes/notes';
 import iceRoutes from './routes/ice';
 import recordingsRoutes from './routes/recordings';
@@ -71,6 +72,9 @@ app.use('/api/auth', authLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/oauth', oauthRoutes);
 app.use('/api/account', accountRoutes);
+// Caption uploads authenticate with the room token, not a session token, so this
+// is mounted *before* the access-token-protected rooms router below.
+app.use('/api/rooms', apiLimiter, roomCaptionRoutes);
 app.use('/api/rooms', authenticateToken, requireVerifiedEmail, apiLimiter, roomRoutes);
 app.use('/api/rooms', authenticateToken, requireVerifiedEmail, apiLimiter, notesRoutes);
 app.use('/api/ice-servers', optionalAuthenticate, apiLimiter, iceRoutes);

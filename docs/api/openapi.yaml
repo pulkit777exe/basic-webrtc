@@ -1374,8 +1374,11 @@ paths:
       tags: [Rooms]
       summary: Transcribe a short audio clip for live captions
       description: >-
-        Authenticates with a room token (Bearer) rather than an account token.
+        Authenticates with a room token (Bearer) rather than an account token:
+        this route is mounted outside the account-authenticated rooms router.
         Requires OPENAI_API_KEY or DEEPGRAM_API_KEY; returns 503 when neither is set.
+      security:
+        - RoomTokenAuth: []
       parameters:
         - name: id
           in: path
@@ -1815,6 +1818,13 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    RoomTokenAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Room-scoped JWT (the same token used for the WebSocket upgrade), not an
+        account access token. Used by the in-call caption upload.
 
   schemas:
     AuthResponse:
