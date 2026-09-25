@@ -19,24 +19,45 @@ encodes a separate stream for each, so a client's uplink grows linearly with the
 room and total encoded streams grow quadratically. `maxParticipants` defaults to
 10, which is above where modest hardware starts dropping frames.
 
-**Done so far (cheap mitigations only):**
+**Done so far:**
 - Default room size is 10, not 50.
 - `MESH_WARN_THRESHOLD` (6) raises a one-per-call notice when a room grows past
   the point where mesh is likely to stutter — see `lib/mesh-limits.ts`.
 - TURN credentials now refresh mid-call, so relay stays available at size
   (previously they went stale after 5 minutes regardless of room size).
+- **Adaptive camera resolution** (`lib/bandwidth.ts`, `lib/adaptive-quality.ts`):
+  the capture resolution steps down when the measured uplink cannot carry the
+  current rung and back up when it can, with hysteresis and a cooldown so the
+  camera cannot flap. The binding constraint is the *worst* peer link, since one
+  uplink serves the whole mesh. A user's quality cap is treated as a ceiling on
+  quality, not a floor, and camera adaptation pauses during a screen share.
 
-**Still to do, in increasing order of effort:**
-1. **Adaptive resolution** — sample `RTCPeerConnection.getStats()` for outbound
-   bandwidth and drop the local capture resolution before frames are dropped.
-   The room already exposes `getStats()`; nothing consumes it yet.
-2. **Simulcast** — offer 180p/480p/720p on send so receivers can pick a layer.
-   Requires SDP munging or a transceiver-layer API and per-peer layer selection.
+**Deliberately not done — simulcast.** Negotiating simulcast changes the
+offer path for *every* call, and browsers only send the lowest layer until the
+application actively promotes encodings via `RTCRtpSender.setParameters`. So
+simulcast cannot be switched on without a correct layer-selection policy, and
+getting that policy wrong degrades every call rather than just large ones.
+
+That policy cannot be validated in this repository: there is no browser test
+rig (no Playwright/Cypress/Puppeteer, and the only environments are jsdom and
+node), and simulcast correctness lives in SDP negotiation plus real encoder
+behaviour across at least two peers and two browsers. Shipping it untested would
+be a worse outcome than the status quo, so the threshold, adaptive-resolution
+work above, and a `maxParticipants` cap carry the mesh story for now.
+
+**To do next, in increasing order of effort:**
+1. **Sender-side `maxBitrate`** alongside the capture ladder — capture
+   resolution bounds pixels, an encoder bitrate cap bounds the encoded stream.
+   Broadly supported and unit-testable with a fake `RTCRtpSender`.
+2. **A browser test rig** (Playwright with two browser contexts) — required
+   before simulcast, and before trusting any of the WebRTC lifecycle fixes
+   end-to-end.
 3. **SFU** (mediasoup or LiveKit) — the real fix. One uplink per participant,
    fan-out downstream. Backward-compatible plan: keep mesh for 1-to-1, move to
    the SFU above a threshold. Weeks of work, tracked separately.
 
-**Files:** `frontend/src/lib/rtc-manager.ts`, `frontend/src/lib/mesh-limits.ts`,
+**Files:** `frontend/src/lib/rtc-manager.ts`, `frontend/src/lib/bandwidth.ts`,
+`frontend/src/lib/adaptive-quality.ts`, `frontend/src/lib/mesh-limits.ts`,
 `backend/src/routes/rooms.ts`
 
 ---
