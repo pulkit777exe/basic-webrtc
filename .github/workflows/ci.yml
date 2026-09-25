@@ -63,4 +63,10 @@ jobs:
       - name: Build backend image
         run: docker build -t backend ./backend
       - name: Build frontend image
-        run: docker build -t frontend ./frontend
+        # VITE_* are inlined at build time and production refuses to build
+        # without VITE_API_URL, so they must be passed as build args.
+        run: |
+          docker build \
+            --build-arg VITE_API_URL=http://localhost:4000 \
+            --build-arg VITE_WS_URL=ws://localhost:4000 \
+            -t frontend ./frontend

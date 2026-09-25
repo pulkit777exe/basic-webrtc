@@ -210,8 +210,10 @@ function gracefulShutdown(signal: string) {
   shuttingDown = true;
   logger.info('Shutdown signal received', { signal });
 
-  wsHandler.stop();
-  roomFanout.stop();
+  // Order matters: closing sockets makes each one publish a `leave`, so the
+  // fan-out buffer must still be running to deliver them. Stop the background
+  // work and drain the buffer afterwards.
+  wsHandler.stopBackgroundWork();
 
   wss.clients.forEach((ws) => {
     ws.close(1001, 'Server shutting down');
@@ -228,6 +230,11 @@ function gracefulShutdown(signal: string) {
         }
         void (async () => {
           try {
+            // Give the leave messages produced by the socket closes one last
+            // chance to reach the other nodes.
+            await roomFanout.flush().catch((e) => logger.error('Final fanout flush failed', { err: String(e) }));
+            roomFanout.stop();
+            wsHandler.stop();
             await closeDatabase();
             logger.info('Graceful shutdown complete');
             process.exit(0);

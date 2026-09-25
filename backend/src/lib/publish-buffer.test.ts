@@ -113,7 +113,7 @@ describe('PublishBuffer backpressure', () => {
 });
 
 describe('PublishBuffer circuit breaker', () => {
-  it('opens after consecutive failures and stops queueing', async () => {
+  it('opens after consecutive failures', async () => {
     const publishBatch = vi.fn().mockRejectedValue(new Error('redis down'));
     const onCircuitOpen = vi.fn();
     let clock = 0;
@@ -131,35 +131,31 @@ describe('PublishBuffer circuit breaker', () => {
 
     expect(buffer.circuitOpen).toBe(true);
     expect(onCircuitOpen).toHaveBeenCalledTimes(1);
-
-    // New publishes are dropped outright while open.
-    buffer.publish('c', 'after');
-    expect(buffer.size).toBe(0);
   });
 
-  it('stays open during the cool-off period', async () => {
+  it('stops sending while open, but keeps buffering (bounded)', async () => {
     const publishBatch = vi.fn().mockRejectedValue(new Error('down'));
-    let clock = 0;
-    const buffer = new PublishBuffer({
-      publishBatch,
-      failureThreshold: 1,
-      resetAfterMs: 10_000,
-      now: () => clock,
-    });
+    const buffer = new PublishBuffer({ publishBatch, failureThreshold: 1, maxQueueSize: 5 });
 
     buffer.publish('c', 'a');
     await buffer.flush();
     expect(buffer.circuitOpen).toBe(true);
 
-    clock += 5_000;
-    buffer.publish('c', 'b');
+    // No further sends while the circuit is open...
     await buffer.flush();
-    // Cool-off not elapsed: no publish attempted, circuit still open.
     expect(publishBatch).toHaveBeenCalledTimes(1);
-    expect(buffer.circuitOpen).toBe(true);
+
+    // ...but traffic still accumulates, so the first post-cooldown flush has a
+    // real batch to send. (An earlier version dropped here, which meant the
+    // circuit could only ever be retried with an empty batch — and the Redis
+    // client rejects an empty transaction, so a recovered Redis could never
+    // close it.)
+    buffer.publish('c', 'b');
+    buffer.publish('c', 'c');
+    expect(buffer.size).toBe(2);
   });
 
-  it('closes after a successful trial flush', async () => {
+  it('recovers after the cool-off with a real batch', async () => {
     const publishBatch = vi
       .fn()
       .mockRejectedValueOnce(new Error('down'))
@@ -178,16 +174,40 @@ describe('PublishBuffer circuit breaker', () => {
     await buffer.flush();
     expect(buffer.circuitOpen).toBe(true);
 
-    clock += 11_000;
+    // Traffic during the outage is buffered, not dropped.
     buffer.publish('c', 'b');
+    clock += 11_000;
     await buffer.flush();
 
     expect(publishBatch).toHaveBeenCalledTimes(2);
+    const retried = publishBatch.mock.calls[1]![0] as Map<string, string[]>;
+    expect(retried.get('c')).toEqual(['b']);
     expect(buffer.circuitOpen).toBe(false);
     expect(onCircuitClose).toHaveBeenCalledTimes(1);
   });
 
-  it('re-opens if the trial flush also fails', async () => {
+  it('stays open during the cool-off period', async () => {
+    const publishBatch = vi.fn().mockRejectedValue(new Error('down'));
+    let clock = 0;
+    const buffer = new PublishBuffer({
+      publishBatch,
+      failureThreshold: 1,
+      resetAfterMs: 10_000,
+      now: () => clock,
+    });
+
+    buffer.publish('c', 'a');
+    await buffer.flush();
+
+    clock += 5_000;
+    buffer.publish('c', 'b');
+    await buffer.flush();
+
+    expect(publishBatch).toHaveBeenCalledTimes(1);
+    expect(buffer.circuitOpen).toBe(true);
+  });
+
+  it('re-opens if the post-cooldown flush also fails', async () => {
     const publishBatch = vi.fn().mockRejectedValue(new Error('still down'));
     let clock = 0;
     const buffer = new PublishBuffer({
@@ -203,6 +223,7 @@ describe('PublishBuffer circuit breaker', () => {
     buffer.publish('c', 'b');
     await buffer.flush();
 
+    expect(publishBatch).toHaveBeenCalledTimes(2);
     expect(buffer.circuitOpen).toBe(true);
   });
 
@@ -227,6 +248,29 @@ describe('PublishBuffer circuit breaker', () => {
     await buffer.flush(); // 1 failure
     buffer.publish('c', '5');
     await buffer.flush(); // 2 failures
+    expect(buffer.circuitOpen).toBe(false);
+  });
+
+  it('treats a hung send as a failure instead of wedging forever', async () => {
+    // Without a deadline the in-flight promise never settles: every later tick
+    // returns it, the queue fills, and the failure is never recorded.
+    const publishBatch = vi.fn<() => Promise<unknown>>(() => new Promise<never>(() => {}));
+    const buffer = new PublishBuffer({
+      publishBatch,
+      failureThreshold: 1,
+      timeoutMs: 20,
+      resetAfterMs: 0,
+    });
+
+    buffer.publish('c', 'a');
+    await buffer.flush();
+
+    expect(buffer.circuitOpen).toBe(true);
+
+    // And it recovers: the deadline timer is not left pending.
+    publishBatch.mockImplementation(() => Promise.resolve(undefined));
+    buffer.publish('c', 'b');
+    await buffer.flush();
     expect(buffer.circuitOpen).toBe(false);
   });
 });

@@ -58,6 +58,23 @@ const EXEMPT_FROM_ROOM_BURST_LIMIT: ReadonlySet<string> = new Set([
   'audio-activity',
   'active_speaker',
 ]);
+/**
+ * Traffic that bypasses the publish buffer. These messages are either
+ * unrecoverable if lost (an offer with no peer to receive it means a call that
+ * never connects) or order-sensitive state transitions (roster changes), and
+ * none of them are high volume.
+ */
+const MUST_DELIVER: ReadonlySet<string> = new Set([
+  'offer',
+  'answer',
+  'ice',
+  'join',
+  'leave',
+]);
+
+function isMustDeliver(type: unknown): boolean {
+  return typeof type === 'string' && MUST_DELIVER.has(type);
+}
 const serverInstanceId = nanoid();
 
 interface ExtendedWebSocket extends WebSocket {
@@ -389,11 +406,25 @@ export class WebSocketHandler {
     // 1. Immediately broadcast to all WebSockets connected to this exact node
     this.forwardFromRedis(channel, fullPayload as Record<string, unknown>);
 
-    // 2. Publish to Redis for any OTHER nodes. Buffered: local delivery above is
-    //    unaffected, and cross-node fan-out is batched, bounded, and breakered
-    //    so a busy room cannot turn into a burst of REST calls.
-    const redisPayload = { ...fullPayload, __senderInstanceId: serverInstanceId };
-    this.publishBuffer.publish(channel, JSON.stringify(redisPayload));
+    // 2. Publish to Redis for any OTHER nodes.
+    const redisPayload = { ...payload, roomId, __senderInstanceId: serverInstanceId };
+    const serialized = JSON.stringify(redisPayload);
+
+    if (isMustDeliver(payload.type)) {
+      // Negotiation, ICE, and roster changes are the one class that must not be
+      // batched: losing an offer leaves a peer with no way to connect, and a
+      // reordering between the immediate local hop and a buffered Redis hop can
+      // hand a client newer SDP before older. They are low volume and already
+      // rate-limited (100/s per connection for signalling), so publishing them
+      // straight through costs little and removes the whole class of bug.
+      void redis.publish(channel, serialized).catch((e) => logger.error('[WS] Publish', { err: e }));
+      return;
+    }
+
+    // Everything else is ephemeral fan-out: reactions, captions, media state,
+    // chat notifications. Buffered, batched, and bounded — durable content is
+    // persisted before it is published, so a drop costs a live update, not data.
+    this.publishBuffer.publish(channel, serialized);
   }
 
   private forwardFromRedis(
@@ -753,6 +784,16 @@ export class WebSocketHandler {
    * server stopped accepting connections.
    */
   stop(): void {
+    this.stopBackgroundWork();
+    this.publishBuffer.stop();
+  }
+
+  /**
+   * Stop the heartbeat and chat-flush timers but leave the publish buffer
+   * running, so sockets closing as part of shutdown can still deliver their
+   * `leave` messages. `stop()` finishes the job.
+   */
+  stopBackgroundWork(): void {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -761,7 +802,6 @@ export class WebSocketHandler {
       clearInterval(this.chatFlushTimer);
       this.chatFlushTimer = null;
     }
-    this.publishBuffer.stop();
   }
 
   private async handleWaitingMessage(ws: ExtendedWebSocket, data: Buffer): Promise<void> {
