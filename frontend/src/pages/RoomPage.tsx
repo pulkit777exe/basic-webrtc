@@ -43,6 +43,7 @@ import {
 import { RTCManager } from "@/lib/rtc-manager";
 import { AudioActivityMonitor } from "@/lib/audio-activity";
 import { startIceRefresh } from "@/lib/ice-refresh";
+import { MESH_WARN_THRESHOLD } from "@/lib/mesh-limits";
 import { MediaManager } from "@/lib/media-manager";
 import { RoomVideoGrid } from "@/components/room/RoomVideoGrid";
 import { RoomControlBar } from "@/components/room/RoomControlBar";
@@ -388,6 +389,19 @@ export function RoomPage() {
     const handle = startIceRefresh(() => RTCManager.refreshIceConfiguration());
     return () => handle.stop();
   }, []);
+
+  // Mesh topology warning. Every participant sends N-1 encoded streams, so CPU
+  // and uplink climb steeply past ~6 people; warn once per call rather than
+  // pretending the room is fine. (Real scaling needs an SFU — see TODOS.md.)
+  const meshWarningShownRef = useRef(false);
+  useEffect(() => {
+    if (meshWarningShownRef.current) return;
+    if (participants.length <= MESH_WARN_THRESHOLD) return;
+    meshWarningShownRef.current = true;
+    toast.warning(
+      `${participants.length} people in this call — video may stutter above ${MESH_WARN_THRESHOLD}.`
+    );
+  }, [participants.length]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
