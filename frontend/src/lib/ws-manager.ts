@@ -128,6 +128,16 @@ let tokenRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let tokenRefreshInFlight = false;
 
 /**
+ * Bumped on every explicit connect and on disconnect.
+ *
+ * Token renewal and expiry recovery are async: without a generation check, a
+ * request started for room A could resolve after the user left and overwrite
+ * `lastRoomToken` with room A's token, or reconnect a call they already left.
+ * Every async token path captures this before awaiting and verifies it after.
+ */
+let sessionGeneration = 0;
+
+/**
  * Renew the room token before it expires.
  *
  * The server re-verifies the token on every message, so at `exp` it closes the
@@ -149,11 +159,14 @@ async function renewRoomToken(currentToken: string): Promise<void> {
   if (tokenRefreshInFlight) return;
   const roomId = decodeRoomToken(currentToken)?.roomId;
   if (!roomId) return;
+  const generation = sessionGeneration;
 
   tokenRefreshInFlight = true;
   try {
     const { roomToken } = await api.refreshRoomToken(roomId);
     if (!roomToken) throw new Error("no roomToken in response");
+    // The user may have left or switched rooms while this was in flight.
+    if (generation !== sessionGeneration || intentionalDisconnect) return;
     lastRoomToken = roomToken;
     // Hand it to the live socket when connected; otherwise the next connect()
     // picks it up from lastRoomToken.
@@ -162,6 +175,7 @@ async function renewRoomToken(currentToken: string): Promise<void> {
     }
     scheduleTokenRefresh(roomToken);
   } catch (error) {
+    if (generation !== sessionGeneration || intentionalDisconnect) return;
     console.warn("[WS] room token refresh failed, retrying shortly", error);
     // Back off rather than spin: the current token is still valid for a while.
     if (tokenRefreshTimer) clearTimeout(tokenRefreshTimer);
@@ -193,9 +207,13 @@ async function recoverFromExpiredToken(): Promise<void> {
   }
 
   expiryRecoveryInFlight = true;
+  const generation = sessionGeneration;
   try {
     const { roomToken } = await api.refreshRoomToken(roomId);
     if (!roomToken) throw new Error("no roomToken in response");
+    // Never resurrect a call the user left, and never hand room A's token to
+    // room B's socket.
+    if (generation !== sessionGeneration || intentionalDisconnect) return;
     lastRoomToken = roomToken;
     scheduleTokenRefresh(roomToken);
     pendingReconnectToken = roomToken;
@@ -207,6 +225,7 @@ async function recoverFromExpiredToken(): Promise<void> {
       WSManager.connect(roomToken);
     }
   } catch (error) {
+    if (generation !== sessionGeneration || intentionalDisconnect) return;
     console.error("[WS] could not renew expired room token", error);
     store.set(roomAtom, null);
     toast.error("Your session has expired. Please rejoin the room.");
@@ -314,9 +333,17 @@ let pongTimeout: ReturnType<typeof setTimeout> | null = null;
 let lastPongReceived = true;
 
 export const WSManager = {
-  connect(roomToken: string) {
+  connect(roomToken: string, options: { isRetry?: boolean } = {}) {
     intentionalDisconnect = false;
     lastRoomToken = roomToken;
+    // A new session invalidates any token work still in flight for a previous
+    // room. A retry of the *same* session does not bump, so a slow renewal
+    // issued before a dropped connection is not thrown away.
+    if (!options.isRetry) sessionGeneration += 1;
+    // Only an explicit connect starts a fresh retry budget. Without this, a
+    // disconnect left reconnectAttempts at MAX_RECONNECT and a brand new room
+    // got no retries at all if its first connection failed.
+    if (!options.isRetry) reconnectAttempts = 0;
     scheduleTokenRefresh(roomToken);
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
@@ -782,7 +809,7 @@ export const WSManager = {
         reconnectTimer = null;
         // Use the latest token: a refresh may have replaced the one this socket
         // was opened with, and replaying a stale token would 4004 straight back.
-        WSManager.connect(lastRoomToken ?? roomToken);
+        WSManager.connect(lastRoomToken ?? roomToken, { isRetry: true });
       }, delay);
     };
 
@@ -799,10 +826,25 @@ export const WSManager = {
     return false;
   },
 
+  /**
+   * The token this session is currently authorized by.
+   *
+   * Anything that authenticates against the backend *during* a call must read
+   * this rather than capture a token at setup: room tokens are renewed
+   * mid-call, and a long-lived uploader holding the original string would keep
+   * presenting an expired one.
+   */
+  getRoomToken(): string | null {
+    return lastRoomToken;
+  },
+
   disconnect() {
     intentionalDisconnect = true;
     recordingNoticeShown = false;
     pendingReconnectToken = null;
+    // Invalidate any token renewal/expiry recovery still in flight, so it
+    // cannot reconnect a call the user just left.
+    sessionGeneration += 1;
     if (tokenRefreshTimer) { clearTimeout(tokenRefreshTimer); tokenRefreshTimer = null; }
     // Reset connection state so the next join starts from a clean "connecting".
     store.set(connectionStatusAtom, "connecting");
@@ -845,6 +887,6 @@ if (typeof window !== "undefined") {
     }
     reconnectAttempts = 0;
     store.set(reconnectAttemptAtom, 0);
-    WSManager.connect(lastRoomToken);
+    WSManager.connect(lastRoomToken, { isRetry: true });
   });
 }

@@ -238,6 +238,48 @@ describe('chooseQuality: guards', () => {
   });
 });
 
+describe('chooseQuality: mesh budget', () => {
+  it('divides the uplink across every peer the stream is sent to', () => {
+    // 1.1 Mbps total, but eight peers each need a copy: 137 kbps per stream,
+    // which cannot carry even 360p. Without dividing, this looked like a
+    // comfortable 720p link.
+    const decision = chooseQuality({
+      ...base,
+      currentIndex: 1,
+      senderCount: 8,
+      availableOutgoingBitrate: bps(1100),
+    });
+    expect(decision.reason).toBe('degraded');
+    expect(decision.index).toBe(2);
+  });
+
+  it('behaves as a single stream when there is one peer', () => {
+    const withOne = chooseQuality({
+      ...base,
+      currentIndex: 1,
+      senderCount: 1,
+      availableOutgoingBitrate: bps(1100),
+    });
+    const withNone = chooseQuality({
+      ...base,
+      currentIndex: 1,
+      availableOutgoingBitrate: bps(1100),
+    });
+    expect(withOne).toEqual(withNone);
+    expect(withOne.reason).toBe('stable');
+  });
+
+  it('never divides by zero or a negative count', () => {
+    const decision = chooseQuality({
+      ...base,
+      currentIndex: 1,
+      senderCount: 0,
+      availableOutgoingBitrate: bps(1100),
+    });
+    expect(decision.reason).toBe('stable');
+  });
+});
+
 describe('combineOutgoingBitrate', () => {
   it('uses the worst link, since one uplink serves every peer', () => {
     expect(combineOutgoingBitrate([bps(2000), bps(500), bps(1200)])).toBe(bps(500));

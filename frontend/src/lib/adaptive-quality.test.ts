@@ -12,6 +12,7 @@ function harness(
     samples?: Array<number | null>;
     cap?: 'auto' | '1080' | '720' | '480';
     screenSharing?: boolean;
+    senderCount?: number;
     now?: number;
   } = {},
 ) {
@@ -22,6 +23,7 @@ function harness(
 
   const controller = new AdaptiveQualityController({
     getSamples: vi.fn().mockResolvedValue(overrides.samples ?? []),
+    getSenderCount: () => overrides.senderCount ?? 1,
     applyLevel: vi.fn((level: QualityLevel) => {
       applied.push(level);
     }),
@@ -72,6 +74,14 @@ describe('AdaptiveQualityController', () => {
     expect(applied[0]).toEqual(VIDEO_QUALITY_LADDER[1]);
   });
 
+  it('splits the budget across the peers the stream is duplicated to', async () => {
+    // Plenty for one stream, hopeless once it is sent to eight peers.
+    const { controller, applied } = harness({ samples: [kbps(1200)], senderCount: 8 });
+    await controller.tick();
+    expect(applied.length).toBeGreaterThan(0);
+    expect(controller.currentIndex).toBeGreaterThan(0);
+  });
+
   it('honours the cooldown so the camera cannot flap', async () => {
     const { controller, applied, advance } = harness({ samples: [kbps(100)] });
 
@@ -95,6 +105,7 @@ describe('AdaptiveQualityController', () => {
     const applied: QualityLevel[] = [];
     const controller = new AdaptiveQualityController({
       getSamples: async () => samples,
+      getSenderCount: () => 1,
       applyLevel: (level) => {
         applied.push(level);
       },
@@ -122,6 +133,7 @@ describe('AdaptiveQualityController', () => {
     );
     const controller = new AdaptiveQualityController({
       getSamples,
+      getSenderCount: () => 1,
       applyLevel: () => {},
       getCap: () => 'auto',
       isScreenSharing: () => false,
@@ -166,6 +178,7 @@ describe('AdaptiveQualityController', () => {
       getSamples: async () => {
         throw new Error('pc closed');
       },
+      getSenderCount: () => 1,
       applyLevel: (level) => {
         applied.push(level);
       },
@@ -192,6 +205,7 @@ describe('AdaptiveQualityController', () => {
     const clearIntervalFn = vi.fn();
     const controller = new AdaptiveQualityController({
       getSamples: async () => [],
+      getSenderCount: () => 1,
       applyLevel: () => {},
       getCap: () => 'auto',
       isScreenSharing: () => false,

@@ -429,7 +429,11 @@ export const MediaManager = {
    * user — it is an optimisation, not a feature they toggled.
    */
   async applyVideoQuality(level: QualityLevel): Promise<void> {
-    const track = localStream?.getVideoTracks()[0];
+    // Read the stream from the store, not the module-level `localStream`:
+    // toggleVideo() and switchVideoInput() replace it, and a stale reference
+    // made adaptive quality silently skip the new track.
+    const stream = store.get(localMediaAtom).stream;
+    const track = stream?.getVideoTracks()[0];
     if (!track) return;
     if (track.readyState === 'ended') return;
     try {

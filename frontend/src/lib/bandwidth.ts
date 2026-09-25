@@ -47,6 +47,12 @@ export type AdaptationReason = 'degraded' | 'upgraded' | 'capped' | 'held' | 'st
 export interface AdaptationInput {
   /** Measured uplink in bits/sec, or null/undefined when unavailable. */
   availableOutgoingBitrate?: number | null;
+  /**
+   * How many peers the local camera is being sent to. In a mesh the same
+   * capture is uploaded once per peer, so the per-stream budget is the uplink
+   * divided by this. Defaults to 1.
+   */
+  senderCount?: number;
   /** Current ladder index (0 = best). */
   currentIndex: number;
   cap: VideoQualityCap;
@@ -109,7 +115,10 @@ export function chooseQuality(input: AdaptationInput): AdaptationDecision {
 
   const withinCooldown =
     input.lastChangeAt != null && input.now - input.lastChangeAt < MIN_CHANGE_INTERVAL_MS;
-  const kbps = bitrate / 1000;
+
+  // One uplink carries every peer's copy of this stream: budget per sender.
+  const senderCount = Math.max(1, Math.floor(input.senderCount ?? 1));
+  const kbps = bitrate / 1000 / senderCount;
 
   // Not enough headroom for what we are sending right now: step down.
   if (kbps < current.maxBitrateKbps * DEGRADE_HEADROOM) {

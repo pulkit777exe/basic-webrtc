@@ -220,6 +220,21 @@ export const RTCManager = {
   },
 
   /**
+   * How many peers the local camera is currently being sent to. The adaptive
+   * quality budget divides the uplink by this, since every peer gets its own
+   * copy of the same stream.
+   */
+  getVideoSenderCount(): number {
+    let count = 0;
+    for (const connection of peerConnections.values()) {
+      for (const sender of connection.getSenders()) {
+        if (sender.track?.kind === 'video') count += 1;
+      }
+    }
+    return count;
+  },
+
+  /**
    * One uplink estimate per peer connection, for adaptive quality. Entries are
    * null where a link has not produced an estimate yet (or the connection is
    * closing) — the caller reduces these to the binding constraint.

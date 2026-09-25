@@ -24,6 +24,13 @@ export const DEFAULT_POLL_INTERVAL_MS = 5_000;
 export interface AdaptiveQualityOptions {
   /** One uplink sample per peer connection (null when unmeasurable). */
   getSamples: () => Promise<Array<number | null>>;
+  /**
+   * How many peers the local camera is sent to. In a mesh the same capture is
+   * uploaded once per peer, so the usable budget per stream is the uplink
+   * divided by this — without it, a 1 Mbps link looks fine for 720p while the
+   * room actually asks for 9 Mbps.
+   */
+  getSenderCount: () => number;
   /** Apply a rung to the local capture track. */
   applyLevel: (level: QualityLevel) => Promise<void> | void;
   getCap: () => VideoQualityCap;
@@ -93,6 +100,7 @@ export class AdaptiveQualityController {
       const bitrate = combineOutgoingBitrate(samples ?? []);
       const decision = chooseQuality({
         availableOutgoingBitrate: bitrate,
+        senderCount: this.options.getSenderCount(),
         currentIndex: this.index,
         cap: this.options.getCap(),
         screenSharing: this.options.isScreenSharing(),

@@ -397,6 +397,7 @@ export function RoomPage() {
   useEffect(() => {
     const controller = new AdaptiveQualityController({
       getSamples: () => RTCManager.sampleOutgoingBitrate(),
+      getSenderCount: () => Math.max(1, RTCManager.getVideoSenderCount()),
       applyLevel: async (level) => {
         // Capture resolution bounds the pixels; the encoder cap bounds the
         // stream congestion control reacts to. Both, together.
@@ -572,6 +573,7 @@ export function RoomPage() {
           stream: localMedia.stream,
           roomId,
           roomToken,
+          getRoomToken: () => WSManager.getRoomToken(),
           shouldRun: () => captionsEnabledRef.current,
           onFinalText: sendCaption,
         }) ?? undefined;

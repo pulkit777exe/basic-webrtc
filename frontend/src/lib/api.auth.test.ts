@@ -5,7 +5,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const fetchMock = vi.fn();
-let accessToken: string | null = null;
 
 vi.stubGlobal('fetch', fetchMock);
 
@@ -23,7 +22,6 @@ function jsonResponse(status: number, body: unknown): Response {
 
 beforeEach(() => {
   fetchMock.mockReset();
-  accessToken = null;
   setAccessToken('access-1');
 });
 
