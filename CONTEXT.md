@@ -34,7 +34,25 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
 > landing in the store. jsdom cannot check any of it. Run `cd frontend && bun run e2e`
 > after touching this file.
 
-### Media (`lib/media-manager.ts`)
+### Tests
+
+- Unit tests live in **`backend/tests/`** and **`frontend/tests/`**, each
+  **mirroring its `src/` layout** — never colocated in `src/`. A test's path
+  therefore names the module it covers, and `src/config/api.ts` vs
+  `src/lib/api.ts` cannot collide on one filename.
+- Vitest `include` matches **`tests/` only** in both packages. A test dropped into
+  `src/` matches nothing and is **silently never run** — that is the failure mode
+  this layout removes, so keep new tests in `tests/`.
+- Frontend tests import via the **`@/`** alias (as `src/` does, 151:21), so they
+  do not care how deep they are. Backend tests use relative `../src/...`, as
+  `backend/src` does.
+- `vi.mock` paths must resolve to the **same module** the source imports: the
+  source may say `./rtc-manager` while the test says `@/lib/rtc-manager`. Both
+  resolve to one module id, so the mock still applies — verified by repointing
+  the mock and watching all 14 assertions in `signal-handler` fail.
+- The browser rig is separate: **`frontend/e2e/`** (see its README).
+
+## Media (`lib/media-manager.ts`)
 
 - Builds **`localStream`** (camera/mic ladder), updates **`localMediaAtom`**, calls `RTCManager.setLocalStream`.
 - **Screen share**: `replaceTrack('video', …)` or **`addTrack`** when there was no video sender → triggers **renegotiation** path above.

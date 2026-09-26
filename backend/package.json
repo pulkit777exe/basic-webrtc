@@ -12,7 +12,7 @@
     "db:studio": "drizzle-kit studio",
     "db:push": "drizzle-kit push",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check src/",
+    "lint": "biome check src/ tests/",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
