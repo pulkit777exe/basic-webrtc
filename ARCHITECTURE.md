@@ -63,13 +63,16 @@ modules can collide on a basename (`src/config/api.ts` and `src/lib/api.ts` both
 exist). Vitest's `include` matches `tests/` only, so a test added under `src/` is
 never silently skipped.
 
-Each package typechecks and lints its tests: `backend/tsconfig.json` includes
-`tests/**/*` and `biome` runs over `src/ tests/`; `frontend/tsconfig.test.json` is
-a third project in `tsc -b`, which keeps test code out of the app build's
-typecheck the same way the browser rig's config does.
+Each package typechecks and lints its tests. The backend folds them into its one
+config (`include: ["src/**/*", "tests/**/*"]`) and `biome` runs over `src/ tests/`.
 
-The browser rig is separate again — `frontend/e2e/` — because it runs real
-Chromium against the production peer module, not jsdom.
+The frontend splits them, because the app project is what `vite build` and the
+production typecheck read. `tsconfig.app.json` includes `src` only;
+`tsconfig.test.json` includes `tests` **and** `src` — it has to, since the tests
+import the modules — and is a third project in `tsc -b`. The consequence worth
+stating: a broken test fails `bun run typecheck` but cannot fail `bun run build`,
+and no test file is ever reachable from the app entrypoint. The browser rig is a
+fourth config (`frontend/e2e/tsconfig.json`) for the same reason.
 
 ### Infrastructure
 

@@ -109,16 +109,53 @@ async function flushPendingIceCandidates(userId: string) {
   }
 }
 
-async function restartIceConnection(userId: string) {
+/**
+ * Whether two ICE server lists describe the same configuration.
+ *
+ * The scheduled TURN refresh re-fetches credentials every 4 minutes, and with
+ * the documented default deployment (public STUN, no TURN) the result is
+ * byte-identical every time. Comparing by value is what stops the refresh from
+ * restarting ICE on every peer connection for a configuration that did not
+ * change — a full restart is an offer/answer round plus fresh candidate
+ * gathering on every leg of the mesh.
+ *
+ * Order-insensitive: a reordered list is the same set of servers, and treating
+ * it as a change would reintroduce the churn this exists to stop.
+ */
+export function iceServersEqual(
+  a: RTCIceServer[] | undefined,
+  b: RTCIceServer[] | undefined,
+): boolean {
+  const normalise = (list: RTCIceServer[] | undefined): string[] =>
+    (list ?? [])
+      .map((server) =>
+        JSON.stringify([
+          typeof server.urls === 'string' ? server.urls : (server.urls ?? []).slice().sort(),
+          server.username ?? '',
+          server.credential ?? '',
+        ]),
+      )
+      .sort();
+  const left = normalise(a);
+  const right = normalise(b);
+  return left.length === right.length && left.every((entry, i) => entry === right[i]);
+}
+
+async function restartIceConnection(userId: string, options: { countsAgainstBudget?: boolean } = {}) {
   const connection = peerConnections.get(userId);
   if (!connection) return;
   // Don't burn a restart attempt (or gather candidates we cannot deliver) while
   // signaling is down: the offer would be prepared and then dropped on the
   // floor, and the attempt budget would be gone before signaling returns.
   if (!WSManager.isConnected()) return;
+  // The budget exists to stop an endless renegotiation loop when a connection is
+  // genuinely broken. A scheduled credential refresh is not that, so it must not
+  // spend an attempt — otherwise a long call exhausts the budget on refreshes and
+  // the next real network change cannot restart ICE at all.
+  const countsAgainstBudget = options.countsAgainstBudget !== false;
   const attempts = iceRestartAttempts.get(userId) ?? 0;
-  if (attempts >= MAX_ICE_RESTARTS) return;
-  iceRestartAttempts.set(userId, attempts + 1);
+  if (countsAgainstBudget && attempts >= MAX_ICE_RESTARTS) return;
+  if (countsAgainstBudget) iceRestartAttempts.set(userId, attempts + 1);
   // Drop stale candidates *and* the queue's timer, so the old TTL cannot fire
   // against a batch queued after this point.
   pendingIce.clear(userId);
@@ -279,8 +316,15 @@ export const RTCManager = {
    * default), so credentials obtained at join time stop being accepted partway
    * through a call — and a network change (WiFi → cellular) invalidates them
    * immediately. `setConfiguration` is the only way to change the servers of an
-   * existing connection, and it needs a fresh ICE restart to gather new
-   * candidates under the new credentials.
+   * existing connection, and a genuinely new server list needs a fresh ICE
+   * restart to gather candidates under it.
+   *
+   * This runs on a timer, so it must be cheap when nothing changed. With the
+   * documented default (public STUN, no TURN) the fetched list is identical every
+   * time, and restarting ICE anyway meant an offer/answer round plus fresh
+   * candidate gathering on every leg of the mesh every 4 minutes — while also
+   * spending two of the three attempts reserved for recovering a real failure.
+   * So the restart is gated on an actual change, and never spends the budget.
    *
    * Returns true when the configuration was replaced.
    */
@@ -293,13 +337,16 @@ export const RTCManager = {
       return false;
     }
 
+    const serversChanged = !iceServersEqual(peerConfiguration.iceServers, next.iceServers);
     peerConfiguration = next;
     let changed = false;
     for (const [userId, connection] of peerConnections) {
       try {
         connection.setConfiguration(next);
         changed = true;
-        void restartIceConnection(userId);
+        if (serversChanged) {
+          void restartIceConnection(userId, { countsAgainstBudget: false });
+        }
       } catch (error) {
         console.warn(`[RTCManager] setConfiguration failed for ${userId}`, error);
       }

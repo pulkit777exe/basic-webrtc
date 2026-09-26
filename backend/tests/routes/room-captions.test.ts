@@ -68,6 +68,19 @@ describe('POST /api/rooms/:id/transcribe (room-token auth)', () => {
     expect(body.code).toBe('INVALID_TOKEN');
   });
 
+  it('accepts a room id whose case differs from the token, as every other route does', async () => {
+    // Room ids are 10 mixed-case alphanumerics (`validateRoomId` allows a-zA-Z0-9)
+    // and `routes/rooms.ts` resolves them with `lower(id) = lower($1)`. This
+    // router cannot use that `router.param('id')` hook — it is mounted ahead of
+    // the rooms router because it authenticates with a room token — so an exact
+    // comparison here refused a room that every other endpoint accepted.
+    const token = generateRoomToken('user-1', 'aB3xY9zQ1m');
+    const { status, body } = await post('ab3xy9zq1m', token);
+    // Past the token gate: it reaches the provider check (503 when unconfigured).
+    expect(status).not.toBe(403);
+    expect(body.code).not.toBe('INVALID_TOKEN');
+  });
+
   it('accepts a valid room token and reaches the transcription provider check', async () => {
     // No provider keys are configured in tests, so a *successful* auth lands on
     // the 503 provider check — proof the request got past authentication.

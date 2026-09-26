@@ -25,7 +25,18 @@ router.post(
     const roomId = req.params.id;
     const token = req.headers.authorization?.split(' ')[1];
     const decoded = token ? verifyRoomToken(token) : null;
-    if (!decoded || decoded.roomId !== roomId || decoded.waiting === true) {
+    // Case-insensitively, because that is how the rest of the app resolves a room
+    // id: `routes/rooms.ts` canonicalises with `lower(id) = lower($1)`, and room
+    // ids are 10 mixed-case alphanumerics. This router cannot use that
+    // `router.param('id')` hook — it is mounted ahead of the rooms router precisely
+    // because it authenticates with a room token instead of a session token — so
+    // without this a room id whose URL case differs from the token's was refused
+    // with 403 while every other endpoint accepted it.
+    const sameRoom =
+      decoded != null &&
+      decoded.waiting !== true &&
+      decoded.roomId.toLowerCase() === roomId.toLowerCase();
+    if (!sameRoom) {
       res.status(403).json({ error: 'Invalid room token', code: 'INVALID_TOKEN' });
       return;
     }

@@ -62,8 +62,13 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
 
 ### Adaptive quality
 
-- **Verified in a real browser** by the `frontend/e2e/` rig (two Chromium peers through
-  the production peer module), not just in jsdom — see `frontend/e2e/README.md`.
+- **The ladder decision is unit tested, not browser tested.** `lib/bandwidth.ts` and
+  `lib/adaptive-quality.ts` are pure and covered by unit tests in jsdom; no
+  `frontend/e2e/` spec drives the ladder, because a browser cannot be made to
+  report a constrained link on demand. What the rig *does* cover is the plumbing
+  underneath: that the sender exists, that a layer switch reaches the encoder, and
+  that media keeps flowing (`specs/simulcast.spec.ts`). Do not read the rig as
+  evidence about the thresholds.
 - **`lib/bandwidth.ts`** decides the ladder rung from measured uplink: degrade
   below 0.9× headroom, climb only at 1.5× over the target, 10s cooldown. A
   quality cap is a **ceiling**, not a floor, and a screen share suspends camera

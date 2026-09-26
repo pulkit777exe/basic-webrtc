@@ -270,7 +270,15 @@ process.on('unhandledRejection', (reason) => {
   logger.error('Unhandled promise rejection', { err: String(reason) });
 });
 process.on('uncaughtException', (err) => {
-  logger.error('Uncaught exception', { err: String(err) });
+  // Shut down rather than carry on. Once an exception has escaped, the process
+  // state is undefined — a half-applied DB write, a poisoned connection pool, a
+  // half-mutated room roster — and a video server that keeps accepting calls on
+  // top of that can hand a participant a corrupted room while reporting itself
+  // healthy. Logging and continuing (which is right for a rejection) is not right
+  // here: the platform restarts us, every open call is told 1001, and clients
+  // reconnect to a process that is actually consistent.
+  logger.error('Uncaught exception, shutting down', { err: String(err) });
+  gracefulShutdown('uncaughtException');
 });
 
 server.listen(PORT, () => {

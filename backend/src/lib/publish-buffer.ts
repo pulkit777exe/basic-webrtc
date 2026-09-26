@@ -127,11 +127,12 @@ export class PublishBuffer {
   /**
    * Enqueue a payload. Synchronous and allocation-cheap: never throws.
    *
-   * Note this queues even while the circuit is open. An earlier version dropped
-   * here, which meant the circuit could only ever be retried with an *empty*
-   * batch — and since the transport rejects an empty transaction, a recovered
-   * Redis could never close it. Queueing through an outage is bounded by
-   * `maxQueueSize` and lets the first post-cooldown flush carry a real batch.
+   * Drops while the circuit is open, counting each drop. The open circuit is
+   * closed by `probe()` (see `sendProbe`), *not* by retrying queued work, so
+   * queueing through an outage would only trade bounded drops for unbounded
+   * memory growth. An earlier version queued here, on the theory that the
+   * circuit needed a non-empty batch to retry with — that is what `probe()`
+   * replaced, and this comment outlived the change.
    */
   publish(channel: string, payload: string): void {
     if (this.stopped) return;

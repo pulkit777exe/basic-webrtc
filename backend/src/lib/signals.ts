@@ -78,6 +78,11 @@ export type Signal =
   | { type: 'pong' }
   | { type: 'token_refresh'; roomToken: string }
   | { type: 'token_expired' }
+  // Server-only acknowledgement that a replacement room token was accepted.
+  // Typed because the client branches on it, and intentionally absent from
+  // isSignal below — a client-sent copy is rejected as unknown, exactly like
+  // notes_ready.
+  | { type: 'token_refresh_ack' }
   | { type: 'error'; message: string }
   | { type: 'kicked' }
   // AI workspace: meeting notes generated server-side (REST route publishes

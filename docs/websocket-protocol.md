@@ -286,7 +286,13 @@ socket cannot starve the room:
 
 - `offer` / `answer` / `ice` — 100/second
 - `media-state`, `audio-activity` — 10/second
+- `ping` / `pong` — 10/second
 - **hard cap** — 500 messages/second across *all* types
+
+`ping`/`pong` are exempt from the *room* burst limit but are not free: each one
+costs a kick check plus a room-meta read, so an unmetered keep-alive turns into
+two Redis calls per message. 10/second is ~250x a real client heartbeat (1 per
+25s), so only deliberate flooding is dropped.
 
 Exceeding a per-type bucket drops the message silently (they are advisory).
 Exceeding the hard cap sends `rate_limited` and **closes the connection with
