@@ -47,6 +47,24 @@ const HEARTBEAT_INTERVAL_MS = 30000;
 const CHAT_FLUSH_INTERVAL_MS = 2000;
 const CHAT_BUFFER_SIZE = 50;
 const CHAT_REDIS_KEY_PREFIX = 'room:chatBuffer:';
+
+/**
+ * Run a lookup that decides whether a live call continues, treating a failure as
+ * "unknown" rather than as an answer.
+ *
+ * The authorization policy denies only on an explicit `false`, so returning
+ * `null` here is what makes a Redis or Postgres blip unable to end a call. That
+ * is the intended trade: during an outage a kicked user may get a message
+ * through, which is recoverable; ending every call in the room is not.
+ */
+async function failOpen<T>(lookup: Promise<T>): Promise<T | null> {
+  try {
+    return await lookup;
+  } catch (error) {
+    logger.warn('Authorization lookup failed, treating as unknown', { err: String(error) });
+    return null;
+  }
+}
 /**
  * Signalling/advisory traffic that must not be starved by the per-room burst
  * limit. These still have their own per-connection buckets (and the hard cap).
@@ -607,12 +625,18 @@ export class WebSocketHandler {
       const isHeartbeat = signal.type === 'ping';
       const denial = authorizeInbound({
         tokenValid: this.hasValidRoomToken(ws),
-        kicked: await isKicked(roomId, userId),
-        roomExists: isHeartbeat ? Boolean(await getRoomMeta(roomId)) : null,
+        // Each lookup is fail-open: a Redis or Postgres blip yields "unknown"
+        // rather than propagating. `authorizeInbound` only denies on an explicit
+        // `false`, so a transient outage cannot end a live call — which is what
+        // its `null` contract promises. Letting these throw instead would also
+        // have reported an infrastructure failure to the client as a malformed
+        // message, and masked the outage.
+        kicked: (await failOpen(isKicked(roomId, userId))) ?? false,
+        roomExists: isHeartbeat ? await failOpen(getRoomMeta(roomId).then(Boolean)) : null,
         // A room token outlives the 15-minute access token by design, so without
         // this an account that logged out everywhere (or was revoked, or changed
         // its password) kept its call open while its REST calls failed.
-        hasSession: isHeartbeat ? await hasActiveSession(userId) : null,
+        hasSession: isHeartbeat ? await failOpen(hasActiveSession(userId)) : null,
         isHeartbeat,
       });
       if (denial) {

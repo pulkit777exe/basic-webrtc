@@ -11,6 +11,9 @@ import {
   simulcastEncodings,
   supportsSimulcast,
 } from '@/lib/simulcast';
+import { scopedLogger } from '@/lib/logger';
+
+const log = scopedLogger('RTCManager');
 
 const FALLBACK_ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 const BUNDLE_POLICIES = ['balanced', 'max-compat', 'max-bundle'] as const;
@@ -23,7 +26,7 @@ let peerConfiguration: RTCConfiguration = { iceServers: FALLBACK_ICE_SERVERS };
 const peerConnections = new Map<string, RTCPeerConnection>();
 /** ICE candidates received before setRemoteDescription completes (trickle race). */
 const pendingIce = new PendingIceQueue({
-  onTimeout: (userId) => console.warn(`[RTCManager] ICE queue timeout for peer ${userId}`),
+  onTimeout: (userId) => log.warn(`ICE queue timeout for peer ${userId}`),
 });
 const iceRestartAttempts = new Map<string, number>();
 const seenTrackIds = new Map<string, Set<string>>();
@@ -90,11 +93,9 @@ async function reconcileVideoSenders(connection: RTCPeerConnection): Promise<voi
     // Retire the unused transceiver so it cannot claim a sender slot, inflate
     // getVideoSenderCount, or add a stray m-line to the answer.
     stranded.stop();
-    console.warn(
-      '[RTCManager] peer did not accept simulcast layers on this link; sending single-layer video',
-    );
+    log.warn('peer did not accept simulcast layers on this link; sending single-layer video');
   } catch (error) {
-    console.warn('[RTCManager] could not move camera onto the negotiated m-line', error);
+    log.warn('could not move camera onto the negotiated m-line', error);
   }
 }
 
@@ -104,7 +105,7 @@ async function flushPendingIceCandidates(userId: string) {
   const queued = pendingIce.take(userId);
   for (const c of queued) {
     await connection.addIceCandidate(new RTCIceCandidate(c)).catch((e) => {
-      console.warn(`[RTCManager] addIceCandidate failed for ${userId}:`, e);
+      log.warn(`addIceCandidate failed for ${userId}:`, e);
     });
   }
 }
@@ -274,7 +275,7 @@ async function attachLocalTracks(connection: RTCPeerConnection, stream: MediaStr
     } catch (error) {
       // A transceiver that will not take the layers is not a reason to drop the
       // camera: fall back to a plain sender for this connection.
-      console.warn('[RTCManager] simulcast transceiver rejected, using addTrack', error);
+      log.warn('simulcast transceiver rejected, using addTrack', error);
       connection.addTrack(track, stream);
       hasVideoSender = true;
     }
@@ -333,7 +334,7 @@ export const RTCManager = {
     try {
       next = buildIceConfiguration(await api.getIceServers());
     } catch (error) {
-      console.warn('[RTCManager] ICE refresh failed, keeping current servers', error);
+      log.warn('ICE refresh failed, keeping current servers', error);
       return false;
     }
 
@@ -348,7 +349,7 @@ export const RTCManager = {
           void restartIceConnection(userId, { countsAgainstBudget: false });
         }
       } catch (error) {
-        console.warn(`[RTCManager] setConfiguration failed for ${userId}`, error);
+        log.warn(`setConfiguration failed for ${userId}`, error);
       }
     }
     return changed;
@@ -387,7 +388,7 @@ export const RTCManager = {
           }
           await sender.setParameters(parameters);
         } catch (error) {
-          console.warn('[RTCManager] setVideoMaxBitrate failed', error);
+          log.warn('setVideoMaxBitrate failed', error);
         }
       }),
     );
@@ -496,7 +497,7 @@ export const RTCManager = {
     localStream = stream;
     peerConnections.forEach((connection) => {
       void queueAttachTracks(connection, stream).catch((error) => {
-        console.warn('[RTCManager] attaching local tracks failed', error);
+        log.warn('attaching local tracks failed', error);
       });
     });
   },
@@ -678,7 +679,7 @@ export const RTCManager = {
       return;
     }
     void connection.addIceCandidate(new RTCIceCandidate(candidate)).catch((e) => {
-      console.warn(`[RTCManager] addIceCandidate failed for ${userId}:`, e);
+      log.warn(`addIceCandidate failed for ${userId}:`, e);
     });
   },
 

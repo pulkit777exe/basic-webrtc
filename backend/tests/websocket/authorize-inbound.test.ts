@@ -15,22 +15,31 @@ let roomExists = true;
 let sessionActive = true;
 // Which lookups were consulted, to prove the heartbeat-only gating.
 let calls: string[] = [];
+// When set, the named lookup rejects — the Redis/Postgres blip case.
+let lookupThrows: Set<string> = new Set();
 
 vi.mock('../../src/lib/redis-rooms', () => ({
   isKicked: async () => {
     calls.push('isKicked');
+    if (lookupThrows.has('isKicked')) throw new Error('redis unavailable');
     return kicked;
   },
   getRoomMeta: async () => {
     calls.push('getRoomMeta');
+    if (lookupThrows.has('getRoomMeta')) throw new Error('redis unavailable');
     return roomExists ? { hostId: 'u1', maxParticipants: '10' } : null;
   },
   getRoomPeerCount: async () => 0,
+  // The ping handler refreshes the participant TTL. Without it the dispatch
+  // throws and the generic catch reports "Invalid message", which would mask
+  // what these tests are actually about.
+  refreshParticipantTTL: async () => {},
 }));
 
 vi.mock('../../src/services/session', () => ({
   hasActiveSession: async () => {
     calls.push('hasActiveSession');
+    if (lookupThrows.has('hasActiveSession')) throw new Error('postgres down');
     return sessionActive;
   },
 }));
@@ -89,6 +98,7 @@ beforeEach(() => {
   roomExists = true;
   sessionActive = true;
   calls = [];
+  lookupThrows = new Set();
 
   const wss = { clients: new Set(), on: vi.fn(), close: vi.fn() };
   handler = new WebSocketHandler(wss as never) as never;
@@ -207,6 +217,38 @@ describe('handleMessage authorization', () => {
       expect.objectContaining({ type: 'error', message: 'Message too large' }),
     );
     expect(calls).toHaveLength(0);
+  });
+
+  it('keeps the call alive when a lookup fails, rather than ending it', async () => {
+    // `authorizeInbound` documents that a null fact means "not run, or the lookup
+    // failed transiently" and must not end a live call. That contract was
+    // unreachable: the lookups threw into handleMessage's catch, which reported
+    // "Invalid message" to the client and masked the outage.
+    lookupThrows = new Set(['isKicked', 'getRoomMeta', 'hasActiveSession']);
+    await handler.handleMessage(ws, signal(PING));
+
+    expect(ws.close).not.toHaveBeenCalled();
+    // And the client is not told it sent something malformed.
+    expect(ws.sent.filter((m) => m.type === 'error')).toHaveLength(0);
+  });
+
+  it('still denies on a definitive answer while another lookup is failing', async () => {
+    // Fail-open is for *unknown*, not for "skip the check". An expired token is a
+    // local HMAC fact with no lookup involved, so it must still close.
+    lookupThrows = new Set(['isKicked', 'getRoomMeta', 'hasActiveSession']);
+    ws.roomToken = 'forged';
+    await handler.handleMessage(ws, signal(PING));
+
+    expect(ws.close).toHaveBeenCalledWith(4004);
+  });
+
+  it('does not report an infrastructure failure as a malformed message', async () => {
+    lookupThrows = new Set(['isKicked']);
+    await handler.handleMessage(ws, signal(CHAT));
+
+    expect(ws.sent).not.toContainEqual(
+      expect.objectContaining({ message: 'Invalid message' }),
+    );
   });
 
   it('prefers the token check over the kick check when both would deny', async () => {
