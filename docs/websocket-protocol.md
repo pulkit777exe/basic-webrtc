@@ -266,14 +266,18 @@ When the limit is exceeded, the server sends `{ "type": "rate_limited" }` and dr
 
 ### What is never dropped
 
-`offer`, `answer`, `ice`, `join`, and `leave` are published to Redis directly
-rather than through the fan-out buffer. They are unrecoverable if lost — a
-dropped offer leaves a peer with no way to connect — and reordering them against
-the immediate local hop can hand a client newer SDP before older. Everything
-else (reactions, captions, media state, chat notifications) is batched through a
-bounded queue that sheds the oldest entries under sustained pressure; durable
-content is persisted before it is published, so a shed message costs a live
-update rather than data.
+`offer`, `answer`, `join`, `leave`, and the one-shot `admin_*` control messages
+are published to Redis directly rather than through the fan-out buffer. They are
+unrecoverable if lost — a dropped offer leaves a peer with no way to connect —
+and reordering them against the immediate local hop can hand a client newer
+state before older.
+
+Everything else is batched through a bounded queue that sheds the oldest entries
+under sustained pressure. Durable content is persisted before it is published,
+so a shed message costs a live update rather than data. `ice` sits in this group
+deliberately: candidates arrive continuously (up to 100/s per connection), the
+receiver tolerates losing one, and that volume would defeat the circuit
+breaker.
 
 ### Per-connection limits
 
@@ -295,6 +299,13 @@ The room token is verified on upgrade *and* re-verified on every inbound
 message (a local signature + expiry check, no Redis call). A socket therefore
 cannot outlive its token by simply omitting `ping`. The kick check also runs
 per message, and waiting-room sockets are subject to the same token check.
+
+On the heartbeat (`ping`, roughly every 25s) the server additionally checks that
+**the room still exists** and that **the account still has a live session** —
+a room token deliberately outlives the 15-minute access token, so without that
+check an account that logged out everywhere (or was revoked, changed its
+password, or reset 2FA) would keep its call open while its REST calls started
+failing. Losing every session closes the socket with 4005.
 
 **Renewing a token.** Because the token is checked per message, a call would end
 at the token's `exp` (`JWT_ROOM_EXPIRY`, 2h by default). The client therefore
@@ -332,5 +343,6 @@ and the call would still end at expiry.
 | 4002 | Not authorized for this room |
 | 4003 | Kicked by host/co-host |
 | 4004 | Room token expired (rejoin to get a fresh token) |
+| 4005 | Account has no live session (logged out or revoked everywhere) |
 | 4008 | Rate limit exceeded (flooding; connection closed) |
 | 1001 | Server shutting down |

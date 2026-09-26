@@ -389,6 +389,35 @@ export async function invalidateAllSessionsForUser(userId: string): Promise<numb
   return revokeAllSessionsForUser(userId);
 }
 
+/**
+ * Whether the user still has at least one live session.
+ *
+ * The WebSocket layer authorizes a *room* token, which is a capability
+ * independent of the 15-minute access token — so an account that logged out
+ * everywhere (or was hit by "revoke all sessions", a password change, or a 2FA
+ * reset) kept its call open while every REST call it made started failing. A
+ * room token is minted from a session-authenticated request, so the account's
+ * sessions remain the security root it is re-checked against.
+ *
+ * Sessions live 24h, so "no active session" means an explicit logout or
+ * revocation, not a routine token refresh. Side-effect free, unlike
+ * `listActiveSessionsForUser`, which rewrites `isCurrent` flags.
+ */
+export async function hasActiveSession(userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: userSessions.id })
+    .from(userSessions)
+    .where(
+      and(
+        eq(userSessions.userId, userId),
+        isNull(userSessions.revokedAt),
+        gt(userSessions.expiresAt, new Date()),
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
 export async function listActiveSessionsForUser(
   userId: string,
   currentTokenHash: string | null,

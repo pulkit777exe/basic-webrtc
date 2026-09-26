@@ -6,6 +6,9 @@
  * total encoded streams grow quadratically. Six is where browsers start dropping
  * frames on modest hardware, so the room warns past that point. Real scaling
  * needs an SFU (mediasoup / LiveKit) — see TODOS.md.
+ *
+ * Kept in its own module (rather than inline in RoomPage) because the reasoning
+ * is the part worth finding later: the number is arbitrary without it.
  */
 
 /** Participant count above which a mesh call is likely to stutter. */

@@ -311,7 +311,7 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 
 ### Room Authorization
 
-- Room tokens are verified during WebSocket upgrade (`server.ts:137`), re-verified on **every** inbound WebSocket message, and for the captions upload `POST /api/rooms/{id}/transcribe` (`routes/room-captions.ts` — mounted *before* the account-authenticated rooms router, since an in-call client holds a room token, not a session token); every other room REST route authenticates with the session access token
+- Room tokens are verified during WebSocket upgrade (`server.ts:137`) and re-verified on **every** inbound WebSocket message (expiry + kick, both cheap), with room existence and account-session checks on the ~25s heartbeat (`hasActiveSession` — a room token outlives the 15-minute access token, so a revoked account would otherwise keep its call); they also authorize the captions upload `POST /api/rooms/{id}/transcribe` (`routes/room-captions.ts` — mounted *before* the account-authenticated rooms router, since an in-call client holds a room token, not a session token). Every other room REST route authenticates with the session access token
 - Roles (host/co-host/participant) stored in Redis hash `room:{id}:roles`
 - `getPeerRole()` checked before admin actions (`handlers/index.ts`)
 - Waiting room: token includes `waiting: true` flag; limited API access until admitted

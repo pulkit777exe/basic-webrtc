@@ -10,7 +10,11 @@ import { PublishBuffer } from './publish-buffer';
  * and circuit breaker. Local delivery never waits on it.
  */
 export function createRoomFanoutBuffer(): PublishBuffer {
-  return new PublishBuffer({
+  // Declared first so the log callbacks can read its counters: they only fire
+  // after construction, but referencing the const in its own initializer is a
+  // temporal dead zone error.
+  let buffer: PublishBuffer;
+  buffer = new PublishBuffer({
     // One MULTI/EXEC per flush, preserving per-channel order.
     publishBatch: async (channels) => {
       const tx = redis.multi();
@@ -24,10 +28,24 @@ export function createRoomFanoutBuffer(): PublishBuffer {
     probe: async () => {
       await redis.ping();
     },
+    // Counts ride along so fan-out is observable: a publish count that stalls
+    // while chat still persists is a cross-node problem, and a climbing drop
+    // count is a queue too small for the room's traffic.
     onDrop: (dropped, size) =>
-      logger.warn('[WS] publish queue full, dropped oldest', { dropped, size }),
+      logger.warn('[WS] publish queue full, dropped oldest', {
+        dropped,
+        size,
+        published: buffer.publishedCount,
+      }),
     onCircuitOpen: () =>
-      logger.error('[WS] Redis publish circuit open — cross-node fan-out degraded to local only'),
-    onCircuitClose: () => logger.info('[WS] Redis publish circuit closed, fan-out restored'),
+      logger.error('[WS] Redis publish circuit open — cross-node fan-out degraded to local only', {
+        published: buffer.publishedCount,
+        dropped: buffer.droppedCount,
+      }),
+    onCircuitClose: () =>
+      logger.info('[WS] Redis publish circuit closed, fan-out restored', {
+        published: buffer.publishedCount,
+      }),
   });
+  return buffer;
 }

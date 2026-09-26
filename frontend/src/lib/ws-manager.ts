@@ -766,13 +766,10 @@ export const WSManager = {
         });
       }
       if (intentionalDisconnect) return;
-      // 4004 means the server rejected our room token. Recovery owns this case:
-      // re-running the normal backoff loop here would reconnect with the same
-      // expired token and bounce straight back to 4004.
       if (event.code === 4004) {
-        // 4004 means the server rejected our room token. Reconnect with a fresh
-        // one if recovery already fetched it; otherwise start recovery. Either
-        // way, do NOT run the normal backoff loop: it would replay the same
+        // The server rejected our room token. Reconnect with a fresh one if
+        // recovery already fetched it; otherwise start recovery. Either way, do
+        // NOT run the normal backoff loop here: it would replay the same
         // expired token and bounce straight back to 4004.
         const pending = pendingReconnectToken;
         pendingReconnectToken = null;

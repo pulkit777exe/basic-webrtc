@@ -47,6 +47,8 @@ export class PublishBuffer {
   private queues = new Map<string, string[]>();
   private queued = 0;
   private dropped = 0;
+  /** Payloads successfully handed to the transport. */
+  private published = 0;
   private consecutiveFailures = 0;
   private circuitOpenedAt = 0;
   private isOpen = false;
@@ -76,6 +78,15 @@ export class PublishBuffer {
 
   get droppedCount(): number {
     return this.dropped;
+  }
+
+  /**
+   * Payloads successfully sent, so fan-out is observable: a room whose publish
+   * count stalls while chat still persists is a cross-node problem, and a rising
+   * drop count is a queue that is too small for the room's traffic.
+   */
+  get publishedCount(): number {
+    return this.published;
   }
 
   get circuitOpen(): boolean {
@@ -164,6 +175,9 @@ export class PublishBuffer {
     this.inFlight = (async () => {
       try {
         await this.send(batch);
+        let count = 0;
+        for (const payloads of batch.values()) count += payloads.length;
+        this.published += count;
         this.consecutiveFailures = 0;
       } catch {
         // The batch is dropped rather than requeued: during an outage,

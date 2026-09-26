@@ -1,7 +1,15 @@
 import type { WebSocket } from 'ws';
 import { getParticipant } from '../../lib/redis-rooms';
 import type { SignalJson } from '../../lib/signals';
+import type { TokenBucket } from '../../lib/rate-limit';
 
+/**
+ * The WebSocket, plus the per-connection state the server hangs off it.
+ *
+ * This is the single definition: it is shared with `WebSocketHandler`, which
+ * used to declare its own near-identical copy, so the two drifted (one gained
+ * `roomToken`, the other the disconnect and rate-limit fields).
+ */
 export interface ExtendedWebSocket extends WebSocket {
   userId?: string;
   roomId?: string;
@@ -10,6 +18,10 @@ export interface ExtendedWebSocket extends WebSocket {
   user?: { id: string; name: string; avatarUrl?: string | null };
   /** Token this socket is authorized by; replaced on a successful token_refresh. */
   roomToken?: string;
+  /** Disconnect cleanup is one-shot: close, error, and the sweep all call it. */
+  disconnectHandled?: boolean;
+  /** Per-connection flood-control buckets; dies with the socket. */
+  rateBuckets?: Map<string, TokenBucket>;
 }
 
 export interface ChatBufferEntry {

@@ -411,9 +411,10 @@ export function RoomPage() {
     return () => controller.stop();
   }, []);
 
-  // Mesh topology warning. Every participant sends N-1 encoded streams, so CPU
-  // and uplink climb steeply past ~6 people; warn once per call rather than
-  // pretending the room is fine. (Real scaling needs an SFU — see TODOS.md.)
+  // Mesh topology warning. Every participant encodes and uploads a separate
+  // stream to every other one, so CPU and uplink climb steeply past ~6 people;
+  // warn once per call rather than pretending the room is fine. (Real scaling
+  // needs an SFU — see TODOS.md.)
   const meshWarningShownRef = useRef(false);
   useEffect(() => {
     if (meshWarningShownRef.current) return;

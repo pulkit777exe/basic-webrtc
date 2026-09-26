@@ -3,6 +3,7 @@ import { WebSocketServer } from 'ws';
 import { DeepgramClient } from '@deepgram/sdk';
 import { logger } from '../lib/logger';
 import { getPeerRole, roomSignalChannel } from '../lib/redis-rooms';
+import { hasActiveSession } from '../services/session';
 import { verifyRoomToken } from '../utils/jwt';
 import type { PublishBuffer } from '../lib/publish-buffer';
 import { createRoomFanoutBuffer } from '../lib/room-fanout';
@@ -139,6 +140,12 @@ export function attachLiveCaptionsBridge(
                 }
                 if (!(await getPeerRole(roomId, userId))) {
                   ws.close(4003, 'no longer in room');
+                  return;
+                }
+                // Same reason as the signaling socket: a revoked account must
+                // not keep streaming audio to the provider.
+                if (!(await hasActiveSession(userId))) {
+                  ws.close(4005, 'session revoked');
                 }
               } catch (e) {
                 logger.error('Live caption re-auth failed', { roomId, userId, err: String(e) });
@@ -156,7 +163,8 @@ export function attachLiveCaptionsBridge(
           }
         };
 
-        ws.on('message', onClientMessage);        ws.on('close', () => {
+        ws.on('message', onClientMessage);
+        ws.on('close', () => {
           clearInterval(keepAlive);
           try {
             dgSocket.close();

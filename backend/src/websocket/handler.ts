@@ -33,12 +33,14 @@ import { parseRoomSettings } from '../lib/room-settings';
 import { publishSignal } from '../lib/redis-streams';
 import { takeToken, type TokenBucket } from '../lib/rate-limit';
 import { retry } from '../lib/retry';
+import { hasActiveSession } from '../services/session';
 import { PublishBuffer } from '../lib/publish-buffer';
 import { createRoomFanoutBuffer } from '../lib/room-fanout';
 import { generateRoomToken, verifyRoomToken } from '../utils/jwt';
 import { nanoid } from 'nanoid';
 import { WS_MAX_MESSAGE_BYTES } from '../config/scaling';
 import { handlerRegistry } from './handlers';
+import type { ExtendedWebSocket } from './handlers/types';
 
 const HEARTBEAT_INTERVAL_MS = 30000;
 const CHAT_FLUSH_INTERVAL_MS = 2000;
@@ -95,19 +97,6 @@ function isMustDeliver(type: unknown): boolean {
   return typeof type === 'string' && MUST_DELIVER.has(type);
 }
 const serverInstanceId = nanoid();
-
-interface ExtendedWebSocket extends WebSocket {
-  userId?: string;
-  roomId?: string;
-  isAlive?: boolean;
-  isWaiting?: boolean;
-  user?: PublicUser;
-  roomToken?: string;
-  /** Disconnect cleanup is one-shot: close, error, and the sweep all call it. */
-  disconnectHandled?: boolean;
-  /** Per-connection flood-control buckets; dies with the socket. */
-  rateBuckets?: Map<string, TokenBucket>;
-}
 
 interface ChatBufferEntry {
   roomId: string;
@@ -600,12 +589,22 @@ export class WebSocketHandler {
         return;
       }
 
-      // ── Ping / heartbeat: room existence ──
+      // ── Ping / heartbeat: room existence + account session ──
       if (signal.type === 'ping') {
         const meta = await getRoomMeta(roomId);
         if (!meta) {
           this.sendError(ws, 'Room not found or ended');
           ws.close(4002);
+          return;
+        }
+        // Session revocation. The room token outlives the access token by
+        // design, so without this an account that logged out everywhere (or was
+        // revoked, or changed its password) kept its call open while its REST
+        // calls failed. On the heartbeat rather than per message: it is a
+        // database read, and the client pings every 25s.
+        if (!(await hasActiveSession(userId))) {
+          this.sendError(ws, 'Session revoked');
+          ws.close(4005, 'session revoked');
           return;
         }
       }
@@ -837,24 +836,37 @@ export class WebSocketHandler {
     } while (cursor !== 0);
   }
 
+  /**
+   * Claim a socket's disconnect, once.
+   *
+   * Returns false when this socket must not touch shared state: either it has
+   * already been through cleanup (it fires from `close`, from `error`, *and*
+   * from the heartbeat sweep before it calls terminate(), so more than once per
+   * socket is normal), or a reconnect has already replaced it — cleaning up
+   * then would delete the *new* connection's room membership and announce a
+   * `leave` for a user still in the call.
+   */
+  private claimDisconnect(
+    ws: ExtendedWebSocket,
+    roomId: string,
+    userId: string,
+    currentMap: Map<string, Map<string, ExtendedWebSocket>>,
+  ): boolean {
+    if (ws.disconnectHandled) return false;
+    ws.disconnectHandled = true;
+    const current = currentMap.get(roomId)?.get(userId);
+    if (current && current !== ws) {
+      logger.debug('WS disconnect superseded by a newer socket', { roomId, userId });
+      return false;
+    }
+    return true;
+  }
+
   private handleDisconnect(ws: ExtendedWebSocket): void {
     const userId = ws.userId;
     const roomId = ws.roomId;
     if (!userId || !roomId) return;
-    // Runs from `close`, from `error`, *and* from the heartbeat sweep before it
-    // calls terminate() — so it fires more than once per socket in normal
-    // operation, and the retry chain widens the window.
-    if (ws.disconnectHandled) return;
-    ws.disconnectHandled = true;
-
-    // A reconnect may already have replaced this socket. Cleaning up then would
-    // delete the *new* connection's room membership and announce a `leave` for
-    // a user who is still in the call.
-    const current = this.rooms.get(roomId)?.get(userId);
-    if (current && current !== ws) {
-      logger.debug('WS disconnect superseded by a newer socket', { roomId, userId });
-      return;
-    }
+    if (!this.claimDisconnect(ws, roomId, userId, this.rooms)) return;
 
     logger.info('WS leave', { roomId, userId });
     this.removeFromMap(roomId, userId);
@@ -978,17 +990,11 @@ export class WebSocketHandler {
     const userId = ws.userId;
     const roomId = ws.roomId;
     if (!userId || !roomId) return;
-    // Same one-shot + superseded-socket rules as handleDisconnect. Without them,
-    // a waiting socket that flaps (mobile network) has its delayed cleanup
-    // delete the *replacement* socket's queue entry, after which the admit
-    // notification is routed to an undefined socket and the user waits forever.
-    if (ws.disconnectHandled) return;
-    ws.disconnectHandled = true;
-    const current = this.waitingRooms.get(roomId)?.get(userId);
-    if (current && current !== ws) {
-      logger.debug('WS waiting disconnect superseded by a newer socket', { roomId, userId });
-      return;
-    }
+    // Same claim rules as handleDisconnect. Without them, a waiting socket that
+    // flaps (mobile network) has its delayed cleanup delete the *replacement*
+    // socket's queue entry, after which the admit notification is routed to an
+    // undefined socket and the user waits in silence until their token expires.
+    if (!this.claimDisconnect(ws, roomId, userId, this.waitingRooms)) return;
     logger.info('WS waiting disconnect', { roomId, userId });
     this.removeFromWaitingMap(roomId, userId);
   }

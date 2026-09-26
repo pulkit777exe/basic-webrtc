@@ -70,6 +70,32 @@ describe('PublishBuffer batching', () => {
     expect(publishBatch).not.toHaveBeenCalled();
   });
 
+  it('counts published payloads, for fan-out observability', async () => {
+    const { buffer } = makeBuffer();
+    buffer.publish('room:a:signal', '1');
+    buffer.publish('room:a:signal', '2');
+    buffer.publish('room:b:signal', '3');
+    expect(buffer.publishedCount).toBe(0);
+
+    await buffer.flush();
+    expect(buffer.publishedCount).toBe(3);
+
+    buffer.publish('room:c:signal', '4');
+    await buffer.flush();
+    expect(buffer.publishedCount).toBe(4);
+  });
+
+  it('does not count a failed batch as published', async () => {
+    const publishBatch = vi.fn().mockRejectedValue(new Error('down'));
+    const buffer = new PublishBuffer({ publishBatch, failureThreshold: 5 });
+
+    buffer.publish('c', 'a');
+    await buffer.flush();
+
+    expect(buffer.publishedCount).toBe(0);
+    expect(buffer.droppedCount).toBe(0); // the batch failed, it did not overflow
+  });
+
   it('coalesces concurrent flushes into one batch', async () => {
     let release: (() => void) | undefined;
     const gate = new Promise<void>((resolve) => {

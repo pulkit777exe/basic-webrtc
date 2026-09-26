@@ -89,13 +89,16 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
 - Signaling uses **Redis pub/sub** (`this.publish` → `forwardFromRedis`), **not** `publishSignal` streams, for messages clients must receive (chat, ICE, offers, **`admin_mute_all`**, **`room_locked`**, **`admin_reactions_toggle`**, etc.).
 - **`join`**: Published so other peers get a **`join`** message with `user`; new socket also receives synthetic **`join`**s for peers already in the in-memory room map.
 - **Two publish paths.** Local delivery is always immediate. Cross-node delivery splits:
-  `offer` / `answer` / `ice` / `join` / `leave` (`MUST_DELIVER`) publish **straight
-  through** — they are unrecoverable if dropped and order-sensitive between the
-  local hop and the Redis hop. Everything else (reactions, captions, media
-  state, chat notifications) goes through the **bounded, circuit-broken
+  `offer` / `answer` / `join` / `leave` and the one-shot `admin_*` control
+  messages (`MUST_DELIVER`) publish **straight through** — they are
+  unrecoverable if dropped and order-sensitive between the local hop and the
+  Redis hop. Everything else goes through the **bounded, circuit-broken
   `PublishBuffer`** (`lib/publish-buffer.ts`, shared with live captions), which
   batches per channel into one MULTI/EXEC every 50ms and drops the oldest past
-  1000 queued. Do not move a must-deliver type into the buffer.
+  1000 queued. **`ice` is buffered deliberately**, not by oversight: candidates
+  arrive continuously (up to 100/s per connection), the receiver tolerates
+  losing one, and that volume would defeat the circuit breaker. Do not move a
+  must-deliver type into the buffer.
 - **Disconnect cleanup is one-shot** (`disconnectHandled`) and skips shared-state
   cleanup when a **newer socket has already replaced it** — otherwise a
   reconnecting user's new connection loses its membership and peers are told
