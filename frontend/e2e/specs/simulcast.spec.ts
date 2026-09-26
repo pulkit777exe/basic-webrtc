@@ -103,13 +103,23 @@ test.describe('simulcast', () => {
     expect(lowest.layers.filter((l) => l.framesPerSecond > 0)).toHaveLength(1);
     expect(lowest.source?.height).toBeGreaterThan(0);
 
-    // The production policy reads a real measurement here. On loopback with fake
-    // devices that estimate carries the smallest layer but not 1.5x the next one
-    // up, so the correct outcome is to hold — promoting here would be the bug.
+    // The production policy reads a real measurement here. What holds regardless
+    // of what the browser happens to estimate is the *invariant*: exactly one
+    // encoding stays active, and it is never above the ceiling it was given.
+    //
+    // Which layer it picks is deliberately NOT asserted here. An earlier version
+    // asserted "holds at the lowest layer", reasoning that loopback with fake
+    // devices reports an estimate that carries q but not 1.5x of h. That is a
+    // property of a live measurement, not of the code, and it failed under CPU
+    // load when the estimate came back higher and the policy correctly promoted.
+    // The threshold behaviour is unit tested with injected bandwidth in
+    // `tests/lib/simulcast.test.ts`, where it is deterministic.
     expect(lowest.availableOutgoingBitrate).toBeGreaterThan(0);
     const held = await bravo.evaluate(() => window.__e2e.setSimulcastLayer(2));
     expect(held!.encodings.filter((e) => e.active)).toHaveLength(1);
-    expect(held!.encodings[0]!.active).toBe(true);
+    const activeIndex = held!.encodings.findIndex((e) => e.active);
+    expect(activeIndex).toBeGreaterThanOrEqual(0);
+    expect(activeIndex, 'the policy must never pick a layer above the ceiling').toBeLessThanOrEqual(2);
 
     // Drive the mechanism directly: does the engine honour a layer switch at all?
     // This is the part no unit test can reach.
@@ -196,7 +206,7 @@ test.describe('simulcast', () => {
     await bravoCtx.close();
   });
 
-  test('a small encoder budget cannot promote the full layer', async ({ browser }) => {
+  test('a small encoder budget pulls the layer back down', async ({ browser }) => {
     // Adaptive quality dropping the capture to 360p means the 1080p layer is not
     // worth encoding even on a fast link. This is the guard that stops simulcast
     // spending uplink on a resolution nobody can see.
@@ -209,12 +219,18 @@ test.describe('simulcast', () => {
     await Promise.all([openPeer(alpha, 'alpha', roomId), openPeer(bravo, 'bravo', roomId)]);
     await waitForMedia(bravo, 'bravo media');
 
-    // Ceiling 0 is the 300kbps budget from the ladder's lowest rung. Even with a
-    // generous link, the policy must not reach past it.
-    await bravo.evaluate(() => window.__e2e.setSimulcastLayer(0));
-    const capped = await report(bravo, 'alpha');
+    // Start on the full layer, forced, so the link's bandwidth estimate is not
+    // what put us there. Without this the test could pass for the wrong reason: on
+    // a quiet loopback the policy never promotes anyway, so a broken ceiling would
+    // go unnoticed. (It did — ignoring the ceiling entirely left this green.)
+    const promoted = await bravo.evaluate(() => window.__e2e.forceSimulcastLayer('alpha', 2));
+    expect(promoted!.encodings[2]!.active).toBe(true);
+
+    // Now drop the ceiling to 0 — the 300kbps budget from the ladder's lowest rung.
+    // Whatever the link can carry, the policy must not stay above it.
+    const capped = await bravo.evaluate(() => window.__e2e.setSimulcastLayer(0));
     expect(capped!.encodings.filter((e) => e.active)).toHaveLength(1);
-    expect(capped!.encodings[0]!.active).toBe(true);
+    expect(capped!.encodings[0]!.active, 'the ceiling must pull the layer back down').toBe(true);
     expect(capped!.encodings[2]!.active).toBe(false);
 
     const still = await waitForMedia(bravo, 'bravo media under the ceiling');

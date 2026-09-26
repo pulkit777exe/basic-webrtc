@@ -35,11 +35,22 @@ const screenStreams = new Map<string, MediaStream>();
 /** Local screen share senders per remote peer. */
 const screenSenders = new Map<string, RTCRtpSender>();
 /**
- * Active simulcast layer per sender, keyed weakly so a closed connection's
- * sender is collected with it. Starts absent, which reads as layer 0 — the
- * lowest — matching what the transceiver was created with.
+ * Which simulcast layer a sender is actually on, read from the sender.
+ *
+ * This used to come from a `WeakMap` the manager kept alongside the senders. That
+ * is a shadow copy of state the browser already owns, and it drifts: anything that
+ * changes the active encoding without going through the manager leaves the
+ * manager convinced the sender is elsewhere, so `chooseSimulcastLayer` reports "no
+ * change" and silently stops correcting it. Reading `getParameters()` cannot
+ * drift, and costs nothing next to the `getStats()` already being awaited here.
+ *
+ * Defaults to the lowest layer, which is what a transceiver is created with.
  */
-const simulcastLayers = new WeakMap<RTCRtpSender, number>();
+function activeSimulcastLayer(sender: RTCRtpSender): number {
+  const encodings = sender.getParameters().encodings ?? [];
+  const index = encodings.findIndex((encoding) => encoding.active !== false);
+  return index >= 0 ? index : 0;
+}
 const MAX_ICE_RESTARTS = 3;
 let localStream: MediaStream | null = null;
 
@@ -442,12 +453,10 @@ export const RTCManager = {
           availableOutgoingBitrate: bitrate,
           maxLayerIndex,
           // Per sender, not global: two peers can be promoted independently.
-          currentLayerIndex: simulcastLayers.get(sender) ?? 0,
+          currentLayerIndex: activeSimulcastLayer(sender),
         });
         if (!decision.changed) return;
-        if (await applySimulcastLayer(sender, decision.index)) {
-          simulcastLayers.set(sender, decision.index);
-        }
+        await applySimulcastLayer(sender, decision.index);
       }),
     );
   },
