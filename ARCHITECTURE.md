@@ -277,7 +277,7 @@ Redis (Upstash) holds ephemeral/real-time state — **not** a second database. K
    → RTCManager queues ICE candidates until setRemoteDescription completes
 ```
 
-**CONFIRMED** — traced through `backend/src/server.ts:115-165`, `backend/src/websocket/handler.ts:61-100`, `frontend/src/lib/ws-manager.ts:30-38`, `frontend/src/lib/rtc-manager.ts:1-57`, and `CONTEXT.md`.
+**CONFIRMED** — traced through `backend/src/server.ts:145-197` (the `/ws` upgrade and its room-token gate), `frontend/src/lib/pending-ice.ts:19` (`PendingIceQueue`), `frontend/src/lib/rtc-manager.ts:101` (`flushPendingIceCandidates`), `frontend/src/lib/ws-manager.ts:162-178` (the session-generation guard that drops a stale async renewal), and `CONTEXT.md`.
 
 ### Flow 3: Client-Side Recording
 
@@ -295,7 +295,7 @@ Redis (Upstash) holds ephemeral/real-time state — **not** a second database. K
    → Download button appears in UI header
 ```
 
-**CONFIRMED** — traced through `backend/src/websocket/handler.ts:747-807`, `frontend/src/pages/RoomPage.tsx:457-530`, `frontend/src/lib/RecordingManager.ts`.
+**CONFIRMED** — traced through `backend/src/websocket/handler.ts:1008` (`startRoomRecording`) and `:1045` (`stopRoomRecording`), `frontend/src/pages/RoomPage.tsx:624-662` (the lazy import and `startRecording` / `stopAndSave` effect), `frontend/src/lib/RecordingManager.ts`.
 
 ## 6. AUTHENTICATION & AUTHORIZATION
 
@@ -314,7 +314,7 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 1. Login/signup returns short-lived access token in response body
 2. Frontend stores in memory (`frontend/src/lib/api.ts:14` — `let accessToken: string | null`)
 3. `api.ts` attaches `Authorization: Bearer {token}` to every request
-4. `authenticateToken` middleware (`middleware/auth.ts:92-94`) calls `authenticate()`
+4. `authenticateToken` middleware (`backend/src/middleware/auth.ts:109-111`) calls `authenticate()`
 5. `authenticate()` verifies JWT, then validates session hash against Redis (`validateSessionToken`)
 6. Session activity is debounced (`touchSessionActivity` — 5-minute window)
 
@@ -532,9 +532,7 @@ versions against both manifests, every `file:line` reference resolved and read t
 confirm it points at the claim, `pgTable` count (15), the `jobs/` contents, the
 three JWT secrets, and each `cat`/`grep` command in the table above.
 
-**Known stale references**: the `CONFIRMED — traced through ...` notes in
-sections 6 and 10 still cite line ranges that predate several refactors
-(`server.ts:115-165`, `handler.ts:61-100`, `ws-manager.ts:30-38`,
-`rtc-manager.ts:1`, `handler.ts:747-807`, `RoomPage.tsx:457`). The *claims* they
-support were verified when written and the behaviours still hold; only the line
-numbers drifted. Re-derive them from the symbols before relying on the numbers.
+Every `file:line` reference in this document was re-derived from the code and
+read to confirm it points at the claim, not merely that the line exists. Line
+numbers here are a convenience, not a contract — if one looks wrong, trust the
+symbol.
