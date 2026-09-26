@@ -11,11 +11,12 @@ import cookieParser from 'cookie-parser';
 import { WebSocketHandler } from './websocket/handler';
 import { attachLiveCaptionsBridge, type LiveCaptionAuth } from './websocket/live-captions-bridge';
 import { verifyRoomToken } from './utils/jwt';
-import { isAllowedOrigin } from './utils/origin';
+import { isAllowedOrigin, parseAllowedOrigins } from './utils/origin';
 import authRoutes from './routes/auth/index.js';
 import oauthRoutes from './routes/oauth';
 import accountRoutes from './routes/account';
 import roomRoutes from './routes/rooms';
+import roomCaptionRoutes from './routes/room-captions';
 import notesRoutes from './routes/notes';
 import iceRoutes from './routes/ice';
 import recordingsRoutes from './routes/recordings';
@@ -27,6 +28,8 @@ import { requireVerifiedEmail } from './middleware/verified-email';
 import { globalLimiter, apiLimiter, authLimiter } from './lib/rate-limiters';
 import { logger } from './lib/logger';
 import { configureTrustProxy } from './config/scaling';
+import { createRoomFanoutBuffer } from './lib/room-fanout';
+import { asc, gt } from 'drizzle-orm';
 import { closeDatabase, db } from './db';
 import { startCleanupJob } from './lib/cleanup-job';
 import { startExportWorker } from './jobs/export-worker';
@@ -39,10 +42,23 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 4000;
-const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5173', 'http://localhost:3000'];
+const DEV_ORIGINS = ['http://localhost:5173', 'http://localhost:3000'];
+const { origins: configuredOrigins, problems: originProblems } = parseAllowedOrigins(
+  process.env.ALLOWED_ORIGINS,
+);
+const ALLOWED_ORIGINS = configuredOrigins.length > 0 ? configuredOrigins : DEV_ORIGINS;
 
-if (process.env.NODE_ENV === 'production' && !process.env.ALLOWED_ORIGINS) {
-  logger.error('ALLOWED_ORIGINS must be set in production');
+if (originProblems.length > 0) {
+  logger.error('ALLOWED_ORIGINS contains invalid entries', { problems: originProblems.join('; ') });
+}
+
+// Fail closed in production: a missing, blank, or unusable allowlist means every
+// browser request and WebSocket upgrade would be rejected, which is much harder
+// to diagnose from a 403 in production than at boot.
+if (process.env.NODE_ENV === 'production' && (originProblems.length > 0 || configuredOrigins.length === 0)) {
+  logger.error('ALLOWED_ORIGINS must list at least one valid origin in production', {
+    problems: originProblems.join('; ') || 'no valid origins parsed',
+  });
   process.exit(1);
 }
 
@@ -71,6 +87,9 @@ app.use('/api/auth', authLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/oauth', oauthRoutes);
 app.use('/api/account', accountRoutes);
+// Caption uploads authenticate with the room token, not a session token, so this
+// is mounted *before* the access-token-protected rooms router below.
+app.use('/api/rooms', apiLimiter, roomCaptionRoutes);
 app.use('/api/rooms', authenticateToken, requireVerifiedEmail, apiLimiter, roomRoutes);
 app.use('/api/rooms', authenticateToken, requireVerifiedEmail, apiLimiter, notesRoutes);
 app.use('/api/ice-servers', optionalAuthenticate, apiLimiter, iceRoutes);
@@ -119,7 +138,9 @@ const server = createServer(app);
 
 const wss = new WebSocketServer({ noServer: true });
 const wssLive = new WebSocketServer({ noServer: true });
-attachLiveCaptionsBridge(wssLive);
+// One buffer for every room publish, shared by signaling and live captions.
+const roomFanout = createRoomFanoutBuffer();
+attachLiveCaptionsBridge(wssLive, roomFanout);
 
 server.on('upgrade', (request, socket, head) => {
   // CSWSH hardening: browsers must come from an allowlisted origin. Tokens are
@@ -148,10 +169,17 @@ server.on('upgrade', (request, socket, head) => {
       return;
     }
     wssLive.handleUpgrade(request, socket, head, (ws) => {
-      (ws as WebSocket & { liveCaptionAuth?: LiveCaptionAuth }).liveCaptionAuth = {
+      const captionWs = ws as WebSocket & {
+        liveCaptionAuth?: LiveCaptionAuth;
+        liveCaptionRoomToken?: string;
+      };
+      captionWs.liveCaptionAuth = {
         userId: payload.userId,
         roomId: payload.roomId,
       };
+      // Kept so the bridge can re-check expiry; the upgrade-time payload alone
+      // would leave the socket authorized forever.
+      captionWs.liveCaptionRoomToken = token ?? undefined;
       wssLive.emit('connection', ws);
     });
     return;
@@ -181,13 +209,18 @@ server.on('upgrade', (request, socket, head) => {
   });
 });
 
-new WebSocketHandler(wss);
+const wsHandler = new WebSocketHandler(wss, roomFanout);
 
 let shuttingDown = false;
 function gracefulShutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   logger.info('Shutdown signal received', { signal });
+
+  // Order matters: closing sockets makes each one publish a `leave`, so the
+  // fan-out buffer must still be running to deliver them. Stop the background
+  // work and drain the buffer afterwards.
+  wsHandler.stopBackgroundWork();
 
   wss.clients.forEach((ws) => {
     ws.close(1001, 'Server shutting down');
@@ -204,6 +237,14 @@ function gracefulShutdown(signal: string) {
         }
         void (async () => {
           try {
+            // Give the leave messages produced by the socket closes one last
+            // chance to reach the other nodes, waiting out anything already in
+            // flight rather than abandoning the rest of the queue.
+            await roomFanout
+              .flushAll()
+              .catch((e) => logger.error('Final fanout flush failed', { err: String(e) }));
+            roomFanout.stop();
+            wsHandler.stop();
             await closeDatabase();
             logger.info('Graceful shutdown complete');
             process.exit(0);
@@ -222,6 +263,16 @@ function gracefulShutdown(signal: string) {
 process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.once('SIGINT', () => gracefulShutdown('SIGINT'));
 
+// Nothing in this process should leave a promise rejection unobserved: an
+// unhandled rejection in Bun/Node terminates the process by default, taking
+// every open call with it. Log it, keep serving.
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled promise rejection', { err: String(reason) });
+});
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught exception', { err: String(err) });
+});
+
 server.listen(PORT, () => {
   logger.info(`Server running on http://localhost:${PORT}`);
   logger.info(`WebSocket server ready at ws://localhost:${PORT}/ws`);
@@ -236,16 +287,27 @@ server.listen(PORT, () => {
     try {
       let count = 0;
       const BATCH_SIZE = 500;
-      let offset = 0;
+      // Keyset pagination on the primary key: OFFSET both rescans skipped rows
+      // and silently skips/duplicates users created or deleted while the seed
+      // runs, and degrades quadratically on a large table.
+      let cursor: string | undefined;
       while (true) {
-        const batch = await db.select({ email: users.email }).from(users).limit(BATCH_SIZE).offset(offset);
+        const batch = await db
+          .select({ id: users.id, email: users.email })
+          .from(users)
+          .where(cursor ? gt(users.id, cursor) : undefined)
+          .orderBy(asc(users.id))
+          .limit(BATCH_SIZE);
         if (batch.length === 0) break;
         for (const row of batch) {
           const username = row.email.split('@')[0];
           if (username) addUsername(username);
         }
         count += batch.length;
-        offset += BATCH_SIZE;
+        cursor = batch[batch.length - 1]!.id;
+        if (count % 5_000 === 0) {
+          logger.info('[BloomFilter] seeding progress', { count });
+        }
         if (batch.length < BATCH_SIZE) break;
       }
       markSeeded();

@@ -1,6 +1,7 @@
 import { store } from '@/store';
 import { audioOutputDeviceIdAtom, localMediaAtom, mutedByHostAtom } from '@/store/atoms';
 import { RTCManager } from '@/lib/rtc-manager';
+import type { QualityLevel } from '@/lib/bandwidth';
 
 let localStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
@@ -64,7 +65,10 @@ export async function negotiateBestVideoTrack(
     }
   }
 
-  if (failures.length > 0) {
+  if (failures.length > 0 && import.meta.env.DEV) {
+    // Which rungs of the ladder the browser rejected is a local diagnostic;
+    // there is no logger in the frontend bundle, and shipping it to production
+    // just prints noise in the user's console.
     console.debug('[MediaManager] Video ladder failures:', failures);
   }
 
@@ -105,7 +109,9 @@ export async function negotiateBestAudioTrack(
     return stream.getAudioTracks()[0] ?? null;
   } catch (err) {
     // DSP constraints rejected — collect the error before the plain fallback attempt
-    console.debug('[MediaManager] Audio DSP constraints rejected:', err instanceof Error ? err.message : String(err), '— falling back to plain audio');
+    if (import.meta.env.DEV) {
+      console.debug('[MediaManager] Audio DSP constraints rejected:', err instanceof Error ? err.message : String(err), '— falling back to plain audio');
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: deviceId ? { deviceId: { exact: deviceId } } : true,
@@ -406,11 +412,41 @@ export const MediaManager = {
    * Useful for displaying in a settings panel.
    */
   getActiveVideoResolution(): { width: number; height: number } | null {
-    const track = localStream?.getVideoTracks()[0];
+    // From the store, not the module-level `localStream`: toggleVideo and
+    // switchVideoInput replace it, so the settings panel would otherwise report
+    // the pre-toggle resolution.
+    const track = store.get(localMediaAtom).stream?.getVideoTracks()[0];
     if (!track) return null;
     const settings = track.getSettings();
     return settings.width && settings.height
       ? { width: settings.width, height: settings.height }
       : null;
+  },
+
+  /**
+   * Apply a rung of the adaptive-quality ladder to the live camera track.
+   *
+   * Uses `ideal` constraints so the browser may land on a nearby supported
+   * resolution instead of failing outright. A rejected constraint leaves the
+   * stream at its current resolution, which is why this is not surfaced to the
+   * user — it is an optimisation, not a feature they toggled.
+   */
+  async applyVideoQuality(level: QualityLevel): Promise<void> {
+    // Read the stream from the store, not the module-level `localStream`:
+    // toggleVideo() and switchVideoInput() replace it, and a stale reference
+    // made adaptive quality silently skip the new track.
+    const stream = store.get(localMediaAtom).stream;
+    const track = stream?.getVideoTracks()[0];
+    if (!track) return;
+    if (track.readyState === 'ended') return;
+    try {
+      await track.applyConstraints({
+        width: { ideal: level.width },
+        height: { ideal: level.height },
+        frameRate: { ideal: 30 },
+      });
+    } catch (error) {
+      console.warn('[MediaManager] could not apply video constraints', error);
+    }
   },
 };

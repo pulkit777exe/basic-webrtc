@@ -115,7 +115,7 @@ export function RoomChatSidebar({ onClose }: { onClose: () => void }) {
             {messages.length}
           </Badge>
         </div>
-        <Button variant="ghost" size="icon-sm" className="rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)" onClick={onClose}>
+        <Button variant="ghost" size="icon-sm" className="rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)" onClick={onClose} aria-label="Close chat">
           <X className="h-4 w-4" />
         </Button>
       </div>
@@ -164,6 +164,7 @@ export function RoomChatSidebar({ onClose }: { onClose: () => void }) {
                               WSManager.send({ type: 'chat_reaction', messageId: m.id, emoji });
                             }}
                             title={`React with ${emoji}`}
+                            aria-label={`React with ${emoji}`}
                           >
                             {emoji}
                           </Button>
@@ -185,6 +186,7 @@ export function RoomChatSidebar({ onClose }: { onClose: () => void }) {
                           });
                         }}
                         title="Pin message"
+                        aria-label={`Pin message from ${m.userName ?? 'user'}`}
                       >
                         <Pin className="h-3.5 w-3.5" />
                       </Button>
@@ -227,6 +229,7 @@ export function RoomChatSidebar({ onClose }: { onClose: () => void }) {
       <div className="p-4 sm:p-5">
         <Textarea
           placeholder={chatEnabled ? 'Type a message...' : 'Chat is disabled by the host'}
+          aria-label={chatEnabled ? 'Message' : 'Chat is disabled by the host'}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), send())}

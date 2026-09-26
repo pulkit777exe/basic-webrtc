@@ -5,3 +5,7 @@ dist
 src/generated
 prisma/generated
 tsconfig.tsbuildinfo
+# Generated coverage reports were committed once and had to be removed again;
+# the root .gitignore covers this too, but a package-local copy keeps the rule
+# true even if this package is copied out on its own.
+coverage

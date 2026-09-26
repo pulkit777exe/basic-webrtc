@@ -1374,8 +1374,11 @@ paths:
       tags: [Rooms]
       summary: Transcribe a short audio clip for live captions
       description: >-
-        Authenticates with a room token (Bearer) rather than an account token.
+        Authenticates with a room token (Bearer) rather than an account token:
+        this route is mounted outside the account-authenticated rooms router.
         Requires OPENAI_API_KEY or DEEPGRAM_API_KEY; returns 503 when neither is set.
+      security:
+        - RoomTokenAuth: []
       parameters:
         - name: id
           in: path
@@ -1507,6 +1510,42 @@ paths:
           description: Joined room, returns room token
         "403":
           description: Room locked or passcode required
+
+  /api/rooms/{id}/refresh-token:
+    post:
+      tags: [Rooms]
+      summary: Mint a replacement room token for a call in progress
+      description: >-
+        Room tokens expire (JWT_ROOM_EXPIRY, 2h by default) and the server
+        re-verifies them on every WebSocket message, so a long call renews here
+        instead of being dropped at the deadline. Requires LIVE admission —
+        current peer role or host, existing room, not kicked. Historical
+        membership is intentionally insufficient: it admits past participants so
+        they can read a recap, which is not permission to hold a live-call token.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Replacement room token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  roomToken:
+                    type: string
+        "400":
+          description: INVALID_ROOM_ID
+        "403":
+          description: KICKED or NOT_IN_CALL — removed from, or not currently in, this call
+        "404":
+          description: ROOM_NOT_FOUND
 
   /api/ice-servers:
     get:
@@ -1815,6 +1854,13 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    RoomTokenAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Room-scoped JWT (the same token used for the WebSocket upgrade), not an
+        account access token. Used by the in-call caption upload.
 
   schemas:
     AuthResponse:

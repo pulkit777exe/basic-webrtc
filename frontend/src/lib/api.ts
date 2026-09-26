@@ -59,6 +59,22 @@ async function request<T>(
   path: string,
   options: RequestInit & { token?: string | null } = {},
 ): Promise<T> {
+  return requestWithRetry(path, options, true);
+}
+
+/**
+ * One HTTP attempt, plus a single retry after refreshing the access token.
+ *
+ * Access tokens are short-lived (15m) while a call can last hours, and the
+ * refresh token lives in an httpOnly cookie. Without this, any authenticated
+ * call made late in a call — notably renewing the *room* token — failed with a
+ * bare 401 even though the session was perfectly valid.
+ */
+async function requestWithRetry<T>(
+  path: string,
+  options: RequestInit & { token?: string | null },
+  allowAuthRetry: boolean,
+): Promise<T> {
   const { token = accessToken, ...init } = options;
   const headers: HeadersInit = {
     ...(init.headers as Record<string, string>),
@@ -99,6 +115,12 @@ async function request<T>(
 
       if (!res.ok) {
         const payload = data as { error?: string; errors?: string[]; code?: string };
+        // The session is still valid; only the short-lived access token is not.
+        // Refresh once through the cookie, then replay the original request.
+        if (res.status === 401 && allowAuthRetry && !isAuthEndpoint(path)) {
+          await refreshAccessToken();
+          return requestWithRetry<T>(path, options, false);
+        }
         const errorMessage =
           payload.error ||
           (Array.isArray(payload.errors) && payload.errors.length
@@ -122,6 +144,37 @@ async function request<T>(
     }
   }
   throw new Error(NETWORK_ERROR_MESSAGE, { cause: lastNetworkError });
+}
+
+/**
+ * Endpoints that authenticate *by* the access token rather than the session
+ * cookie. Retrying these on a 401 cannot help — a 401 there is a real failure
+ * (bad credentials, revoked session), and retrying would surface the *refresh*
+ * endpoint's error instead, e.g. breaking logout.
+ */
+function isAuthEndpoint(path: string): boolean {
+  return (
+    path.startsWith("/api/auth/refresh") ||
+    path.startsWith("/api/auth/login") ||
+    path.startsWith("/api/auth/logout") ||
+    path.startsWith("/api/auth/signup") ||
+    path.startsWith("/api/auth/sessions/revoke")
+  );
+}
+
+/** Refresh the access token from the httpOnly cookie, de-duplicating concurrent calls. */
+let refreshInFlight: Promise<void> | null = null;
+function refreshAccessToken(): Promise<void> {
+  if (!refreshInFlight) {
+    refreshInFlight = request<{ accessToken: string }>("/api/auth/refresh", { method: "POST" })
+      .then((data) => {
+        if (data.accessToken) setAccessToken(data.accessToken);
+      })
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  return refreshInFlight;
 }
 
 export const api = {
@@ -272,6 +325,17 @@ export const api = {
         endedAt: string | null;
       }>;
     }>("/api/rooms");
+  },
+
+  /**
+   * Replacement room token for a call already in progress. Room tokens expire
+   * and the server re-verifies them per message, so long calls renew here
+   * instead of being dropped at the deadline.
+   */
+  async refreshRoomToken(id: string) {
+    return request<{ roomToken: string }>(`/api/rooms/${id}/refresh-token`, {
+      method: "POST",
+    });
   },
 
   async joinRoom(id: string, passcode?: string) {

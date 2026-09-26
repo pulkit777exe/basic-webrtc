@@ -358,6 +358,7 @@ export function RoomControlBar({
                   variant="ghost"
                   size="icon"
                   className="h-10 w-10 rounded-full text-(--room-text) hover:bg-(--room-elevated) hover:text-(--room-text)"
+                  aria-label="Change layout"
                 >
                   <LayoutGrid className="h-4 w-4" />
                 </Button>

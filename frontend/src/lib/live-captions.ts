@@ -197,6 +197,12 @@ export function startWhisperChunkCaptions(opts: {
   stream: MediaStream;
   roomId: string;
   roomToken: string;
+  /**
+   * Read the live room token for each upload. Room tokens are renewed
+   * mid-call, so a recorder holding the token it was started with would keep
+   * presenting an expired one and silently fail for the rest of the call.
+   */
+  getRoomToken?: () => string | null;
   shouldRun: () => boolean;
   onFinalText: (text: string) => void;
 }): (() => void) | null {
@@ -225,7 +231,8 @@ export function startWhisperChunkCaptions(opts: {
     if (!opts.shouldRun() || inFlight || e.data.size < 1200) return;
     inFlight = true;
     try {
-      const { text } = await api.transcribeRoomAudio(opts.roomId, e.data, opts.roomToken);
+      const token = opts.getRoomToken?.() ?? opts.roomToken;
+      const { text } = await api.transcribeRoomAudio(opts.roomId, e.data, token);
       const t = text?.trim();
       if (t) opts.onFinalText(t);
     } catch {

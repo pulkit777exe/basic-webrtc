@@ -10,50 +10,66 @@ A WebRTC video conferencing application with a React single-page frontend and an
 
 | Library | Version | Source |
 |---------|---------|--------|
-| React | `^19.2.7` | `frontend/package.json:41` |
-| React DOM | `^19.2.7` | `frontend/package.json:43` |
-| React Router DOM | `^7.17.0` | `frontend/package.json:46` |
-| TypeScript | `~6.0.3` | `frontend/package.json:69` |
-| Vite | `^8.0.16` | `frontend/package.json:71` |
-| Tailwind CSS | `^4.3.0` | `frontend/package.json:50` |
-| Jotai | `^2.20.0` | `frontend/package.json:37` |
-| Sentry React | `^10.63.0` | `frontend/package.json:27` |
-| Sentry Vite Plugin | `^5.3.0` | `frontend/package.json:28` |
-| GSAP | `^3.15.0` | `frontend/package.json:35` |
-| Zod | `^4.4.3` | `frontend/package.json:52` |
-| React Hook Form | `^7.77.0` | `frontend/package.json:44` |
+| React | `^19.2.7` | `frontend/package.json` |
+| React DOM | `^19.2.7` | `frontend/package.json` |
+| React Router DOM | `^7.18.4` | `frontend/package.json` |
+| TypeScript | `~6.0.3` | `frontend/package.json` |
+| Vite | `^8.0.16` | `frontend/package.json` |
+| Tailwind CSS | `^4.3.0` | `frontend/package.json` |
+| Jotai | `^2.20.0` | `frontend/package.json` |
+| Sentry React | `^10.63.0` | `frontend/package.json` |
+| Sentry Vite Plugin | `^5.3.0` | `frontend/package.json` |
+| GSAP | `^3.15.0` | `frontend/package.json` |
+| Zod | `^4.4.3` | `frontend/package.json` |
+| React Hook Form | `^7.77.0` | `frontend/package.json` |
 
 ### Backend (`backend/`)
 
 | Library | Version | Source |
 |---------|---------|--------|
-| Express | `^5.2.1` | `backend/package.json:65` |
-| Bun | `^1.3.14` (types) | `backend/package.json:29` |
-| TypeScript | `^6.0.3` (peer) | `backend/package.json:45` |
-| Drizzle ORM | `^0.45.2` | `backend/package.json:64` |
-| Drizzle Kit | `^0.31.10` | `backend/package.json:63` |
-| postgres.js | `^3.4.9` | `backend/package.json:76` |
-| Upstash Redis | `^1.38.0` | `backend/package.json:54` |
-| ws (WebSocket) | `^8.21.0` | `backend/package.json:81` |
-| jsonwebtoken | `^9.0.3` | `backend/package.json:70` |
-| Passport | `^0.7.0` | `backend/package.json:74` |
-| Passport Google OAuth | `^2.0.0` | `backend/package.json:75` |
-| bcrypt | `^6.0.0` | `backend/package.json:56` |
-| BullMQ | `^5.78.0` | `backend/package.json:58` |
-| Deepgram SDK | `^5.4.0` | `backend/package.json:48` |
-| Helmet | `^8.2.0` | `backend/package.json:68` |
-| express-rate-limit | `^8.5.2` | `backend/package.json:66` |
-| rate-limit-redis | `^4.3.1` | `backend/package.json:78` |
-| sharp | `0.35.4` (pinned) | `backend/package.json:79` |
-| Multer | `^2.1.1` | `backend/package.json:71` |
-| Bloom Filters | `^3.0.4` | `backend/package.json:57` |
-| OTPLib | `^13.4.1` | `backend/package.json:73` |
-| QRCode | `^1.5.4` | `backend/package.json:77` |
-| Archiver | `^7.0.1` | `backend/package.json:55` |
-| isomorphic-dompurify | `^3.16.0` | `backend/package.json:69` |
-| geoip-lite | `^2.0.2` | `backend/package.json:67` |
-| ua-parser-js | `^2.0.10` | `backend/package.json:80` |
-| dotenv | `^17.4.2` | `backend/package.json:62` |
+| Express | `^5.2.1` | `backend/package.json` |
+| Bun | `^1.3.14` (types) | `backend/package.json` |
+| TypeScript | `^6.0.3` (peer) | `backend/package.json` |
+| Drizzle ORM | `^0.45.2` | `backend/package.json` |
+| Drizzle Kit | `^0.31.10` | `backend/package.json` |
+| postgres.js | `^3.4.9` | `backend/package.json` |
+| Upstash Redis | `^1.38.0` | `backend/package.json` |
+| ws (WebSocket) | `^8.21.0` | `backend/package.json` |
+| jsonwebtoken | `^9.0.3` | `backend/package.json` |
+| Passport | `^0.7.0` | `backend/package.json` |
+| Passport Google OAuth | `^2.0.0` | `backend/package.json` |
+| bcrypt | `^6.0.0` | `backend/package.json` |
+| BullMQ | `^5.78.0` | `backend/package.json` |
+| Deepgram SDK | `^5.4.0` | `backend/package.json` |
+| Helmet | `^8.2.0` | `backend/package.json` |
+| express-rate-limit | `^8.5.2` | `backend/package.json` |
+| rate-limit-redis | `^4.3.1` | `backend/package.json` |
+| sharp | `0.35.4` (pinned) | `backend/package.json` |
+| Multer | `^2.1.1` | `backend/package.json` |
+| Bloom Filters | `^3.0.4` | `backend/package.json` |
+| OTPLib | `^13.4.1` | `backend/package.json` |
+| QRCode | `^1.5.4` | `backend/package.json` |
+| Archiver | `^7.0.1` | `backend/package.json` |
+| isomorphic-dompurify | `^3.16.0` | `backend/package.json` |
+| geoip-lite | `^2.0.2` | `backend/package.json` |
+| ua-parser-js | `^2.0.10` | `backend/package.json` |
+| dotenv | `^17.4.2` | `backend/package.json` |
+
+### Tests
+
+Both packages keep tests in a top-level `tests/` directory that **mirrors
+`src/`**, so `tests/lib/simulcast.test.ts` names the module it covers and no two
+modules can collide on a basename (`src/config/api.ts` and `src/lib/api.ts` both
+exist). Vitest's `include` matches `tests/` only, so a test added under `src/` is
+never silently skipped.
+
+Each package typechecks and lints its tests: `backend/tsconfig.json` includes
+`tests/**/*` and `biome` runs over `src/ tests/`; `frontend/tsconfig.test.json` is
+a third project in `tsc -b`, which keeps test code out of the app build's
+typecheck the same way the browser rig's config does.
+
+The browser rig is separate again — `frontend/e2e/` — because it runs real
+Chromium against the production peer module, not jsdom.
 
 ### Infrastructure
 
@@ -296,7 +312,7 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 ### Access Token Flow
 
 1. Login/signup returns short-lived access token in response body
-2. Frontend stores in memory (`api.ts:11` — `let accessToken: string | null`)
+2. Frontend stores in memory (`frontend/src/lib/api.ts:14` — `let accessToken: string | null`)
 3. `api.ts` attaches `Authorization: Bearer {token}` to every request
 4. `authenticateToken` middleware (`middleware/auth.ts:92-94`) calls `authenticate()`
 5. `authenticate()` verifies JWT, then validates session hash against Redis (`validateSessionToken`)
@@ -311,7 +327,7 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 
 ### Room Authorization
 
-- Room tokens are verified during WebSocket upgrade (`server.ts:137`) and for the captions upload `POST /api/rooms/{id}/transcribe` (`rooms.ts`); every other room REST route authenticates with the session access token
+- Room tokens are verified during WebSocket upgrade (`backend/src/server.ts:158`) and re-verified on **every** inbound WebSocket message (expiry + kick, both cheap), with room existence and account-session checks on the ~25s heartbeat (`hasActiveSession` — a room token outlives the 15-minute access token, so a revoked account would otherwise keep its call); they also authorize the captions upload `POST /api/rooms/{id}/transcribe` (`routes/room-captions.ts` — mounted *before* the account-authenticated rooms router, since an in-call client holds a room token, not a session token). Every other room REST route authenticates with the session access token
 - Roles (host/co-host/participant) stored in Redis hash `room:{id}:roles`
 - `getPeerRole()` checked before admin actions (`handlers/index.ts`)
 - Waiting room: token includes `waiting: true` flag; limited API access until admitted
@@ -323,7 +339,7 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 - **2FA**: TOTP via `otplib`, backup codes, recovery email — `backend/src/services/two-factor.ts`
 - **Suspicious login detection**: geoip + device fingerprinting, email alerts — `backend/src/services/login-analyzer.ts`
 - **Helmet**: CSP headers configured in `backend/src/middleware/security.ts`
-- **CORS**: Configurable via `ALLOWED_ORIGINS` env var — `server.ts:40`
+- **CORS**: Configurable via `ALLOWED_ORIGINS` env var — `backend/src/server.ts:47`
 - **WS origin check**: WebSocket upgrades from non-`ALLOWED_ORIGINS` browser origins are rejected with 403 (CSWSH hardening) — `backend/src/utils/origin.ts`
 - **Body limits**: JSON request bodies capped at 256 KB; multipart uploads capped per-route via multer (avatars 5 MB, transcription 4 MB)
 - **IDOR guards**: `GET /api/rooms/{id}/messages` requires session auth plus room membership — host, live peer (Redis role), or persisted `room_participants` row (`backend/src/lib/room-access.ts`); `GET /api/recordings/{roomId}/status` requires membership
@@ -354,9 +370,17 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 ### CI/CD (`.github/workflows/`)
 
 **ci.yml** — runs on push/PR to `main`:
-- Backend: `bun install` → `tsc --noEmit` → `bun run test`
-- Frontend: `bun install` → `tsc --noEmit` → `bun run test` → `bun run build`
+- Backend: `bun install` → `tsc --noEmit` → `bun run lint` → `bun run test`
+- Frontend: `bun install` → `tsc --noEmit` → `bun run lint` → `bun run test` → `bun run build`
+- `e2e-webrtc`: runs the browser rig in `frontend/e2e/` (real Chromium peers,
+  real SDP/ICE/encoders). The only job that covers what jsdom cannot reach, and
+  the `docker` job waits on it so a media regression cannot reach an image.
 - Docker: builds both images (only on `main`)
+
+The backend suite runs one test against a real PostgreSQL via PGlite (in-process
+WASM Postgres, no service container), because the session-revocation predicate
+that keeps a logged-out account in a call cannot be meaningfully asserted
+against a mocked db.
 
 **deploy.yml** — runs on push to `main`:
 - Tests, then SSH deploys to a server at `/var/www/webrtc-meet` using `docker-compose.prod.yml`
@@ -473,7 +497,7 @@ exports run in-process and deletions use a DB-backed poller
 
 ### Inconsistencies Found
 
-6. **`recording_start` signal type** is listed in `signals.ts:38` but the recording start handler (`handler.ts:747`) creates a session in Postgres and sets Redis state. The `signals.ts` type definition does not include `sessionId` as a required field, though the handler sends it.
+6. **`recording_start` signal type** is listed in `backend/src/lib/signals.ts:42` but the recording start handler (`backend/src/websocket/handler.ts:1007`) creates a session in Postgres and sets Redis state. The `signals.ts` type definition does not include `sessionId` as a required field, though the handler sends it.
 
 7. **Rate limiter Redis commands**: `rate-limiters.ts` has a custom `sendCommand` wrapper that handles `EVALSHA`, `EVAL`, `SCRIPT LOAD`, `PTTL`, `DECR`, and `DEL` — but the actual `rate-limit-redis` package may issue additional commands not handled here, which could throw at runtime.
 
@@ -483,7 +507,7 @@ exports run in-process and deletions use a DB-backed poller
 
 9. **WebSocket heartbeat**: `handler.ts` uses a 30-second ping/pong heartbeat. Clients that fail to respond are terminated. However, the frontend `ws-manager.ts` does not appear to handle `pong` responses or implement client-side ping — it relies on the browser's built-in WebSocket keepalive.
 
-10. **Session TTL mismatch**: `session.ts:10` sets `DEFAULT_SESSION_TTL_SECONDS = 24 * 60 * 60` (24h), but `config/redis.ts:23` sets refresh session TTL to 7 days (`REFRESH_SESSION_TTL_SEC`). Sessions in the DB can expire before the refresh token does.
+10. **Session TTL mismatch**: `backend/src/services/session.ts:10` sets `DEFAULT_SESSION_TTL_SECONDS = 24 * 60 * 60` (24h), but `backend/src/config/redis.ts:69` sets refresh session TTL to 7 days (`REFRESH_SESSION_TTL_SEC`). Sessions in the DB can expire before the refresh token does.
 
 ## 11. HOW TO VERIFY THIS DOCUMENT
 
@@ -494,7 +518,7 @@ exports run in-process and deletions use a DB-backed poller
 | Drizzle ORM with postgres.js | `cat backend/src/db/index.ts` — imports `drizzle-orm/postgres-js` |
 | Upstash Redis (REST, not TCP) | `cat backend/src/config/redis.ts` — `import { Redis } from '@upstash/redis'` |
 | Recording is client-side only | `cat frontend/src/lib/RecordingManager.ts` — stores in IndexedDB, no upload |
-| WebSocket upgrade at `/ws` | `cat backend/src/server.ts:115-165` — `path === '/ws'` check |
+| WebSocket upgrade at `/ws` | `grep -n "path !== '/ws'" backend/src/server.ts` — the upgrade path check |
 | JWT with three secret types | `cat backend/src/utils/jwt.ts:5-11` — JWT_SECRET, JWT_REFRESH_SECRET, JWT_ROOM_SECRET |
 | BullMQ workers (2 queues) | `ls backend/src/jobs/` — export-worker, deletion-worker (recording is inlined) |
 | Sentry with React Router v7 | `cat frontend/src/instrument.ts` — `createRoutesFromChildren`, `matchRoutes` from react-router-dom |
@@ -503,4 +527,14 @@ exports run in-process and deletions use a DB-backed poller
 
 ---
 
-**Last verified**: 2026-09-21 (verification table re-checked: versions, mesh, Drizzle, Upstash, client-only recording, `/ws` upgrade, JWT secrets, jobs, Sentry router integration, 15 tables, Redis rate limiting, AI notes pipeline).
+**Last verified**: 2026-09-26. Re-checked mechanically: all 39 dependency
+versions against both manifests, every `file:line` reference resolved and read to
+confirm it points at the claim, `pgTable` count (15), the `jobs/` contents, the
+three JWT secrets, and each `cat`/`grep` command in the table above.
+
+**Known stale references**: the `CONFIRMED — traced through ...` notes in
+sections 6 and 10 still cite line ranges that predate several refactors
+(`server.ts:115-165`, `handler.ts:61-100`, `ws-manager.ts:30-38`,
+`rtc-manager.ts:1`, `handler.ts:747-807`, `RoomPage.tsx:457`). The *claims* they
+support were verified when written and the behaviours still hold; only the line
+numbers drifted. Re-derive them from the symbols before relying on the numbers.

@@ -1,10 +1,9 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
-import multer from 'multer';
 import { db } from '../db';
 import { rooms, users, roomParticipants, roomSettings, messages } from '../db/schema';
 import { authenticateToken, optionalAuthenticate, requireUser } from '../middleware/auth';
-import { generateRoomId } from '../utils/validation';
+import { generateRoomId, validateRoomId } from '../utils/validation';
 import { generateRoomToken, generateWaitingToken } from '../utils/jwt';
 import { eq, and, desc, sql, inArray } from 'drizzle-orm';
 import bcrypt from 'bcrypt';
@@ -31,7 +30,6 @@ import {
 import { getRoomSettings, invalidateRoomSettings } from '../lib/room-settings';
 import { canAccessRoom, recordRoomMembership } from '../lib/room-access';
 import { redis } from '../config/redis';
-import { verifyRoomToken } from '../utils/jwt';
 import { apiLimiter } from '../lib/rate-limiters';
 import { globalLimiter } from '../lib/rate-limiters';
 import { logger } from '../lib/logger';
@@ -55,11 +53,6 @@ async function resolveCanonicalRoomId(raw: string): Promise<string | null> {
 
 const router = Router();
 const SALT_ROUNDS = 10;
-
-const captionTranscribeUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 4 * 1024 * 1024 },
-});
 
 router.param('id', async (req, res, next, raw: string) => {
   try {
@@ -438,6 +431,50 @@ router.post(
 );
 
 // Room state
+
+/**
+ * Mint a replacement room token for a call the caller is already in.
+ *
+ * Room tokens expire (JWT_ROOM_EXPIRY, 2h by default) and the server re-verifies
+ * them on every WebSocket message, so a long call would otherwise be cut off at
+ * the deadline.
+ *
+ * The guard is *live* admission, not `canAccessRoom`: that helper deliberately
+ * admits past participants so they can read the recap, which is not permission
+ * to hold a live-call token for a room they were since kicked from or have left.
+ */
+router.post(
+  '/:id/refresh-token',
+  async (req: Request<{ id: string }>, res: Response): Promise<void> => {
+    try {
+      const authUser = requireUser(req, res);
+      if (!authUser) return;
+      const roomId = req.params.id;
+      if (!validateRoomId(roomId)) {
+        res.status(400).json({ error: 'Invalid room ID', code: 'INVALID_ROOM_ID' });
+        return;
+      }
+      const meta = await getRoomMeta(roomId);
+      if (!meta) {
+        res.status(404).json({ error: 'Room not found', code: 'ROOM_NOT_FOUND' });
+        return;
+      }
+      if (await isKicked(roomId, authUser.id)) {
+        res.status(403).json({ error: 'Removed from room', code: 'KICKED' });
+        return;
+      }
+      const role = await getPeerRole(roomId, authUser.id);
+      if (!role && meta.hostId !== authUser.id) {
+        res.status(403).json({ error: 'Not in this call', code: 'NOT_IN_CALL' });
+        return;
+      }
+      res.json({ roomToken: generateRoomToken(authUser.id, roomId) });
+    } catch (error) {
+      logger.error('[Refresh Room Token Error]', { err: error });
+      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
+    }
+  },
+);
 
 /**
  * Rooms the caller hosts or has taken part in — powers the dashboard's
@@ -937,117 +974,6 @@ router.get(
       });
     } catch (error) {
       logger.error('[Join By Invite Error]', { err: error });
-      res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
-    }
-  },
-);
-
-// Live captions (optional): OpenAI Whisper — requires OPENAI_API_KEY; client uses room token
-router.post(
-  '/:id/transcribe',
-  apiLimiter,
-  captionTranscribeUpload.single('file'),
-  async (req: Request<{ id: string }>, res: Response): Promise<void> => {
-    const roomId = req.params.id;
-    const token = req.headers.authorization?.split(' ')[1];
-    const decoded = token ? verifyRoomToken(token) : null;
-    if (!decoded || decoded.roomId !== roomId) {
-      res.status(403).json({ error: 'Invalid room token', code: 'INVALID_TOKEN' });
-      return;
-    }
-
-    const file = req.file;
-    if (!file?.buffer?.length) {
-      res.status(400).json({ error: 'Missing audio file', code: 'MISSING_FILE' });
-      return;
-    }
-
-    const openaiKey = process.env.OPENAI_API_KEY?.trim();
-    const deepgramKey = process.env.DEEPGRAM_API_KEY?.trim();
-    const explicit = process.env.CAPTION_TRANSCRIBE_PROVIDER?.trim().toLowerCase();
-    const provider =
-      explicit === 'openai' || explicit === 'deepgram'
-        ? explicit
-        : openaiKey
-          ? 'openai'
-          : deepgramKey
-            ? 'deepgram'
-            : '';
-
-    if (
-      !provider ||
-      (provider === 'openai' && !openaiKey) ||
-      (provider === 'deepgram' && !deepgramKey)
-    ) {
-      if (!openaiKey && !deepgramKey) {
-        res.status(503).json({
-          error:
-            'Caption transcription is not configured. Set OPENAI_API_KEY and/or DEEPGRAM_API_KEY and optional CAPTION_TRANSCRIBE_PROVIDER=openai|deepgram',
-          code: 'TRANSCRIBE_DISABLED',
-        });
-        return;
-      }
-      res.status(503).json({
-        error: 'Caption transcription provider misconfigured',
-        code: 'TRANSCRIBE_DISABLED',
-      });
-      return;
-    }
-
-    try {
-      let text = '';
-
-      if (provider === 'deepgram' && deepgramKey) {
-        const upstream = await fetch(
-          'https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true',
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Token ${deepgramKey}`,
-              'Content-Type': file.mimetype || 'audio/webm',
-            },
-            body: new Uint8Array(file.buffer),
-          },
-        );
-        if (!upstream.ok) {
-          const errText = await upstream.text();
-          logger.error('[transcribe deepgram]', { status: upstream.status, body: errText });
-          res.status(502).json({ error: 'Transcription failed', code: 'TRANSCRIBE_FAILED' });
-          return;
-        }
-        const json = (await upstream.json()) as {
-          results?: { channels?: Array<{ alternatives?: Array<{ transcript?: string }> }> };
-        };
-        text = json.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim() ?? '';
-      } else if (openaiKey) {
-        const form = new FormData();
-        form.append('model', 'whisper-1');
-        form.append(
-          'file',
-          new Blob([new Uint8Array(file.buffer)], { type: file.mimetype || 'audio/webm' }),
-          'chunk.webm',
-        );
-
-        const upstream = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${openaiKey}` },
-          body: form,
-        });
-
-        if (!upstream.ok) {
-          const errText = await upstream.text();
-          logger.error('[transcribe openai]', { status: upstream.status, body: errText });
-          res.status(502).json({ error: 'Transcription failed', code: 'TRANSCRIBE_FAILED' });
-          return;
-        }
-
-        const json = (await upstream.json()) as { text?: string };
-        text = (json.text ?? '').trim();
-      }
-
-      res.json({ text });
-    } catch (error) {
-      logger.error('[transcribe]', { err: error });
       res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
     }
   },

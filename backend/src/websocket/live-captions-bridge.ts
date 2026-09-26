@@ -1,9 +1,12 @@
 import type { WebSocket } from 'ws';
 import { WebSocketServer } from 'ws';
 import { DeepgramClient } from '@deepgram/sdk';
-import { redis } from '../config/redis';
 import { logger } from '../lib/logger';
 import { getPeerRole, roomSignalChannel } from '../lib/redis-rooms';
+import { hasActiveSession } from '../services/session';
+import { verifyRoomToken } from '../utils/jwt';
+import type { PublishBuffer } from '../lib/publish-buffer';
+import { createRoomFanoutBuffer } from '../lib/room-fanout';
 import { validateRoomId } from '../utils/validation';
 
 export interface LiveCaptionAuth {
@@ -11,11 +14,23 @@ export interface LiveCaptionAuth {
   roomId: string;
 }
 
-type LiveCaptionWs = WebSocket & { liveCaptionAuth?: LiveCaptionAuth };
+type LiveCaptionWs = WebSocket & {
+  liveCaptionAuth?: LiveCaptionAuth;
+  liveCaptionRoomToken?: string;
+};
 
-function publishCaption(roomId: string, userId: string, text: string): void {
-  void redis
-    .publish(
+/** How often a live caption socket re-checks that it is still authorized. */
+const AUTH_RECHECK_INTERVAL_MS = 30_000;
+
+export function attachLiveCaptionsBridge(
+  wss: WebSocketServer,
+  publishBuffer: PublishBuffer = createRoomFanoutBuffer(),
+): void {
+  const publishCaption = (roomId: string, userId: string, text: string): void => {
+    // Buffered like signaling fan-out: caption phrases are low volume, but they
+    // were the last unprotected publish path, and a Redis outage should not
+    // accumulate in-flight REST calls here either.
+    publishBuffer.publish(
       roomSignalChannel(roomId),
       JSON.stringify({
         type: 'caption',
@@ -24,15 +39,9 @@ function publishCaption(roomId: string, userId: string, text: string): void {
         from: userId,
         roomId,
       }),
-    )
-    .catch((e) => logger.error('Live caption publish failed', { err: String(e) }));
-}
+    );
+  };
 
-/**
- * Browser sends binary linear16 PCM (16 kHz mono). Bridges to Deepgram Listen v1
- * (streaming / nova-3) and broadcasts phrase finals to the room via Redis.
- */
-export function attachLiveCaptionsBridge(wss: WebSocketServer): void {
   wss.on('connection', (ws: WebSocket) => {
     const ext = ws as LiveCaptionWs;
     const auth = ext.liveCaptionAuth;
@@ -45,6 +54,15 @@ export function attachLiveCaptionsBridge(wss: WebSocketServer): void {
 
     if (!validateRoomId(roomId)) {
       ws.close(4001, 'invalid room');
+      return;
+    }
+
+    // This socket was authorized by the room token at upgrade time, but it can
+    // outlive that token: the signaling socket re-verifies per message, this one
+    // did not, so an expired or kicked user could keep streaming audio to the
+    // provider. Re-checking is a local HMAC verify — no Redis round trip.
+    if (!ext.liveCaptionRoomToken || !verifyRoomToken(ext.liveCaptionRoomToken)) {
+      ws.close(4004, 'room token expired');
       return;
     }
 
@@ -64,6 +82,8 @@ export function attachLiveCaptionsBridge(wss: WebSocketServer): void {
           ws.close(4003, 'not in room');
           return;
         }
+
+        let lastAuthCheck = Date.now();
 
         const deepgram = new DeepgramClient({ apiKey });
         const dgSocket = await deepgram.listen.v1.connect({
@@ -104,6 +124,34 @@ export function attachLiveCaptionsBridge(wss: WebSocketServer): void {
 
         const onClientMessage = (data: Buffer | ArrayBuffer, isBinary: boolean) => {
           if (!isBinary) return;
+          // Re-authorize periodically. The upgrade already verified the token,
+          // but this socket is long-lived: without a re-check a user whose token
+          // expired, or who was kicked, keeps streaming audio to Deepgram for
+          // the rest of the call while their signaling socket is long gone.
+          // The signature check is local; the peer-role lookup is what catches
+          // a kick, which a local verify can never see.
+          if (Date.now() - lastAuthCheck >= AUTH_RECHECK_INTERVAL_MS) {
+            lastAuthCheck = Date.now();
+            void (async () => {
+              try {
+                if (!verifyRoomToken(ext.liveCaptionRoomToken ?? '')) {
+                  ws.close(4004, 'room token expired');
+                  return;
+                }
+                if (!(await getPeerRole(roomId, userId))) {
+                  ws.close(4003, 'no longer in room');
+                  return;
+                }
+                // Same reason as the signaling socket: a revoked account must
+                // not keep streaming audio to the provider.
+                if (!(await hasActiveSession(userId))) {
+                  ws.close(4005, 'session revoked');
+                }
+              } catch (e) {
+                logger.error('Live caption re-auth failed', { roomId, userId, err: String(e) });
+              }
+            })();
+          }
           const buf = Buffer.isBuffer(data)
             ? data
             : Buffer.from(new Uint8Array(data as ArrayBuffer));

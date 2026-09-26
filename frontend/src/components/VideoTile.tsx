@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useAtomValue } from 'jotai';
 import { ExternalLink, Fullscreen, MicOff, Monitor, PictureInPicture2, Pin, PinOff, VideoOff } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -52,6 +52,27 @@ function VideoTileInner({
 }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const isSpeaking = useAtomValue(isSpeakingAtomFamily(participantId));
+
+  /**
+   * rtc-manager merges every incoming track into ONE MediaStream object, so a
+   * remote video often arrives as an `addtrack` on a stream this tile is already
+   * rendering. Props don't change and `memo` skips the render, which used to
+   * leave `showVideo`/the bind key stale — the <video> was bound but stayed
+   * `opacity-0` behind the initials placeholder until some unrelated prop moved.
+   * Mirroring track membership into state makes those events drive a re-render.
+   */
+  const [trackRevision, setTrackRevision] = useState(0);
+  useEffect(() => {
+    if (!stream) return;
+    const bump = () => setTrackRevision((v) => v + 1);
+    stream.addEventListener('addtrack', bump);
+    stream.addEventListener('removetrack', bump);
+    return () => {
+      stream.removeEventListener('addtrack', bump);
+      stream.removeEventListener('removetrack', bump);
+    };
+  }, [stream]);
+
   const initials = useMemo(
     () =>
       name
@@ -78,11 +99,13 @@ function VideoTileInner({
   const chip = connectionChip(connState, isLocal);
   const streamBindKey = useMemo(() => {
     if (!stream) return '';
-    return `${stream.id}:${trackCount}:${stream
+    // trackRevision ticks on addtrack/removetrack, so the key also changes when
+    // a track is swapped for another without the count changing.
+    return `${stream.id}:${trackCount}:${trackRevision}:${stream
       .getTracks()
       .map((t) => `${t.id}:${t.kind}:${t.readyState}:${t.enabled}`)
       .join('|')}`;
-  }, [stream, trackCount]);
+  }, [stream, trackCount, trackRevision]);
 
   useEffect(() => {
     const el = videoRef.current;
@@ -136,16 +159,30 @@ function VideoTileInner({
   const popOutScreen = () => {
     const screenStream = videoRef.current?.srcObject;
     if (!screenStream) return;
-    const popup = window.open('', '_blank', 'width=960,height=540');
+    const popup = window.open('', '_blank', 'width=960,height=540,noopener');
     if (!popup) return;
-    popup.document.write(
-      '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src \'self\' \'unsafe-inline\'; media-src blob: mediastream:;"><title>Shared screen</title><style>html,body{margin:0;background:#000;height:100%}video{width:100%;height:100%;object-fit:contain;background:#000}</style></head><body><video id="screen" autoplay playsinline controls></video></body></html>'
-    );
-    popup.document.close();
-    const video = popup.document.getElementById('screen') as HTMLVideoElement | null;
-    if (video) {
-      video.srcObject = screenStream;
-    }
+    // The popup gets no handle back to this page (no reverse tabnabbing).
+    popup.opener = null;
+
+    // Built with DOM calls rather than document.write: the window renders a
+    // shared screen (untrusted, participant-supplied content), and string
+    // templating into a fresh document is a sharp edge to keep out of the app.
+    const doc = popup.document;
+    const policy = doc.createElement('meta');
+    policy.httpEquiv = 'Content-Security-Policy';
+    policy.content = "default-src 'self' 'unsafe-inline'; media-src blob: mediastream:;";
+    const style = doc.createElement('style');
+    style.textContent =
+      'html,body{margin:0;background:#000;height:100%}video{width:100%;height:100%;object-fit:contain;background:#000}';
+    const video = doc.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+    video.controls = true;
+    video.srcObject = screenStream;
+
+    doc.head.append(policy, style);
+    doc.body.append(video);
+    doc.title = 'Shared screen';
   };
 
   return (
