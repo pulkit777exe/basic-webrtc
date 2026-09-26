@@ -126,6 +126,14 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
   session. A room token deliberately outlives the 15-minute access token, so
   4005 is what stops a logged-out or revoked account from sitting in a call
   whose REST calls are already failing.
+- **Deliberate deviation from the engineering review on C1:** it asked for a
+  `ws-heartbeat` client message every 30s. No such message type exists, and that
+  is the intended outcome — the per-message check above is strictly *stronger*
+  (it runs on every message, not on a cadence the client controls), and the
+  server's own 30s sweep revalidates with the same free local HMAC check before
+  pinging. What the review wanted — the server noticing a dead token without
+  client cooperation — is satisfied by the sweep, so a new client message would
+  have been redundant protocol surface.
 
 ### Room tokens in a call
 

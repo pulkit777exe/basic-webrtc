@@ -407,15 +407,23 @@ export async function hasActiveSession(userId: string): Promise<boolean> {
   const [row] = await db
     .select({ id: userSessions.id })
     .from(userSessions)
-    .where(
-      and(
-        eq(userSessions.userId, userId),
-        isNull(userSessions.revokedAt),
-        gt(userSessions.expiresAt, new Date()),
-      ),
-    )
+    .where(activeSessionFilter(userId))
     .limit(1);
   return Boolean(row);
+}
+
+/**
+ * The predicate behind `hasActiveSession`, exported so it can be exercised
+ * against a real Postgres (PGlite) rather than only asserted about: the failure
+ * modes here are a wrong column or an inverted comparison, which unit tests with
+ * a mocked db cannot catch.
+ */
+export function activeSessionFilter(userId: string, now: Date = new Date()) {
+  return and(
+    eq(userSessions.userId, userId),
+    isNull(userSessions.revokedAt),
+    gt(userSessions.expiresAt, now),
+  );
 }
 
 export async function listActiveSessionsForUser(

@@ -6,7 +6,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // No UPSTASH_* here on purpose: the lazy redis Proxy throws, which is exactly
 // the "redis unavailable" path the cleanup has to survive.
+process.env.JWT_SECRET ||= 'test-jwt-secret';
 const { WebSocketHandler } = await import('./handler');
+const { generateRoomToken } = await import('../utils/jwt');
+const jwt = (await import('jsonwebtoken')).default;
 
 type HandlerInternals = {
   rooms: Map<string, Map<string, unknown>>;
@@ -143,6 +146,34 @@ describe('handleWaitingDisconnect', () => {
     handler.handleWaitingDisconnect(oldWs);
 
     expect(handler.waitingRooms.get('r1')?.get('u1')).toBe(newWs);
+  });
+});
+
+describe('sweep revalidation predicate', () => {
+  // The 30s sweep revalidates the token before pinging, so a client that stops
+  // sending anything still gets dropped when its token expires. It uses the
+  // same local HMAC check as the per-message path.
+  const hasValidRoomToken = (token: string | undefined) =>
+    (handler as unknown as { hasValidRoomToken: (ws: unknown) => boolean }).hasValidRoomToken({
+      roomToken: token,
+    });
+
+  it('rejects a forged or malformed token', () => {
+    expect(hasValidRoomToken('expired-or-forged')).toBe(false);
+    expect(hasValidRoomToken(undefined)).toBe(false);
+  });
+
+  it('accepts a correctly signed, unexpired room token', () => {
+    const token = generateRoomToken('u1', 'r1');
+    expect(hasValidRoomToken(token)).toBe(true);
+  });
+
+  it('rejects an expired room token', () => {
+    const expired = jwt.sign(
+      { userId: 'u1', roomId: 'r1', exp: Math.floor(Date.now() / 1000) - 60 },
+      process.env.JWT_SECRET!,
+    );
+    expect(hasValidRoomToken(expired)).toBe(false);
   });
 });
 

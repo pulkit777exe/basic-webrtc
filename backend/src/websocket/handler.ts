@@ -136,6 +136,25 @@ export class WebSocketHandler {
           return ws.terminate();
         }
         ext.isAlive = false;
+
+        // Server-driven revalidation, every 30s, independent of the client.
+        //
+        // The engineering review asked for a `ws-heartbeat` message here. A new
+        // client message would be the wrong shape: the per-message token check
+        // in `handleMessage` is strictly stronger (it runs on *every* message,
+        // not on a cadence the client controls), and what the review actually
+        // wanted — the server noticing a dead token without the client
+        // cooperating — only needs the local HMAC verify, which is free. So the
+        // sweep does it here instead of adding a message type.
+        //
+        // Waiting sockets are covered too: they never reach handleMessage.
+        if (!this.hasValidRoomToken(ext)) {
+          this.send(ext, { type: 'token_expired' });
+          if (ext.isWaiting) this.handleWaitingDisconnect(ext);
+          else this.handleDisconnect(ext);
+          return ws.terminate();
+        }
+
         ws.ping();
       });
     }, HEARTBEAT_INTERVAL_MS);
