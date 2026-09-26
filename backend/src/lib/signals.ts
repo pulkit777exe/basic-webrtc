@@ -90,10 +90,22 @@ export type Signal =
   // isSignal below — client-sent copies are rejected as unknown.
   | { type: 'notes_ready'; notes: unknown; from?: string; roomId?: string };
 
-export function isSignal(obj: unknown): obj is Signal {
-  if (!obj || typeof obj !== 'object' || !('type' in obj)) return false;
-  const t = (obj as { type: string }).type;
-  return [
+/**
+ * Message types `isSignal` accepts from a client, in one place.
+ *
+ * Extracted so the list is a single source of truth: the `websocket/handler.ts`
+ * traffic policy is keyed by these names, and a test asserts every one has an
+ * entry. A type added to the `Signal` union with no policy entry would otherwise
+ * silently inherit the default — unmetered, and subject to the room burst limit
+ * — with nobody having decided that.
+ *
+ * Faithful to the previous inline list, including `error` / `kicked` /
+ * `token_expired`, which are server-to-client in practice and so have no
+ * registered handler; a client copy is accepted here and then answered with
+ * "Unknown message type". Harmless, but the list and the union disagree about
+ * direction, which is what made this worth extracting rather than tidying.
+ */
+export const CLIENT_SIGNAL_TYPES = [
     'offer',
     'answer',
     'ice',
@@ -134,5 +146,10 @@ export function isSignal(obj: unknown): obj is Signal {
     'token_expired',
     'error',
     'kicked',
-  ].includes(t);
+] as const;
+
+export function isSignal(obj: unknown): obj is Signal {
+  if (!obj || typeof obj !== 'object' || !('type' in obj)) return false;
+  const t = (obj as { type: string }).type;
+  return (CLIENT_SIGNAL_TYPES as readonly string[]).includes(t);
 }

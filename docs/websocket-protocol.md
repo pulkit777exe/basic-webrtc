@@ -294,6 +294,12 @@ costs a kick check plus a room-meta read, so an unmetered keep-alive turns into
 two Redis calls per message. 10/second is ~250x a real client heartbeat (1 per
 25s), so only deliberate flooding is dropped.
 
+All of the above is one table in `backend/src/websocket/handler.ts`
+(`MESSAGE_POLICY`), keyed by message type and holding all three decisions per type:
+the per-connection bucket, exemption from the room burst limit, and whether the
+message bypasses the publish buffer. This section summarises it; the code is the
+authority, and a test asserts every client-sendable type has an entry.
+
 Exceeding a per-type bucket drops the message silently (they are advisory).
 Exceeding the hard cap sends `rate_limited` and **closes the connection with
 4008** — the allowance refills once per second, so a legitimate client never

@@ -66,54 +66,104 @@ async function failOpen<T>(lookup: Promise<T>): Promise<T | null> {
   }
 }
 /**
- * Signalling/advisory traffic that must not be starved by the per-room burst
- * limit. These still have their own per-connection buckets (and the hard cap).
- */
-const EXEMPT_FROM_ROOM_BURST_LIMIT: ReadonlySet<string> = new Set([
-  'offer',
-  'answer',
-  'ice',
-  'ping',
-  'pong',
-  'media-state',
-  'audio-activity',
-  'active_speaker',
-  // Renewal must not be starved by a busy room: if it is dropped, the client
-  // keeps the old token and the call dies at its expiry.
-  'token_refresh',
-]);
-/**
- * Traffic that bypasses the publish buffer: one-shot control messages and
- * roster changes. Losing any of them is unrecoverable (an offer with no peer to
- * receive it means a call that never connects; a mute/lock that never lands
- * leaves the UI disagreeing with the server) and reordering them against the
- * immediate local hop can hand a client newer state before older. None of them
- * are high volume.
+ * Per-message-type traffic policy, in one place.
  *
- * `ice` is deliberately NOT here: candidates arrive continuously (up to
- * 100/s per connection) and the receiver tolerates losing one, so buffering it
- * is both cheaper and better behaved under a Redis outage. It is also the
- * volume that would otherwise defeat the circuit breaker.
+ * This used to be spread across an exempt set, a must-deliver set, and four
+ * inline `takeToken` calls, then described a fifth time in
+ * `docs/websocket-protocol.md` and a sixth in `CONTEXT.md`. Six places to keep in
+ * agreement is six chances to drift, and the failure is silent: a type can end
+ * up rate limited in a way nobody documented, or documented at a limit the code
+ * does not apply.
+ *
+ * Three independent questions per type, so they are answered together:
+ *
+ * - `bucket` — this connection's per-second allowance, and which bucket it draws
+ *   from. Types sharing a bucket share the refill. Absent means no per-type cap,
+ *   only the room burst limit and the hard cap.
+ * - `exemptFromRoomBurst` — the per-room allowance is a shared budget, so a busy
+ *   room can starve a type that must keep flowing: negotiation, keep-alives,
+ *   media state, and token renewal (if that is dropped the client keeps the old
+ *   token and the call dies at its expiry).
+ * - `mustDeliver` — bypasses the publish buffer. For one-shot control messages
+ *   and roster changes, where losing one is unrecoverable (an offer with no peer
+ *   to receive it is a call that never connects) and reordering against the
+ *   immediate local hop can hand a client newer state before older.
+ *
+ * `ice` is deliberately bucketed but NOT must-deliver: candidates arrive
+ * continuously (up to 100/s per connection) and the receiver tolerates losing
+ * one, so buffering them is both cheaper and better behaved under a Redis outage.
+ * They are also the volume that would otherwise defeat the circuit breaker.
  */
-const MUST_DELIVER: ReadonlySet<string> = new Set([
-  'offer',
-  'answer',
-  'join',
-  'leave',
-  'admin_mute',
-  'admin_mute_all',
-  'admin_unmute_all',
-  'admin_kick',
-  'admin_promote',
-  'admin_pin_message',
-  'room_locked',
-  'admin_reactions_toggle',
-  'admin_chat_toggle',
-  'admin_screen_toggle',
-]);
+interface MessagePolicy {
+  bucket?: { key: string; perSecond: number };
+  exemptFromRoomBurst: boolean;
+  mustDeliver: boolean;
+}
+
+const NO_POLICY: MessagePolicy = { exemptFromRoomBurst: false, mustDeliver: false };
+/** Roster/host control: must not be dropped, but is not high-volume enough to meter. */
+const CONTROL_ONLY: MessagePolicy = { exemptFromRoomBurst: false, mustDeliver: true };
+
+/** Exported so a test can assert every signal type has an entry. */
+export const MESSAGE_POLICY: Readonly<Record<string, MessagePolicy>> = {
+  // Negotiation. Must reach the peer or the call never connects. offer/answer/ice
+  // deliberately share one bucket: they are the same traffic in shape (a burst at
+  // connection setup, then trickle), and a separate allowance for each would let a
+  // client spend 3x the intended setup burst.
+  offer: { bucket: { key: 'ice', perSecond: 100 }, exemptFromRoomBurst: true, mustDeliver: true },
+  answer: { bucket: { key: 'ice', perSecond: 100 }, exemptFromRoomBurst: true, mustDeliver: true },
+  ice: { bucket: { key: 'ice', perSecond: 100 }, exemptFromRoomBurst: true, mustDeliver: false },
+  join: { ...CONTROL_ONLY },
+  leave: { ...CONTROL_ONLY },
+  // Keep-alives are exempt from the room burst limit but not free: each one costs
+  // a kick check plus a room-meta read. 10/s is ~250x a real client heartbeat
+  // (1 per 25s), so only deliberate flooding is dropped.
+  ping: { bucket: { key: 'ping', perSecond: 10 }, exemptFromRoomBurst: true, mustDeliver: false },
+  pong: { bucket: { key: 'ping', perSecond: 10 }, exemptFromRoomBurst: true, mustDeliver: false },
+  // Media state changes continuously and a dropped one self-corrects on the next.
+  'media-state': { bucket: { key: 'media', perSecond: 10 }, exemptFromRoomBurst: true, mustDeliver: false },
+  'audio-activity': { bucket: { key: 'audio', perSecond: 10 }, exemptFromRoomBurst: true, mustDeliver: false },
+  active_speaker: { exemptFromRoomBurst: true, mustDeliver: false },
+  // Renewal must not be starved by a busy room.
+  token_refresh: { exemptFromRoomBurst: true, mustDeliver: false },
+  // Chat and reactions are the traffic the per-room limit exists for.
+  chat: { ...NO_POLICY },
+  chat_pin: { ...NO_POLICY },
+  chat_reaction: { ...NO_POLICY },
+  reaction: { ...NO_POLICY },
+  caption: { ...NO_POLICY },
+  // Roster and host controls: one-shot, and the UI must not disagree.
+  admin_mute: { ...CONTROL_ONLY },
+  admin_mute_all: { ...CONTROL_ONLY },
+  admin_unmute_all: { ...CONTROL_ONLY },
+  admin_kick: { ...CONTROL_ONLY },
+  admin_promote: { ...CONTROL_ONLY },
+  admin_pin_message: { ...CONTROL_ONLY },
+  admin_lock: { ...CONTROL_ONLY },
+  room_locked: { ...CONTROL_ONLY },
+  admin_reactions_toggle: { ...CONTROL_ONLY },
+  admin_chat_toggle: { ...CONTROL_ONLY },
+  admin_screen_toggle: { ...CONTROL_ONLY },
+  // Recording state is durable (Redis plus a DB row), and a dropped signal leaves
+  // clients showing a recording that did not start.
+  recording_start: { ...CONTROL_ONLY },
+  recording_stop: { ...CONTROL_ONLY },
+  // The admission request itself: drop it and a waiting client never gets a
+  // position or an admission.
+  waiting: { ...CONTROL_ONLY },
+  // `hand_raise` and `waiting_room_status_check` deliberately take the default:
+  // a hand raise is a toggle the room converges on without, and the status check
+  // is a poll whose next tick re-asks.
+  hand_raise: { ...NO_POLICY },
+  waiting_room_status_check: { ...NO_POLICY },
+};
+
+function policyFor(type: unknown): MessagePolicy {
+  return (typeof type === 'string' && MESSAGE_POLICY[type]) || NO_POLICY;
+}
 
 function isMustDeliver(type: unknown): boolean {
-  return typeof type === 'string' && MUST_DELIVER.has(type);
+  return policyFor(type).mustDeliver;
 }
 const serverInstanceId = nanoid();
 
@@ -594,6 +644,7 @@ export class WebSocketHandler {
         return;
       }
       const signal = raw as Signal;
+      const policy = policyFor(signal.type);
       const userId = ws.userId!;
       const roomId = ws.roomId!;
 
@@ -609,7 +660,7 @@ export class WebSocketHandler {
 
       // Rate-limit only low-volume messages. ICE + audio-activity + media-state
       // easily exceed 50/s/room and were starving chat/captions.
-      if (!EXEMPT_FROM_ROOM_BURST_LIMIT.has(signal.type)) {
+      if (!policy.exemptFromRoomBurst) {
         const count = await redis.incr(`ratelimit:room:${roomId}:messages`);
         await redis.expire(`ratelimit:room:${roomId}:messages`, 1);
         if (count > 80) {
@@ -646,24 +697,12 @@ export class WebSocketHandler {
         return;
       }
 
-      // ── ICE / WebRTC: per-connection token bucket ──
-      if (signal.type === 'offer' || signal.type === 'answer' || signal.type === 'ice') {
-        if (!this.takeToken(ws, 'ice', 100)) {
-          return; // Drop silently — these are advisory
-        }
-      }
-      if (signal.type === 'media-state') {
-        if (!this.takeToken(ws, 'media', 10)) return;
-      }
-      if (signal.type === 'audio-activity') {
-        if (!this.takeToken(ws, 'audio', 10)) return;
-      }
-      // Keep-alives are exempt from the room burst limit but are not free: each
-      // one costs a kick check plus a room-meta read. Left unbounded, a client
-      // could turn pings into 2 Redis calls per message. 10/s is ~250x the real
-      // client heartbeat (1 per 25s), so only deliberate flooding is dropped.
-      if (signal.type === 'ping' || signal.type === 'pong') {
-        if (!this.takeToken(ws, 'ping', 10)) return;
+      // ── Per-connection bucket, from the table above ──
+      // Runs after authorization, so a rejected socket is never charged for the
+      // traffic it sent. Over the allowance is dropped silently: every bucketed
+      // type is advisory or self-correcting, so a `rate_limited` would be noise.
+      if (policy.bucket && !this.takeToken(ws, policy.bucket.key, policy.bucket.perSecond)) {
+        return;
       }
 
       // ── Dispatch to registered handler ──
