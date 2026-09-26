@@ -107,6 +107,26 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
   disconnects mid-setup (or a Redis failure before the inner `try`) must not end
   up half-added to `this.rooms` with no later event to clean it up.
 
+### Authorization of an inbound message
+
+- The order and the resulting close code are **contract** and live in one pure
+  function, `lib/ws-authz.ts` (`authorizeInbound`), so they are testable without
+  Redis or Postgres. `websocket/handler.ts` only gathers facts and applies the
+  verdict.
+- Order: **token expiry** (local HMAC, fails before spending a round trip) →
+  **kicked** (Redis, already paid per message) → heartbeat-only **room exists**
+  (Redis) and **account has a live session** (`hasActiveSession`, a DB read).
+- The last two are gated on the ~25s `ping` because they are the expensive ones.
+  That is why token expiry and kick must **not** be gated on it — a client that
+  stops pinging is only caught by the per-message checks.
+- A lookup that was skipped or failed returns `null` and does **not** close the
+  socket: a transient Redis/DB error must never end a live call. Only an explicit
+  `false` denies.
+- Close codes: 4002 room gone, 4003 kicked, 4004 token expired, 4005 no live
+  session. A room token deliberately outlives the 15-minute access token, so
+  4005 is what stops a logged-out or revoked account from sitting in a call
+  whose REST calls are already failing.
+
 ### Room tokens in a call
 
 - The token is verified on upgrade, **on every inbound message**, and on waiting

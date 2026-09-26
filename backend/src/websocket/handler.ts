@@ -33,6 +33,7 @@ import { parseRoomSettings } from '../lib/room-settings';
 import { publishSignal } from '../lib/redis-streams';
 import { takeToken, type TokenBucket } from '../lib/rate-limit';
 import { retry } from '../lib/retry';
+import { authorizeInbound } from '../lib/ws-authz';
 import { hasActiveSession } from '../services/session';
 import { PublishBuffer } from '../lib/publish-buffer';
 import { createRoomFanoutBuffer } from '../lib/room-fanout';
@@ -572,41 +573,26 @@ export class WebSocketHandler {
         }
       }
 
-      // Authorization is re-checked on every message, not only when the client
-      // happens to send `ping`: a client that stopped pinging could otherwise
-      // keep using an expired room token. jwt.verify is a local HMAC check, so
-      // this costs no Redis round trip.
-      if (!this.hasValidRoomToken(ws)) {
-        this.send(ws, { type: 'token_expired' });
-        ws.close(4004);
+      // Authorization, in one place: the order and the resulting close code are
+      // contract, and live in lib/ws-authz.ts so they are testable without
+      // Redis/Postgres. Checks 3 and 4 are heartbeat-only because they are the
+      // expensive ones.
+      const isHeartbeat = signal.type === 'ping';
+      const denial = authorizeInbound({
+        tokenValid: this.hasValidRoomToken(ws),
+        kicked: await isKicked(roomId, userId),
+        roomExists: isHeartbeat ? Boolean(await getRoomMeta(roomId)) : null,
+        // A room token outlives the 15-minute access token by design, so without
+        // this an account that logged out everywhere (or was revoked, or changed
+        // its password) kept its call open while its REST calls failed.
+        hasSession: isHeartbeat ? await hasActiveSession(userId) : null,
+        isHeartbeat,
+      });
+      if (denial) {
+        if (denial.signal) this.send(ws, { type: denial.signal });
+        else this.sendError(ws, denial.message ?? 'Unauthorized');
+        ws.close(denial.code);
         return;
-      }
-
-      // Check if user is kicked on every message
-      if (await isKicked(roomId, userId)) {
-        this.send(ws, { type: 'kicked' });
-        ws.close(4003);
-        return;
-      }
-
-      // ── Ping / heartbeat: room existence + account session ──
-      if (signal.type === 'ping') {
-        const meta = await getRoomMeta(roomId);
-        if (!meta) {
-          this.sendError(ws, 'Room not found or ended');
-          ws.close(4002);
-          return;
-        }
-        // Session revocation. The room token outlives the access token by
-        // design, so without this an account that logged out everywhere (or was
-        // revoked, or changed its password) kept its call open while its REST
-        // calls failed. On the heartbeat rather than per message: it is a
-        // database read, and the client pings every 25s.
-        if (!(await hasActiveSession(userId))) {
-          this.sendError(ws, 'Session revoked');
-          ws.close(4005, 'session revoked');
-          return;
-        }
       }
 
       // ── ICE / WebRTC: per-connection token bucket ──
