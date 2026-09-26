@@ -4,6 +4,13 @@ import { peerAtomFamily, peerIdsAtom } from '@/store/atoms';
 import { WSManager } from '@/lib/ws-manager';
 import { PendingIceQueue } from '@/lib/pending-ice';
 import { extractAvailableOutgoingBitrate } from '@/lib/webrtc-stats';
+import {
+  SIMULCAST_LAYERS,
+  applySimulcastLayer,
+  chooseSimulcastLayer,
+  simulcastEncodings,
+  supportsSimulcast,
+} from '@/lib/simulcast';
 
 const FALLBACK_ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 const BUNDLE_POLICIES = ['balanced', 'max-compat', 'max-bundle'] as const;
@@ -24,11 +31,71 @@ const seenTrackIds = new Map<string, Set<string>>();
 const screenStreams = new Map<string, MediaStream>();
 /** Local screen share senders per remote peer. */
 const screenSenders = new Map<string, RTCRtpSender>();
+/**
+ * Active simulcast layer per sender, keyed weakly so a closed connection's
+ * sender is collected with it. Starts absent, which reads as layer 0 — the
+ * lowest — matching what the transceiver was created with.
+ */
+const simulcastLayers = new WeakMap<RTCRtpSender, number>();
 const MAX_ICE_RESTARTS = 3;
 let localStream: MediaStream | null = null;
 
 function queueIceCandidate(userId: string, candidate: RTCIceCandidateInit) {
   pendingIce.push(userId, candidate);
+}
+
+/**
+ * Salvage a camera that `setRemoteDescription` refused to bind.
+ *
+ * `sendEncodings` is an offer-side property: when a connection that already
+ * holds a simulcast video transceiver processes a *remote* description, Chrome
+ * does not reuse that transceiver for the peer's video m-line. It creates a
+ * separate one instead, leaving our camera on a transceiver that never gets a
+ * `mid` (`currentDirection` stays null) and so never reaches the peer.
+ *
+ * Verified in real browsers rather than assumed — see
+ * `frontend/e2e/specs/simulcast.spec.ts`, which saw no video at all before this
+ * existed.
+ *
+ * So the answerer moves its camera onto the m-line that *was* negotiated and
+ * gives up the layers for that link. Degrading to single-layer video is
+ * correct; degrading to no video is not. Must run after `setRemoteDescription`
+ * and before `createAnswer`, so the answer carries the restored `sendrecv`.
+ */
+async function reconcileVideoSenders(connection: RTCPeerConnection): Promise<void> {
+  const transceivers = connection.getTransceivers();
+  // A sender that never got a direction is one no m-line was matched to.
+  const stranded = transceivers.find(
+    (t) => t.sender.track?.kind === 'video' && t.currentDirection === null,
+  );
+  if (!stranded) return;
+
+  // The transceiver the remote description created for the peer's video m-line.
+  // `mid` is the reliable marker here, not `currentDirection`: on the answerer
+  // the direction is not settled until the answer is applied, so a freshly
+  // matched transceiver still reports null.
+  const target = transceivers.find(
+    (t) =>
+      t !== stranded &&
+      t.receiver.track?.kind === 'video' &&
+      !t.sender.track &&
+      (t.mid !== null || t.currentDirection !== null),
+  );
+  if (!target) return;
+
+  const track = stranded.sender.track;
+  try {
+    await target.sender.replaceTrack(track);
+    target.direction = 'sendrecv';
+    // Retire the unused transceiver so it cannot claim a sender slot, inflate
+    // getVideoSenderCount, or add a stray m-line to the answer.
+    stranded.stop();
+    console.warn(
+      '[RTCManager] peer did not accept simulcast layers on this link; sending single-layer video',
+    );
+  } catch (error) {
+    console.warn('[RTCManager] could not move camera onto the negotiated m-line', error);
+  }
 }
 
 async function flushPendingIceCandidates(userId: string) {
@@ -123,25 +190,77 @@ function publishConnState(userId: string, state: RTCPeerConnectionState): void {
   store.set(peerAtomFamily(userId), { ...peer, connState: state });
 }
 
-function attachLocalTracks(connection: RTCPeerConnection, stream: MediaStream | null) {
+/**
+ * Attach the local stream, using a simulcast transceiver for the first video
+ * track when the browser supports it.
+ *
+ * Simulcast has to be requested at transceiver creation: `addTrack` cannot carry
+ * `sendEncodings`, so the layers only exist if this path runs for the first
+ * video track. Later tracks (a screen share arriving mid-call) are added
+ * plainly — a connection's encoding count is fixed at negotiation, and asking a
+ * negotiated sender for more layers is a `setParameters` error, not a feature.
+ */
+async function attachLocalTracks(connection: RTCPeerConnection, stream: MediaStream | null) {
   if (!stream) return;
-  
+
   const audioTracks = stream.getAudioTracks();
   const videoTracks = stream.getVideoTracks();
-  
+
   audioTracks.forEach((track) => {
     const alreadySending = connection.getSenders().some((sender) => sender.track?.id === track.id);
     if (!alreadySending) {
       connection.addTrack(track, stream);
     }
   });
-  
-  videoTracks.forEach((track) => {
+
+  // Only the first video track gets the layers. Encoding count is fixed at
+  // negotiation, so a screen share joining mid-call has to be a plain sender.
+  let hasVideoSender = connection.getSenders().some((sender) => sender.track?.kind === 'video');
+
+  for (const track of videoTracks) {
     const alreadySending = connection.getSenders().some((sender) => sender.track?.id === track.id);
-    if (!alreadySending) {
+    if (alreadySending) continue;
+
+    if (hasVideoSender || !(await supportsSimulcast())) {
       connection.addTrack(track, stream);
+      hasVideoSender = true;
+      continue;
     }
-  });
+
+    try {
+      connection.addTransceiver(track, {
+        direction: 'sendrecv',
+        streams: [stream],
+        sendEncodings: simulcastEncodings(),
+      });
+      hasVideoSender = true;
+    } catch (error) {
+      // A transceiver that will not take the layers is not a reason to drop the
+      // camera: fall back to a plain sender for this connection.
+      console.warn('[RTCManager] simulcast transceiver rejected, using addTrack', error);
+      connection.addTrack(track, stream);
+      hasVideoSender = true;
+    }
+  }
+}
+
+/**
+ * Serialize track attachment per connection.
+ *
+ * `attachLocalTracks` awaits the simulcast capability probe, so two attaches to
+ * the same connection can interleave: both would see the track as not yet
+ * sending and add it, leaving the peer with two video senders for one camera.
+ * Chaining them keeps the "already sending?" check meaningful. A failed attach
+ * is swallowed so one bad connection cannot poison every later attach to it.
+ */
+const attachChains = new WeakMap<RTCPeerConnection, Promise<void>>();
+
+function queueAttachTracks(connection: RTCPeerConnection, stream: MediaStream | null): Promise<void> {
+  const next = (attachChains.get(connection) ?? Promise.resolve())
+    .catch(() => {})
+    .then(() => attachLocalTracks(connection, stream));
+  attachChains.set(connection, next);
+  return next;
 }
 
 export const RTCManager = {
@@ -228,6 +347,64 @@ export const RTCManager = {
   },
 
   /**
+   * Choose and apply a simulcast layer on every layered video sender.
+   *
+   * A negotiated simulcast sender transmits *only* its active encoding until
+   * the application promotes one, so this is not an optimisation — without it
+   * every call runs at the smallest layer regardless of the link. The layer is
+   * decided per connection from that connection's own uplink estimate, because
+   * in a mesh one peer can be on wifi and the next on a wired link, and a
+   * single global layer would strand the good one and overload the bad one.
+   *
+   * Non-layered senders (a browser without simulcast, or a screen share added
+   * after negotiation) are left alone rather than half-configured.
+   *
+   * `maxLayerIndex` is the ceiling implied by the encoder budget the capture
+   * ladder settled on; pass the top index when no ceiling is known.
+   */
+  async updateSimulcastLayers(maxLayerIndex: number): Promise<void> {
+    const layered = [...peerConnections.values()].flatMap((connection) =>
+      connection
+        .getSenders()
+        .filter(
+          (sender) =>
+            sender.track?.kind === 'video' &&
+            (sender.getParameters().encodings?.length ?? 0) === SIMULCAST_LAYERS.length,
+        )
+        .map((sender) => ({ connection, sender })),
+    );
+    if (layered.length === 0) return;
+
+    const applied = new Set<RTCRtpSender>();
+
+    await Promise.all(
+      layered.map(async ({ connection, sender }) => {
+        if (applied.has(sender)) return;
+        applied.add(sender);
+        if (connection.connectionState === 'closed') return;
+
+        // No estimate is not a reason to promote: chooseSimulcastLayer holds
+        // the current layer when the measurement is missing.
+        const bitrate = await connection
+          .getStats()
+          .then((report) => extractAvailableOutgoingBitrate(report))
+          .catch(() => null);
+
+        const decision = chooseSimulcastLayer({
+          availableOutgoingBitrate: bitrate,
+          maxLayerIndex,
+          // Per sender, not global: two peers can be promoted independently.
+          currentLayerIndex: simulcastLayers.get(sender) ?? 0,
+        });
+        if (!decision.changed) return;
+        if (await applySimulcastLayer(sender, decision.index)) {
+          simulcastLayers.set(sender, decision.index);
+        }
+      }),
+    );
+  },
+
+  /**
    * How many peers the local camera is currently being sent to. The adaptive
    * quality budget divides the uplink by this, since every peer gets its own
    * copy of the same stream.
@@ -260,10 +437,20 @@ export const RTCManager = {
     );
   },
 
+  /**
+   * Publish the local stream to every open connection.
+   *
+   * Fire-and-forget: callers set the stream and then wait for signaling, and an
+   * attachment that lands after the connection is established renegotiates by
+   * itself. A track that cannot be attached at all is not worth failing the
+   * caller's setup over — the per-connection chain logs it.
+   */
   setLocalStream(stream: MediaStream | null) {
     localStream = stream;
     peerConnections.forEach((connection) => {
-      attachLocalTracks(connection, stream);
+      void queueAttachTracks(connection, stream).catch((error) => {
+        console.warn('[RTCManager] attaching local tracks failed', error);
+      });
     });
   },
 
@@ -277,11 +464,13 @@ export const RTCManager = {
   ): Promise<{ connection: RTCPeerConnection; created: boolean }> {
     if (peerConnections.has(userId)) {
       const connection = peerConnections.get(userId)!;
-      attachLocalTracks(connection, stream ?? localStream);
+      await queueAttachTracks(connection, stream ?? localStream);
       return { connection, created: false };
     }
     const connection = new RTCPeerConnection(peerConfiguration);
-    attachLocalTracks(connection, stream ?? localStream);
+    // Awaited: the caller offers immediately on a new connection, and an offer
+    // sent before the tracks are attached would need a second round trip.
+    await queueAttachTracks(connection, stream ?? localStream);
 
     connection.ontrack = (event) => {
       const peer = store.get(peerAtomFamily(userId));
@@ -417,6 +606,9 @@ export const RTCManager = {
     const connection = peerConnections.get(userId);
     if (!connection) return;
     await connection.setRemoteDescription(new RTCSessionDescription(sdp));
+    // Before the ICE flush and before any answer is built, so a camera left
+    // stranded by the remote m-line matching is recovered in the same turn.
+    await reconcileVideoSenders(connection);
     await flushPendingIceCandidates(userId);
   },
 

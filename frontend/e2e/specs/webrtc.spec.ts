@@ -1,27 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
+import type { E2EStats } from '../harness-api';
 
 const SIGNALING_PORT = 8787;
-
-interface E2EStats {
-  peers: number;
-  connected: number;
-  failed: number;
-  bytesSent: number;
-  bytesReceived: number;
-  framesDecoded: number;
-  candidatePairsSucceeded: number;
-  storeRemoteTracks: number;
-  storeHasLiveVideo: boolean;
-  signals: { joined: number; offer: number; answer: number; ice: number; peerLeft: number };
-  error: string | null;
-}
-
-declare global {
-  interface Window {
-    __e2e: { peerId: string; roomId: string; stats: () => Promise<E2EStats>; stop: () => void };
-    __e2eError?: string;
-  }
-}
 
 async function openPeer(page: Page, peerId: string, roomId: string): Promise<void> {
   const url = `/e2e/harness.html?peerId=${peerId}&roomId=${roomId}&ws=ws://127.0.0.1:${SIGNALING_PORT}`;
@@ -121,24 +101,23 @@ test.describe('two-browser mesh', () => {
 
   test('three peers form a full mesh', async ({ browser }) => {
     // The topology this app actually uses: N peers, N-1 connections each.
+    const ids = ['alpha', 'bravo', 'charlie'];
     const contexts = [];
     const pages = [];
-    for (const id of ['alpha', 'bravo', 'charlie']) {
+    // One context per peer: separate storage and permission state, so they
+    // cannot accidentally share a camera or a session.
+    for (let i = 0; i < ids.length; i += 1) {
       const ctx = await browser.newContext({ permissions: ['camera', 'microphone'] });
       contexts.push(ctx);
       pages.push(await ctx.newPage());
     }
 
     const roomId = `room-${++roomCounter}-${Date.now()}`;
-    await Promise.all(
-      pages.map((page, i) => openPeer(page, ['alpha', 'bravo', 'charlie'][i]!, roomId)),
-    );
+    await Promise.all(pages.map((page, i) => openPeer(page, ids[i]!, roomId)));
 
     // Every peer must end up with 2 connections (N-1) all connected.
     const connectedCounts = await Promise.all(
-      pages.map((page, i) =>
-        waitFor(page, (s) => s.connected === 2, `${['alpha', 'bravo', 'charlie'][i]} fully meshed`),
-      ),
+      pages.map((page, i) => waitFor(page, (s) => s.connected === 2, `${ids[i]} fully meshed`)),
     );
 
     for (const s of connectedCounts) {

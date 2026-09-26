@@ -38,19 +38,29 @@ media. That closes the gap that previously justified the line below; the
 remaining coverage gaps (TURN, non-loopback networks, Safari/Firefox) are listed
 in `frontend/e2e/README.md`.
 
-**Still deliberately not done — simulcast.** Negotiating simulcast changes the
-offer path for *every* call, and browsers only send the lowest layer until the
-application actively promotes encodings via `RTCRtpSender.setParameters`. So
-simulcast cannot be switched on without a correct layer-selection policy, and
-getting that policy wrong degrades every call rather than just large ones.
+**Simulcast is now on, and verified in real browsers** — it was the last item
+this branch deliberately deferred. What it took:
 
-That policy needs more than the rig provides today: the rig verifies that a mesh
-connects and that media flows, but asserting simulcast layer *selection* means
-reading per-layer `media-source` stats from a real encoder and driving
-`setParameters` against it, on two browsers, for a minute at a time. The rig is
-the tool to build that on; the work itself is still ahead. Until then the
-threshold, adaptive-resolution work above, and a `maxParticipants` cap carry the
-mesh story.
+- `lib/simulcast.ts` — the layers, a capability probe, and a pure layer policy
+  sharing the capture ladder's economics (promote at 1.5x, demote below 0.9x).
+  24 unit tests, each checked to fail against a mutated policy.
+- `RTCManager` offers a simulcast transceiver for the first video track, and
+  `updateSimulcastLayers` drives the active layer per connection.
+- A trap worth recording: **`sendEncodings` is offer-side only.** Chrome will not
+  bind a simulcast transceiver to a *remote* m-line, so the answering side of
+  every link had its camera stranded on a transceiver that never negotiated
+  — no video at all, in every call. `reconcileVideoSenders` moves the camera onto
+  the m-line that was negotiated, so the answerer degrades to single-layer video
+  rather than to none. Layers are therefore per-link and asymmetric: in a 3-peer
+  mesh, charlie offers to both peers, bravo to one, alpha to none.
+- The rig asserts what only a browser can: that the SDP really carries
+  `a=simulcast:send`, that the engine produces the active layer, and that
+  switching layers moves the bytes. Layer *selection* stays unit tested — a
+  browser cannot be made to report a constrained link on demand.
+
+The remaining mesh limits are unchanged: `maxParticipants`, the adaptive
+resolution ladder, and the warning toast above still carry the story. An SFU is
+the actual answer past ~6 peers.
 
 **To do next, in increasing order of effort:**
 1. **Sender-side `maxBitrate`** alongside the capture ladder — capture

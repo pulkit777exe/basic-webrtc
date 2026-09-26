@@ -17,8 +17,11 @@
  * `window.__e2e` is the test's handle on the page.
  */
 import { RTCManager } from '../src/lib/rtc-manager';
+import { extractAvailableOutgoingBitrate } from '../src/lib/webrtc-stats';
+import { applySimulcastLayer } from '../src/lib/simulcast';
 import { store } from '../src/store';
 import { peerAtomFamily, peerIdsAtom } from '../src/store/atoms';
+import type { E2EStats, HarnessApi, SimulcastReport } from './harness-api';
 
 const params = new URLSearchParams(location.search);
 const PEER_ID = params.get('peerId') ?? 'alpha';
@@ -154,21 +157,6 @@ function connectSignaling(): void {
   };
 }
 
-interface E2EStats {
-  peers: number;
-  connected: number;
-  failed: number;
-  bytesSent: number;
-  bytesReceived: number;
-  framesDecoded: number;
-  candidatePairsSucceeded: number;
-  /** Remote tracks as merged by the production ontrack handler into the store. */
-  storeRemoteTracks: number;
-  storeHasLiveVideo: boolean;
-  signals: { joined: number; offer: number; answer: number; ice: number; peerLeft: number };
-  error: string | null;
-}
-
 async function collectStats(): Promise<E2EStats> {
   const stats: E2EStats = {
     peers: connections.size,
@@ -214,6 +202,83 @@ async function collectStats(): Promise<E2EStats> {
   return stats;
 }
 
+async function collectSimulcast(peerId: string): Promise<SimulcastReport | null> {
+  const pc = connections.get(peerId);
+  if (!pc) return null;
+
+  const report: SimulcastReport = {
+    sdpSignalled: /a=simulcast:send/.test(pc.localDescription?.sdp ?? ''),
+    encodings: [],
+    layers: [],
+    source: null,
+    availableOutgoingBitrate: null,
+  };
+
+  const videoSender = pc
+    .getSenders()
+    .find((sender) => sender.track?.kind === 'video' && (sender.getParameters().encodings?.length ?? 0) > 1);
+  if (!videoSender) return report;
+
+  report.encodings = (videoSender.getParameters().encodings ?? []).map((encoding) => ({
+    rid: encoding.rid ?? null,
+    active: encoding.active !== false,
+    maxBitrate: encoding.maxBitrate ?? null,
+  }));
+
+  const stats = await pc.getStats();
+  // The same extractor production uses, so the number reported here is the one
+  // the layer policy actually sees. Reading it off `outbound-rtp` instead
+  // reports null on current Chrome, which reads as "no measurement" and hides
+  // whether promotion can ever happen.
+  report.availableOutgoingBitrate = extractAvailableOutgoingBitrate(stats);
+
+  stats.forEach((entry: Record<string, unknown>) => {
+    // Per-layer production lives on `outbound-rtp`, one entry per encoding, each
+    // carrying its own encodingIndex/rid/active. `media-source` describes only
+    // the camera, so it cannot say which layer is being sent — reading layers
+    // from it reports the source's numbers and looks like a working switch even
+    // when the engine is still sending the smallest layer.
+    if (entry.type === 'outbound-rtp' && entry.kind === 'video') {
+      report.layers.push({
+        encodingIndex: Number(entry.encodingIndex ?? -1),
+        rid: typeof entry.rid === 'string' ? entry.rid : null,
+        active: entry.active === true,
+        framesPerSecond: Number(entry.framesPerSecond ?? 0),
+        bytesSent: Number(entry.bytesSent ?? 0),
+      });
+    }
+    if (entry.type === 'media-source' && entry.kind === 'video') {
+      report.source = {
+        framesPerSecond: Number(entry.framesPerSecond ?? 0),
+        width: Number(entry.width ?? 0),
+        height: Number(entry.height ?? 0),
+      };
+    }
+  });
+  report.layers.sort((a, b) => a.encodingIndex - b.encodingIndex);
+
+  return report;
+}
+
+/**
+ * Force a specific simulcast layer, bypassing the bandwidth policy.
+ *
+ * Deliberately not the production path: which layer to send is policy, and that
+ * is unit tested exhaustively. What only a real browser can answer is whether
+ * the engine *honours* a layer switch at all — so this drives the same
+ * `applySimulcastLayer` the policy calls, and the spec then checks the encoder
+ * actually produced that layer.
+ */
+async function forceSimulcastLayer(peerId: string, index: number): Promise<SimulcastReport | null> {
+  const pc = connections.get(peerId);
+  const sender = pc
+    ?.getSenders()
+    .find((s) => s.track?.kind === 'video' && (s.getParameters().encodings?.length ?? 0) > 1);
+  if (!sender) return null;
+  await applySimulcastLayer(sender, index);
+  return collectSimulcast(peerId);
+}
+
 function stop(): void {
   socket?.close();
   for (const peerId of [...connections.keys()]) removePeer(peerId);
@@ -232,7 +297,23 @@ async function start(): Promise<void> {
 }
 
 Object.defineProperty(window, '__e2e', {
-  value: { peerId: PEER_ID, roomId: ROOM_ID, stats: collectStats, stop },
+  value: {
+    peerId: PEER_ID,
+    roomId: ROOM_ID,
+    stats: collectStats,
+    simulcast: collectSimulcast,
+    forceSimulcastLayer,
+    /**
+     * Drive the production layer policy, then report what the browser did with
+     * it. `ceiling` is the best layer the encoder budget allows.
+     */
+    async setSimulcastLayer(ceiling: number): Promise<SimulcastReport | null> {
+      await RTCManager.updateSimulcastLayers(ceiling);
+      const peerIds = [...connections.keys()];
+      return peerIds.length > 0 ? collectSimulcast(peerIds[0]!) : null;
+    },
+    stop,
+  } satisfies HarnessApi,
   writable: false,
 });
 

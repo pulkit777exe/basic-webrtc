@@ -45,6 +45,7 @@ import { AudioActivityMonitor } from "@/lib/audio-activity";
 import { startIceRefresh } from "@/lib/ice-refresh";
 import { AdaptiveQualityController } from "@/lib/adaptive-quality";
 import { MESH_WARN_THRESHOLD } from "@/lib/mesh-limits";
+import { maxLayerForBudget } from "@/lib/simulcast";
 import { MediaManager } from "@/lib/media-manager";
 import { RoomVideoGrid } from "@/components/room/RoomVideoGrid";
 import { RoomControlBar } from "@/components/room/RoomControlBar";
@@ -403,6 +404,11 @@ export function RoomPage() {
         // stream congestion control reacts to. Both, together.
         await MediaManager.applyVideoQuality(level);
         await RTCManager.setVideoMaxBitrate(level.maxBitrateKbps * 1000);
+        // Simulcast sends one layer, and only the one the app activates. The
+        // budget this level settled on is also the ceiling on which layer is
+        // worth encoding — sending a 1080p layer out of a 360p capture spends
+        // uplink on a resolution nobody can see.
+        await RTCManager.updateSimulcastLayers(maxLayerForBudget(level.maxBitrateKbps));
       },
       getCap: () => MediaManager.getVideoQualityCap(),
       isScreenSharing: () => store.get(localMediaAtom).screen,
