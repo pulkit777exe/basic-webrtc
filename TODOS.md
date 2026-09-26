@@ -32,26 +32,34 @@ room and total encoded streams grow quadratically. `maxParticipants` defaults to
   uplink serves the whole mesh. A user's quality cap is treated as a ceiling on
   quality, not a floor, and camera adaptation pauses during a screen share.
 
-**Deliberately not done — simulcast.** Negotiating simulcast changes the
+**A browser rig now exists** — `e2e/` runs two real Chromium peers through the
+production peer module (`RTCManager`), covering real SDP, ICE, encoders, and live
+media. That closes the gap that previously justified the line below; the
+remaining coverage gaps (TURN, non-loopback networks, Safari/Firefox) are listed
+in `e2e/README.md`.
+
+**Still deliberately not done — simulcast.** Negotiating simulcast changes the
 offer path for *every* call, and browsers only send the lowest layer until the
 application actively promotes encodings via `RTCRtpSender.setParameters`. So
 simulcast cannot be switched on without a correct layer-selection policy, and
 getting that policy wrong degrades every call rather than just large ones.
 
-That policy cannot be validated in this repository: there is no browser test
-rig (no Playwright/Cypress/Puppeteer, and the only environments are jsdom and
-node), and simulcast correctness lives in SDP negotiation plus real encoder
-behaviour across at least two peers and two browsers. Shipping it untested would
-be a worse outcome than the status quo, so the threshold, adaptive-resolution
-work above, and a `maxParticipants` cap carry the mesh story for now.
+That policy needs more than the rig provides today: the rig verifies that a mesh
+connects and that media flows, but asserting simulcast layer *selection* means
+reading per-layer `media-source` stats from a real encoder and driving
+`setParameters` against it, on two browsers, for a minute at a time. The rig is
+the tool to build that on; the work itself is still ahead. Until then the
+threshold, adaptive-resolution work above, and a `maxParticipants` cap carry the
+mesh story.
 
 **To do next, in increasing order of effort:**
 1. **Sender-side `maxBitrate`** alongside the capture ladder — capture
    resolution bounds pixels, an encoder bitrate cap bounds the encoded stream.
    Broadly supported and unit-testable with a fake `RTCRtpSender`.
-2. **A browser test rig** (Playwright with two browser contexts) — required
-   before simulcast, and before trusting any of the WebRTC lifecycle fixes
-   end-to-end.
+2. **Extend the rig** — add TURN (a local coturn), a bandwidth-constrained
+   scenario, and the per-layer `media-source` stats that simulcast layer
+   selection needs. This is the prerequisite for enabling simulcast with
+   confidence.
 3. **SFU** (mediasoup or LiveKit) — the real fix. One uplink per participant,
    fan-out downstream. Backward-compatible plan: keep mesh for 1-to-1, move to
    the SFU above a threshold. Weeks of work, tracked separately.

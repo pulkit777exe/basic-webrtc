@@ -17,13 +17,19 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
 
 ### WebRTC (`lib/rtc-manager.ts`)
 
-- **ICE trickle race**: Candidates can arrive before `setRemoteDescription` finishes. Those are **queued** in `pendingIceCandidates` and **flushed** after a successful `setRemoteDescription`.
+- **ICE trickle race**: Candidates can arrive before `setRemoteDescription` finishes. Those are **queued** in `PendingIceQueue` (`lib/pending-ice.ts`) and **flushed** after a successful `setRemoteDescription`. The queue and its TTL timer always move together — a separated timer fires against a *later* batch and discards it.
 - **Offer/answer ordering**: The callee **must** `await setRemoteDescription(offer)` **before** `createAnswer()`. `RoomPage`’s `__wsSignal` uses an `async` IIFE so these run in order (parallel `void` calls break negotiation).
 - **`ontrack` / one remote `MediaStream`**: Browsers differ: audio and video may arrive as **two different `event.streams`** or with **empty `streams`**. The handler **merges** all remote tracks into a **single `MediaStream`** on `peer.stream` (add tracks from alternate streams; fallback `new MediaStream([...tracks, track])` if `addTrack` throws). Otherwise replacing `peer.stream` with a **video-only** stream drops audio (or vice versa). **`peer.video`** is updated when a **live** video track is present.
 - **`createOffer`**: Passes **`offerToReceiveAudio` / `offerToReceiveVideo`** (legacy hints) on initial offer, re-ICE, and renegotiation offers so some stacks still open recv **m=** lines correctly when local tracks are missing or ordering is odd.
 - **Renegotiation (screen share / late video)**: If a video sender is added after the first negotiation (e.g. camera was off, then **screen share** uses `addTrack`), the browser fires **`negotiationneeded`**. The PC sends a **new offer** to the peer once `remoteDescription` is set and signaling is `stable` (guards avoid colliding with the initial offer/answer).
 - **Initial offer role**: In `ws-manager`, only the peer with **lexicographically greater `userId`** calls `createPeer` + `offer` on `join`; the other side waits for that offer.
 - **Leave**: `ws-manager` calls **`RTCManager.removePeer(userId)`** on `leave` so connections and ICE state don’t leak.
+
+> **These invariants are verified against real browsers.** `e2e/` runs two
+> Chromium peers through this module and asserts a real `connected` state, a
+> selected ICE pair, live media in both directions, and the `ontrack` merge
+> landing in the store. jsdom cannot check any of it. Run `cd e2e && bun run e2e`
+> after touching this file.
 
 ### Media (`lib/media-manager.ts`)
 
@@ -35,6 +41,8 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
 
 ### Adaptive quality
 
+- **Verified in a real browser** by the `e2e/` rig (two Chromium peers through
+  the production peer module), not just in jsdom — see `e2e/README.md`.
 - **`lib/bandwidth.ts`** decides the ladder rung from measured uplink: degrade
   below 0.9× headroom, climb only at 1.5× over the target, 10s cooldown. A
   quality cap is a **ceiling**, not a floor, and a screen share suspends camera

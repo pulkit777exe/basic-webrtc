@@ -54,6 +54,37 @@ jobs:
           VITE_API_URL: http://localhost:4000
           VITE_WS_URL: ws://localhost:4000
 
+  e2e-webrtc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install frontend deps (harness runs the real peer module)
+        run: bun install --frozen-lockfile
+        working-directory: frontend
+      - name: Install rig deps
+        run: bun install --frozen-lockfile
+        working-directory: e2e
+      - name: Type check the rig
+        run: bun run typecheck
+        working-directory: e2e
+      - name: Install Chromium
+        run: bunx playwright install --with-deps chromium
+        working-directory: e2e
+      # Two real browsers negotiating real SDP/ICE and pushing real media. This is
+      # the only check that covers the parts of the stack jsdom cannot reach.
+      - name: Run browser WebRTC rig
+        run: bunx playwright test
+        working-directory: e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: e2e/playwright-report
+          retention-days: 7
+
   docker:
     runs-on: ubuntu-latest
     needs: [backend, frontend]
