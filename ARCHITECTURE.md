@@ -354,9 +354,17 @@ Three distinct JWT types, all in `backend/src/utils/jwt.ts`:
 ### CI/CD (`.github/workflows/`)
 
 **ci.yml** — runs on push/PR to `main`:
-- Backend: `bun install` → `tsc --noEmit` → `bun run test`
-- Frontend: `bun install` → `tsc --noEmit` → `bun run test` → `bun run build`
+- Backend: `bun install` → `tsc --noEmit` → `bun run lint` → `bun run test`
+- Frontend: `bun install` → `tsc --noEmit` → `bun run lint` → `bun run test` → `bun run build`
+- `e2e-webrtc`: runs the browser rig in `frontend/e2e/` (real Chromium peers,
+  real SDP/ICE/encoders). The only job that covers what jsdom cannot reach, and
+  the `docker` job waits on it so a media regression cannot reach an image.
 - Docker: builds both images (only on `main`)
+
+The backend suite runs one test against a real PostgreSQL via PGlite (in-process
+WASM Postgres, no service container), because the session-revocation predicate
+that keeps a logged-out account in a call cannot be meaningfully asserted
+against a mocked db.
 
 **deploy.yml** — runs on push to `main`:
 - Tests, then SSH deploys to a server at `/var/www/webrtc-meet` using `docker-compose.prod.yml`

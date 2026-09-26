@@ -7,7 +7,7 @@
  * room and tracks when each peer has published its answer, so the test can wait
  * on real negotiation rather than sleeping.
  *
- * Run standalone:  bun run e2e/signaling-server.ts [port]
+ * Run standalone:  bun run frontend/e2e/signaling-server.ts [port]
  */
 import { WebSocketServer, type WebSocket } from 'ws';
 
@@ -92,5 +92,4 @@ wss.on('connection', (socket: WebSocket) => {
   });
 });
 
-// eslint-disable-next-line no-console
 console.log(`[signaling] ws://127.0.0.1:${PORT}`);

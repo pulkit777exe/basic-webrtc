@@ -32,11 +32,11 @@ room and total encoded streams grow quadratically. `maxParticipants` defaults to
   uplink serves the whole mesh. A user's quality cap is treated as a ceiling on
   quality, not a floor, and camera adaptation pauses during a screen share.
 
-**A browser rig now exists** — `e2e/` runs two real Chromium peers through the
+**A browser rig now exists** — `frontend/e2e/` runs two real Chromium peers through the
 production peer module (`RTCManager`), covering real SDP, ICE, encoders, and live
 media. That closes the gap that previously justified the line below; the
 remaining coverage gaps (TURN, non-loopback networks, Safari/Firefox) are listed
-in `e2e/README.md`.
+in `frontend/e2e/README.md`.
 
 **Still deliberately not done — simulcast.** Negotiating simulcast changes the
 offer path for *every* call, and browsers only send the lowest layer until the

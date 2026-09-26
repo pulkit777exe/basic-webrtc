@@ -25,10 +25,10 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
 - **Initial offer role**: In `ws-manager`, only the peer with **lexicographically greater `userId`** calls `createPeer` + `offer` on `join`; the other side waits for that offer.
 - **Leave**: `ws-manager` calls **`RTCManager.removePeer(userId)`** on `leave` so connections and ICE state don’t leak.
 
-> **These invariants are verified against real browsers.** `e2e/` runs two
+> **These invariants are verified against real browsers.** `frontend/e2e/` runs two
 > Chromium peers through this module and asserts a real `connected` state, a
 > selected ICE pair, live media in both directions, and the `ontrack` merge
-> landing in the store. jsdom cannot check any of it. Run `cd e2e && bun run e2e`
+> landing in the store. jsdom cannot check any of it. Run `cd frontend && bun run e2e`
 > after touching this file.
 
 ### Media (`lib/media-manager.ts`)
@@ -41,8 +41,8 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
 
 ### Adaptive quality
 
-- **Verified in a real browser** by the `e2e/` rig (two Chromium peers through
-  the production peer module), not just in jsdom — see `e2e/README.md`.
+- **Verified in a real browser** by the `frontend/e2e/` rig (two Chromium peers through
+  the production peer module), not just in jsdom — see `frontend/e2e/README.md`.
 - **`lib/bandwidth.ts`** decides the ladder rung from measured uplink: degrade
   below 0.9× headroom, climb only at 1.5× over the target, 10s cooldown. A
   quality cap is a **ceiling**, not a floor, and a screen share suspends camera

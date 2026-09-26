@@ -6,9 +6,15 @@ const VITE_PORT = 5173;
 /**
  * Real-browser WebRTC rig.
  *
- * Two Chromium pages run the production peer module against a stub signaling
- * relay, so SDP, ICE, encoders and media are exercised for real — the surface
- * jsdom cannot reach and the reason simulcast stays disabled.
+ * Chromium pages run the production peer module against a stub signaling relay,
+ * so SDP, ICE, encoders and media are exercised for real — the surface jsdom
+ * cannot reach, and the reason simulcast can be verified rather than assumed.
+ *
+ * The rig lives inside the frontend package on purpose. The harness page is
+ * loaded through the Vite dev server, whose root is this package, and Vite maps
+ * request paths against that root — so `harness.html` cannot live in a sibling
+ * top-level directory at all. Keeping the runner here too means one lockfile and
+ * no importing the harness contract across a package boundary.
  *
  * The fake media flags give each page a synthetic camera and microphone, and
  * the loopback-only ICE policy keeps candidate gathering to host candidates so
@@ -49,9 +55,10 @@ export default defineConfig({
   ],
   webServer: [
     {
-      // cwd is the repo root, so the relay is at e2e/signaling-server.ts.
-      command: `bun run e2e/signaling-server.ts ${SIGNALING_PORT}`,
-      cwd: new URL('..', import.meta.url).pathname,
+      // Two levels up from frontend/e2e is the repo root, which is where the
+      // relay script's own relative paths are anchored.
+      command: `bun run frontend/e2e/signaling-server.ts ${SIGNALING_PORT}`,
+      cwd: new URL('../..', import.meta.url).pathname,
       port: SIGNALING_PORT,
       reuseExistingServer: !process.env.CI,
       stdout: 'pipe',
@@ -62,7 +69,7 @@ export default defineConfig({
       // VITE_WS_URL is baked into the page by the dev server; the harness
       // defaults to the relay port, so this only has to be served.
       command: `bun run dev --port ${VITE_PORT} --strictPort --host 127.0.0.1`,
-      cwd: new URL('../frontend', import.meta.url).pathname,
+      cwd: new URL('..', import.meta.url).pathname,
       port: VITE_PORT,
       reuseExistingServer: !process.env.CI,
       stdout: 'pipe',

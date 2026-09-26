@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node", "vite/client"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    // The harness drives the production peer module, so it has to resolve the
+    // same `@/` alias Vite resolves at runtime. Without this the rig's typecheck
+    // silently degrades to `any` for every aliased import.
+    "paths": {
+      "@/*": ["../src/*"]
+    }
+  },
+  "include": [
+    "playwright.config.ts",
+    "signaling-server.ts",
+    "harness-api.ts",
+    "harness.ts",
+    "specs/**/*.ts"
+  ]
+}
