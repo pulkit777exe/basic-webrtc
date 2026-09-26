@@ -345,4 +345,21 @@ and the call would still end at expiry.
 | 4004 | Room token expired (rejoin to get a fresh token) |
 | 4005 | Account has no live session (logged out or revoked everywhere) |
 | 4008 | Rate limit exceeded (flooding; connection closed) |
+| 4009 | Room is full at connect time (`maxParticipants` reached) |
 | 1001 | Server shutting down |
+| 1011 | Connection setup aborted (internal error) |
+| 1000 | Normal closure. **Not** used for a refusal — see below. |
+
+**A refusal must name itself in the close code.** Every setup-time rejection
+(user not found, room ended, room full) used to be a bare `close()`, which sends
+1000 "Normal Closure". The client cannot tell that from a clean shutdown, so it
+entered its reconnect loop and eventually reported a network fault that never
+happened. `closeWith()` now attaches 4001 / 4002 / 4009 and marks the socket
+handled, so the close handler does not also run the disconnect path for a
+connection that never joined a room.
+
+The client classifies codes in `frontend/src/lib/connection.ts`
+(`classifyClose`): only `retry` burns a reconnect attempt, 4004 recovers a fresh
+room token, and 4001/4002/4003/4005/4009 are terminal with a message that says
+what happened. An unrecognised code defaults to `retry`, so a new server-side
+code strands nobody.

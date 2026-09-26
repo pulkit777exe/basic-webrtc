@@ -33,7 +33,7 @@ import { handleSignal } from "./signal-handler";
 import { playHandRaiseSound } from "./hand-raise-sound";
 import { appendFloatingReaction } from "./reactions";
 import { signalingWsUrl } from "@/config/api";
-import { MAX_RECONNECT, nextReconnectDelay } from "./connection";
+import { MAX_RECONNECT, classifyClose, nextReconnectDelay } from "./connection";
 import { refreshDelayMs, decodeRoomToken } from "./room-token";
 import { api } from "@/lib/api";
 
@@ -766,7 +766,18 @@ export const WSManager = {
         });
       }
       if (intentionalDisconnect) return;
-      if (event.code === 4004) {
+      const outcome = classifyClose(event.code);
+      if (outcome.kind === "terminal") {
+        // Nothing about retrying can clear this: the room ended, the host removed
+        // this user, the account's session ended, or the room is full. Retrying
+        // only delays the one message that explains what happened, and then
+        // reports a network problem that did not occur.
+        pendingReconnectToken = null;
+        store.set(connectionStatusAtom, outcome.status);
+        toast.error(outcome.reason);
+        return;
+      }
+      if (outcome.kind === "recover-token") {
         // The server rejected our room token. Reconnect with a fresh one if
         // recovery already fetched it; otherwise start recovery. Either way, do
         // NOT run the normal backoff loop here: it would replay the same

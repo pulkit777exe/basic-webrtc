@@ -117,7 +117,15 @@ async function requestWithRetry<T>(
         const payload = data as { error?: string; errors?: string[]; code?: string };
         // The session is still valid; only the short-lived access token is not.
         // Refresh once through the cookie, then replay the original request.
-        if (res.status === 401 && allowAuthRetry && !isAuthEndpoint(path)) {
+        //
+        // Only when the request used the *access* token. A caller that supplied
+        // its own token (the caption upload sends a room JWT) holds a different
+        // credential, so refreshing the access token cannot make that request
+        // succeed and the replay would present the same rejected token again --
+        // an infinite doorman loop that cost one /api/auth/refresh per attempt.
+        // For those, a 401 is the caller's answer: get a fresh token and retry.
+        const usesExplicitToken = options.token != null;
+        if (res.status === 401 && allowAuthRetry && !usesExplicitToken && !isAuthEndpoint(path)) {
           await refreshAccessToken();
           return requestWithRetry<T>(path, options, false);
         }

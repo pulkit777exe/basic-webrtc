@@ -290,8 +290,11 @@ export class WebSocketHandler {
             .limit(1);
 
           if (!u) {
+            // 4001, not a bare close(): a bare close is 1000 "Normal Closure",
+            // which reads as a clean shutdown and sends the client into the
+            // reconnect loop for a room it can never be admitted to.
             this.sendError(ext, 'User not found');
-            ws.close();
+            this.closeWith(ext, 4001);
             return;
           }
 
@@ -305,7 +308,9 @@ export class WebSocketHandler {
           const meta = await getRoomMeta(roomId);
           if (!meta) {
             this.sendError(ext, 'Room not found or ended');
-            ws.close();
+            // Same code the inbound policy uses for `room_gone`, so the client
+            // classifies both the same way.
+            this.closeWith(ext, 4002);
             return;
           }
 
@@ -313,7 +318,10 @@ export class WebSocketHandler {
           const max = parseInt(meta.maxParticipants, 10) || 10;
           if (count >= max) {
             this.sendError(ext, 'Room is full');
-            ws.close();
+            // 4009: distinct from "not authorized" so the client can say the
+            // room is full rather than that it may not enter, and terminal so it
+            // does not spend ten retries on a full room.
+            this.closeWith(ext, 4009);
             return;
           }
 
@@ -719,7 +727,17 @@ export class WebSocketHandler {
     if (allEntries.length === 0) return;
 
     try {
-      await db
+      // `returning` is what makes the fan-out below safe. The insert is
+      // idempotent by primary key, so an entry that is already stored returns
+      // nothing -- and that is exactly the signal that it was already persisted,
+      // and (in the normal case) already delivered.
+      //
+      // Publishing unconditionally instead means a released-but-not-trimmed entry
+      // is re-published on every 2s flush for as long as the trim keeps failing,
+      // so a room watches the same messages scroll past forever. It also
+      // re-publishes after a crash between the insert and the trim, duplicating
+      // messages the client already has from history.
+      const inserted = await db
         .insert(messages)
         .values(
           allEntries.map((e) => ({
@@ -733,11 +751,16 @@ export class WebSocketHandler {
         // Idempotent by primary key: a batch that was persisted but not yet
         // released from Redis is re-read after a crash, and a batch that hits an
         // already-stored id must not fail forever and re-queue itself in a loop.
-        .onConflictDoNothing();
+        .onConflictDoNothing()
+        .returning({ id: messages.id });
+
+      const freshIds = new Set(inserted.map((row) => row.id));
 
       // Persisted (or already present): release exactly the entries we read.
       // LTRIM by count rather than DEL so a message pushed while the insert was
-      // in flight stays in the list for the next flush.
+      // in flight stays in the list for the next flush. A trim failure is logged
+      // and left to the next flush; because the fan-out is gated on `freshIds`,
+      // an untrimmed entry is harmless — it is simply re-read and skipped.
       await Promise.all(
         [...redisEntries].map(([roomId, entries]) =>
           this.dropChatRedisEntries(roomId, entries.length).catch((e) =>
@@ -747,6 +770,7 @@ export class WebSocketHandler {
       );
 
       for (const e of allEntries) {
+        if (!freshIds.has(e.id)) continue;
         this.publish(e.roomId, {
           type: 'chat',
           id: e.id,
@@ -1079,6 +1103,25 @@ export class WebSocketHandler {
 
   private sendError(ws: WebSocket, message: string): void {
     this.send(ws, { type: 'error', message });
+  }
+
+  /**
+   * Close a socket with a code the client can act on.
+   *
+   * Every refusal during setup used to be a bare `close()`, which sends 1000
+   * "Normal Closure" -- indistinguishable from a clean shutdown, so the client
+   * entered its reconnect loop and eventually told the user to check their
+   * network. The code is the only channel that says *why* the socket ended, so
+   * each refusal names one. Also marks the socket handled, so the close handler
+   * cannot run the disconnect path for a connection that never joined a room.
+   */
+  private closeWith(ws: ExtendedWebSocket, code: number, reason?: string): void {
+    (ws as { disconnectHandled?: boolean }).disconnectHandled = true;
+    try {
+      ws.close(code, reason);
+    } catch {
+      // Already closing or closed; nothing to do.
+    }
   }
 
   private isOpen(ws: WebSocket): boolean {
