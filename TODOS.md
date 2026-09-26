@@ -129,3 +129,34 @@ Each entry was a verified defect, not a carried-over claim.
 - **`handRaisedStateFamily` returned a fresh object** on unrelated peer updates,
   rebuilding the participants-panel queue on every camera toggle. Now returns a
   stable identity.
+
+---
+
+## Changes made outside the review's scope
+
+The 33 items above are what the review asked for. These were not in it. They are
+listed so the branch's actual diff can be read against what was requested, rather
+than discovered later.
+
+| Change | Why it was made | Risk accepted |
+|---|---|---|
+| `routes/room-captions.ts` extracted and mounted **before** the rooms router, authenticated by **room token** instead of session token | The captions upload was **completely broken**: mounted inside `routes/rooms.ts`, which sits behind `authenticateToken`, every in-call upload was rejected 401 before the handler ran. | This **relaxes** auth on a paid upstream (OpenAI/Deepgram). Narrowed as far as it goes: the token must be unexpired, for that exact room, and not a waiting-room token. |
+| A global 401 → `/api/auth/refresh` → replay in `api.ts` | The access token lives 15 minutes and calls run for hours. Without it, every REST call in a long call started failing at the 15-minute mark. | A refresh-and-replay on any 401. Suppressed when the caller supplied its own token, since refreshing a *different* credential cannot help. |
+| `ice` moved into the buffered publish path (droppable under the circuit breaker) | It is the highest-volume traffic and the receiver tolerates a lost candidate. Keeping it immediate meant an empty transaction on every attempt, so a recovered Redis could never close the circuit. | A candidate can be dropped during a Redis outage. The receiver's own checks recover. |
+| `token_refresh` added to the room-burst-limit exempt set | If renewal is dropped by a busy room, the client keeps the old token and **the call dies at its expiry**. | None; renewal is low-volume. |
+| `uncaughtException` shuts the process down | The review asked only for `unhandledRejection`. The extra handler logged an escaped exception and kept serving, with process state undefined. | The process now restarts on an uncaught exception. Sockets get 1001 and clients reconnect to a consistent process. |
+| CI: the `docker` job now also waits on `e2e-webrtc` | The rig exists to catch media-path regressions; building a deployable image from a commit whose WebRTC path just failed is the outcome it exists to prevent. | A rig flake blocks the image build. `retries: 1` is set for that. |
+
+## Known partial: C3 (Redis pub/sub bottleneck)
+
+C3 asked for two things. One is done, one is not:
+
+- **Done:** the publish buffer batches and applies a circuit breaker, so a Redis
+  outage degrades fan-out instead of stalling it.
+- **Not done:** a **per-room** `published` counter. `publishedCount` is a single
+  process-wide total, so it cannot answer "is room X's traffic healthy", which is
+  the question C3 was asking. The metric exists; the granularity does not.
+- **Not done:** moving `audio-activity` / `media-state` / `active_speaker` to a
+  separate lightweight channel. They share the one buffer with everything else.
+  The per-connection buckets (10/s each) bound them, so this is a throughput
+  improvement rather than a correctness one.

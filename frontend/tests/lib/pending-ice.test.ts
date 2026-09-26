@@ -91,7 +91,12 @@ describe('PendingIceQueue', () => {
     expect(onTimeout).toHaveBeenCalledWith('a');
   });
 
-  it('clearAll() drops every peer and every timer', () => {
+  it('clear(userId) drops that peer and its timer, leaving the others intact', () => {
+    // This replaced a `clearAll()` test. `clearAll` had no production caller —
+    // `RTCManager.disconnectAll` sweeps `[...peerConnections, ...pendingIce.peers]`
+    // through `removePeer`, which already clears per peer, so a bulk method was a
+    // second way to do a job that was already done. Per-peer clearing is what the
+    // teardown path actually uses, so that is what is pinned.
     vi.useFakeTimers();
     const onTimeout = vi.fn();
     const queue = new PendingIceQueue({ ttlMs: 1_000, onTimeout });
@@ -100,10 +105,16 @@ describe('PendingIceQueue', () => {
     queue.push('b', candidate('2'));
     expect(queue.peers.sort()).toEqual(['a', 'b']);
 
-    queue.clearAll();
+    queue.clear('a');
+    // Checked before advancing: b's own TTL is still counting, and when it fires
+    // it drops b's queue too, so "b is still here" is only true right now.
+    expect(queue.peers).toEqual(['b']);
+
     vi.advanceTimersByTime(5_000);
 
+    // a's timer was cancelled with its queue, so only b's fires.
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+    expect(onTimeout).toHaveBeenCalledWith('b');
     expect(queue.peers).toEqual([]);
-    expect(onTimeout).not.toHaveBeenCalled();
   });
 });

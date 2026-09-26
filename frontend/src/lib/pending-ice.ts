@@ -34,6 +34,11 @@ export class PendingIceQueue {
     return [...this.queues.keys()];
   }
 
+  /**
+   * Queued candidates for one peer. Used by the tests to assert the queue grew
+   * or drained; there is no production caller, and deliberately no logging on
+   * this path, since reading queue depth is not something the app acts on.
+   */
   size(userId: string): number {
     return this.queues.get(userId)?.length ?? 0;
   }
@@ -70,9 +75,5 @@ export class PendingIceQueue {
       clearTimeout(timer);
       this.timers.delete(userId);
     }
-  }
-
-  clearAll(): void {
-    for (const userId of this.peers) this.clear(userId);
   }
 }

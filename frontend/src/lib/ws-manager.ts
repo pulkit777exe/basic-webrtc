@@ -155,6 +155,25 @@ function scheduleTokenRefresh(roomToken: string): void {
   }, delay);
 }
 
+/**
+ * Adopt a freshly minted room token, if the session it belongs to is still live.
+ *
+ * Single-sourced because it is the guard that matters most and the easiest to get
+ * subtly wrong in one copy: a token minted for room A must never be handed to room
+ * B's socket, and a token fetched for a call the user has left must never be
+ * adopted at all. `renewRoomToken` and `recoverFromExpiredToken` both reach here
+ * from an async gap, and both were repeating the check.
+ *
+ * Returns false when the token was discarded, so callers stop rather than
+ * continue with a token that belongs to a dead session.
+ */
+function adoptRoomToken(roomToken: string, generation: number): boolean {
+  if (generation !== sessionGeneration || intentionalDisconnect) return false;
+  lastRoomToken = roomToken;
+  scheduleTokenRefresh(roomToken);
+  return true;
+}
+
 async function renewRoomToken(currentToken: string): Promise<void> {
   if (tokenRefreshInFlight) return;
   const roomId = decodeRoomToken(currentToken)?.roomId;
@@ -166,14 +185,12 @@ async function renewRoomToken(currentToken: string): Promise<void> {
     const { roomToken } = await api.refreshRoomToken(roomId);
     if (!roomToken) throw new Error("no roomToken in response");
     // The user may have left or switched rooms while this was in flight.
-    if (generation !== sessionGeneration || intentionalDisconnect) return;
-    lastRoomToken = roomToken;
+    if (!adoptRoomToken(roomToken, generation)) return;
     // Hand it to the live socket when connected; otherwise the next connect()
     // picks it up from lastRoomToken.
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "token_refresh", roomToken }));
     }
-    scheduleTokenRefresh(roomToken);
   } catch (error) {
     if (generation !== sessionGeneration || intentionalDisconnect) return;
     console.warn("[WS] room token refresh failed, retrying shortly", error);
@@ -213,9 +230,7 @@ async function recoverFromExpiredToken(): Promise<void> {
     if (!roomToken) throw new Error("no roomToken in response");
     // Never resurrect a call the user left, and never hand room A's token to
     // room B's socket.
-    if (generation !== sessionGeneration || intentionalDisconnect) return;
-    lastRoomToken = roomToken;
-    scheduleTokenRefresh(roomToken);
+    if (!adoptRoomToken(roomToken, generation)) return;
     pendingReconnectToken = roomToken;
     // Only close if it is actually open: a socket that already closed would make
     // close() a no-op, no event would fire, and the pending token would sit
