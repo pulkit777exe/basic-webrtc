@@ -82,6 +82,32 @@ the actual answer past ~6 peers.
 
 ---
 
+## Resolved (2026-09-27, branch `improve/verified-todo-fixes`)
+
+### Idempotency-Key support on REST POST writes
+
+- **REST writes are now deduped by `Idempotency-Key`.** `POST /api/rooms`
+  (create), `POST /api/rooms/:roomId/notes` (generate), and
+  `POST /api/rooms/:id/transcribe` (multipart upload) accept an optional
+  client UUID: same key + identical body replays the stored status/body with
+  `Idempotent-Replayed: true`; same key + different body → 422; a key still
+  executing → 409. Records live in `idempotency_keys` (composite PK on
+  scoped identity + endpoint + key, 24h expiry, pruned by the cleanup job)
+  with Redis as a TTL cache only — every path stays correct with Redis absent
+  or failing. Full contract in `docs/api/openapi.yaml`.
+- **Endpoint audit:** chat send and recording start/stop travel over WebSocket,
+  not REST, so HTTP middleware does not apply. Chat is already idempotent
+  (client-supplied message id + `onConflictDoNothing` on the PK insert, fan-out
+  gated on freshly inserted ids — see `websocket/handler.ts`). Auth/account and
+  join/admit/refresh-token POSTs are deliberately excluded: they mint fresh
+  tokens or consume single-use bypasses, so replaying a stored response would
+  be wrong.
+- **Atomicity tradeoff:** the key is claimed (pending row, 5min expiry) before
+  the handler runs, so a crash between the primary write and the completion
+  record 409s retries for up to 5 minutes, then re-executes and may
+  double-apply. The alternative (no claim) double-applies on every concurrent
+  retry instead.
+
 ## Resolved (2026-09-25, branch `improve/verified-todo-fixes`)
 
 Each entry was a verified defect, not a carried-over claim.

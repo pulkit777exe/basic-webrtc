@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import { verifyRoomToken } from '../utils/jwt';
 import { logger } from '../lib/logger';
+import { idempotency } from '../middleware/idempotency';
 
 /**
  * In-call caption transcription, authenticated by the **room** token.
@@ -21,6 +22,9 @@ const captionTranscribeUpload = multer({
 router.post(
   '/:id/transcribe',
   captionTranscribeUpload.single('file'),
+  // After multer: the fingerprint hashes the file bytes, and the scope is the
+  // room-token identity (room + user), since this route has no session user.
+  idempotency({ identity: 'roomToken', useFile: true }),
   async (req: Request<{ id: string }>, res: Response): Promise<void> => {
     const roomId = req.params.id;
     const token = req.headers.authorization?.split(' ')[1];

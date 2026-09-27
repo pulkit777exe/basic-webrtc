@@ -1060,6 +1060,22 @@ paths:
       summary: Create a new room
       security:
         - BearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: >-
+            Optional client-generated UUID. When present, a retried request with
+            the same key and identical body replays the stored response
+            (identical status and body) with an `Idempotent-Replayed: true`
+            header instead of creating a second room. Same key with a different
+            body returns 422 (IDEMPOTENCY_KEY_REUSE); a still-executing key
+            returns 409 (IDEMPOTENCY_CONFLICT). Records expire after 24h, and
+            keys are scoped per user and per endpoint. Without the header,
+            behavior is unchanged.
       requestBody:
         required: true
         content:
@@ -1075,6 +1091,10 @@ paths:
       responses:
         "201":
           description: Room created
+        "409":
+          description: IDEMPOTENCY_CONFLICT — the same key is still executing; retry with backoff
+        "422":
+          description: IDEMPOTENCY_KEY_REUSE — the key was already used with a different body
 
   /api/rooms/{id}:
     get:
@@ -1385,6 +1405,20 @@ paths:
           required: true
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: >-
+            Optional client-generated UUID. The fingerprint hashes the uploaded
+            file bytes (not the JSON body) and the scope is the room-token
+            identity (room + user). A duplicate upload replays the stored
+            transcript with `Idempotent-Replayed: true` without calling the
+            paid upstream again. Same key with different bytes returns 422
+            (IDEMPOTENCY_KEY_REUSE); a still-executing key returns 409.
+            Records expire after 24h.
       requestBody:
         required: true
         content:
@@ -1411,6 +1445,10 @@ paths:
           description: MISSING_FILE
         "403":
           description: INVALID_TOKEN — room token missing or for another room
+        "409":
+          description: IDEMPOTENCY_CONFLICT — the same key is still executing; retry with backoff
+        "422":
+          description: IDEMPOTENCY_KEY_REUSE — the key was already used with different bytes
         "502":
           description: TRANSCRIBE_FAILED — upstream provider error
         "503":
@@ -1661,6 +1699,19 @@ paths:
           required: true
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: >-
+            Optional client-generated UUID. A retried request with the same key
+            and identical body replays the stored notes with
+            `Idempotent-Replayed: true` instead of inserting a duplicate notes
+            row. Same key with a different body returns 422
+            (IDEMPOTENCY_KEY_REUSE); a still-executing key returns 409.
+            Records expire after 24h; keys are scoped per user and per endpoint.
       requestBody:
         required: false
         content:
@@ -1687,6 +1738,10 @@ paths:
           description: No transcript yet (captions were never on)
         "403":
           description: Not a room participant
+        "409":
+          description: IDEMPOTENCY_CONFLICT — the same key is still executing; retry with backoff
+        "422":
+          description: IDEMPOTENCY_KEY_REUSE — the key was already used with a different body
 
   /api/account/export:
     post:

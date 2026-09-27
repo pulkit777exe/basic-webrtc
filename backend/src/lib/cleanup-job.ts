@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { rooms, users, userSessions } from '../db/schema';
+import { rooms, users, userSessions, idempotencyKeys } from '../db/schema';
 import { deleteAllRoomKeys, roomParticipantsKey } from './redis-rooms';
 import { redis } from '../config/redis';
 import { logger } from './logger';
@@ -9,6 +9,14 @@ const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const STALE_ROOM_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
 const UNVERIFIED_USER_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const UNVERIFIED_USER_THRESHOLD_MS = 48 * 60 * 60 * 1000; // 48 hours
+
+export async function pruneExpiredIdempotencyKeys(database: typeof db = db): Promise<number> {
+  const deleted = await database
+    .delete(idempotencyKeys)
+    .where(lt(idempotencyKeys.expiresAt, new Date()))
+    .returning({ userId: idempotencyKeys.userId });
+  return deleted.length;
+}
 
 export function startCleanupJob(): void {
   logger.info('Starting stale room cleanup job');
@@ -77,6 +85,13 @@ export function startCleanupJob(): void {
     }
   }
 
+  async function cleanupExpiredIdempotencyKeys(): Promise<void> {
+    const deleted = await pruneExpiredIdempotencyKeys();
+    if (deleted > 0) {
+      logger.info('Deleted expired idempotency keys', { deletedCount: deleted });
+    }
+  }
+
   const intervalId = setInterval(async () => {
     try {
       await runCleanup();
@@ -89,6 +104,7 @@ export function startCleanupJob(): void {
     try {
       await cleanupUnverifiedUsers();
       await cleanupExpiredSessions();
+      await cleanupExpiredIdempotencyKeys();
     } catch (error) {
       logger.error('Daily cleanup failed', { error });
     }
@@ -101,6 +117,9 @@ export function startCleanupJob(): void {
   );
   cleanupExpiredSessions().catch((error) =>
     logger.error('Initial expired sessions cleanup failed', { error }),
+  );
+  cleanupExpiredIdempotencyKeys().catch((error) =>
+    logger.error('Initial idempotency key cleanup failed', { error }),
   );
 
   // Handle shutdown

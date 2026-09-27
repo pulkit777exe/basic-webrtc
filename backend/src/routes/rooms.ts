@@ -33,6 +33,7 @@ import { redis } from '../config/redis';
 import { apiLimiter } from '../lib/rate-limiters';
 import { globalLimiter } from '../lib/rate-limiters';
 import { logger } from '../lib/logger';
+import { idempotency } from '../middleware/idempotency';
 
 async function resolveCanonicalRoomId(raw: string): Promise<string | null> {
   const trimmed = raw.trim();
@@ -84,7 +85,11 @@ router.param('roomId', async (req, res, next, raw: string) => {
 
 // Create room
 
-router.post('/', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+router.post(
+  '/',
+  authenticateToken,
+  idempotency({ identity: 'session' }),
+  async (req: Request, res: Response): Promise<void> => {
   try {
     const authUser = requireUser(req, res);
     if (!authUser) return;
