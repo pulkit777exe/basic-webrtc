@@ -34,6 +34,9 @@ import { playHandRaiseSound } from "./hand-raise-sound";
 import { appendFloatingReaction } from "./reactions";
 import { signalingWsUrl } from "@/config/api";
 import { MAX_RECONNECT, classifyClose, nextReconnectDelay } from "./connection";
+import { scopedLogger } from "@/lib/logger";
+
+const log = scopedLogger("WS");
 import { refreshDelayMs, decodeRoomToken } from "./room-token";
 import { api } from "@/lib/api";
 
@@ -193,7 +196,7 @@ async function renewRoomToken(currentToken: string): Promise<void> {
     }
   } catch (error) {
     if (generation !== sessionGeneration || intentionalDisconnect) return;
-    console.warn("[WS] room token refresh failed, retrying shortly", error);
+    log.warn("room token refresh failed, retrying shortly", error);
     // Back off rather than spin: the current token is still valid for a while.
     if (tokenRefreshTimer) clearTimeout(tokenRefreshTimer);
     tokenRefreshTimer = setTimeout(() => {
@@ -244,7 +247,7 @@ async function recoverFromExpiredToken(): Promise<void> {
     }
   } catch (error) {
     if (generation !== sessionGeneration || intentionalDisconnect) return;
-    console.error("[WS] could not renew expired room token", error);
+    log.error("could not renew expired room token", error);
     store.set(roomAtom, null);
     toast.error("Your session has expired. Please rejoin the room.");
   } finally {
@@ -389,7 +392,7 @@ export const WSManager = {
       pingInterval = setInterval(() => {
         if (!lastPongReceived) {
           // Previous ping was never answered — connection is dead
-          console.warn("[WS] no pong received, connection considered dead");
+          log.warn("no pong received, connection considered dead");
           if (ws) ws.close(4000, "pong timeout");
           return;
         }
@@ -399,7 +402,7 @@ export const WSManager = {
         }
         pongTimeout = setTimeout(() => {
           if (!lastPongReceived && ws?.readyState === WebSocket.OPEN) {
-            console.warn("[WS] pong timeout after ping, closing");
+            log.warn("pong timeout after ping, closing");
             ws.close(4000, "pong timeout");
           }
         }, 10000);
@@ -501,7 +504,7 @@ export const WSManager = {
                 const { created } = await RTCManager.createPeer(data.user.id, stream);
                 if (created) await RTCManager.offer(data.user.id);
               } catch (err) {
-                console.error("[RTC] initial offer failed", err);
+                log.error("initial offer failed", err);
               }
             })();
           }
@@ -747,7 +750,7 @@ export const WSManager = {
           // Full list refresh (after admit/reject/admit-all)
           store.set(waitingRoomParticipantsAtom, data.waitingRoom);
         } else if (data.type === "error") {
-          console.error("[WS]", data.message);
+          log.error("server error message", data.message);
         } else if (data.type === "kicked") {
           store.set(roomAtom, null);
           store.set(uiAtom, (ui) => ({
@@ -762,7 +765,7 @@ export const WSManager = {
 
         handleSignal(data as Signal);
       } catch (error) {
-        console.error("[WS] parse", error);
+        log.error("parse", error);
       }
     };
 
@@ -773,7 +776,7 @@ export const WSManager = {
       if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
       if (pongTimeout) { clearTimeout(pongTimeout); pongTimeout = null; }
       if (event.code !== 1000 || !event.wasClean) {
-        console.error("[WS] socket closed", {
+        log.error("socket closed", {
           code: event.code,
           reason: event.reason || "(none)",
           wasClean: event.wasClean,
@@ -843,7 +846,7 @@ export const WSManager = {
     };
 
     ws.onerror = () => {
-      console.error("[WS] connection error", { url });
+      log.error("connection error", { url });
     };
   },
 

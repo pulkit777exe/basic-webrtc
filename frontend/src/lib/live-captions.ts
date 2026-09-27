@@ -1,5 +1,8 @@
 import { api } from "@/lib/api";
 import { liveCaptionsWsUrl } from "@/config/api";
+import { scopedLogger } from '@/lib/logger';
+
+const log = scopedLogger('captions');
 
 function attachLinear16CaptionsPcm(
   stream: MediaStream,
@@ -80,12 +83,10 @@ export function startDeepgramLiveCaptions(opts: {
 
   ws.onclose = (ev) => {
     if (ev.code === 4402) {
-      console.warn(
-        "[captions] Server reports Deepgram is not configured (DEEPGRAM_API_KEY).",
-      );
+      log.warn("Server reports Deepgram is not configured (DEEPGRAM_API_KEY).");
       opts.onUnavailable?.();
     } else if (ev.code === 1011) {
-      console.warn("[captions] Deepgram live bridge closed unexpectedly.");
+      log.warn("Deepgram live bridge closed unexpectedly.");
     }
   };
 

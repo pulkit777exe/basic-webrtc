@@ -151,7 +151,8 @@ describe('handleSignal', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(consoleSpy).toHaveBeenCalledWith(
-      '[RTC] offer handling failed',
+      '[RTC]',
+      'offer handling failed',
       expect.any(Error),
     );
     consoleSpy.mockRestore();
@@ -172,7 +173,8 @@ describe('handleSignal', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(consoleSpy).toHaveBeenCalledWith(
-      '[RTC] answer handling failed',
+      '[RTC]',
+      'answer handling failed',
       expect.any(Error),
     );
     consoleSpy.mockRestore();

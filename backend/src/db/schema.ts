@@ -118,18 +118,6 @@ export const recordingSessions = pgTable('recording_sessions', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
-export const recordingTracks = pgTable('recording_tracks', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  sessionId: uuid('session_id').references(() => recordingSessions.id),
-  participantId: uuid('participant_id').references(() => users.id),
-  status: varchar('status', { length: 20 }).notNull().default('pending'),
-  s3Key: varchar('s3_key', { length: 500 }),
-  durationMs: integer('duration_ms'),
-  fileSizeBytes: bigint('file_size_bytes', { mode: 'number' }),
-  errorMessage: text('error_message'),
-  updatedAt: timestamp('updated_at').defaultNow(),
-});
-
 // Caption finals persisted per room; feeds the local meeting-notes engine.
 export const transcriptSegments = pgTable(
   'transcript_segments',

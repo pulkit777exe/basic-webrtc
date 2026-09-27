@@ -118,6 +118,68 @@ describe('PublishBuffer batching', () => {
   });
 });
 
+describe('PublishBuffer per-channel stats', () => {
+  // C3 asked "is room X's traffic healthy", and a process-wide total cannot
+  // answer it. Channels are per-room (`room:{id}:signal`), so per-channel
+  // counters are per-room observability.
+  it('reports published counts per channel', async () => {
+    const { buffer } = makeBuffer();
+    buffer.publish('room:a:signal', '1');
+    buffer.publish('room:a:signal', '2');
+    buffer.publish('room:b:signal', '3');
+    await buffer.flush();
+
+    expect(buffer.statsFor('room:a:signal')).toEqual({ published: 2, dropped: 0, queued: 0 });
+    expect(buffer.statsFor('room:b:signal')).toEqual({ published: 1, dropped: 0, queued: 0 });
+    expect(buffer.statsFor('room:never-seen:signal')).toEqual({ published: 0, dropped: 0, queued: 0 });
+  });
+
+  it('reports queued payloads per channel before a flush', () => {
+    const { buffer } = makeBuffer();
+    buffer.publish('room:a:signal', '1');
+    buffer.publish('room:a:signal', '2');
+    buffer.publish('room:b:signal', '3');
+
+    expect(buffer.statsFor('room:a:signal').queued).toBe(2);
+    expect(buffer.statsFor('room:b:signal').queued).toBe(1);
+  });
+
+  it('attributes overflow drops to the channel that lost them', () => {
+    const { buffer } = makeBuffer({ maxQueueSize: 2 });
+    buffer.publish('room:a:signal', '1');
+    buffer.publish('room:a:signal', '2');
+    // The queue is full; this drops room:a's oldest ('1').
+    buffer.publish('room:b:signal', '3');
+
+    expect(buffer.statsFor('room:a:signal').dropped).toBe(1);
+    expect(buffer.statsFor('room:b:signal').dropped).toBe(0);
+  });
+
+  it('attributes circuit-open drops to the channel refused', async () => {
+    const publishBatch = vi.fn().mockRejectedValue(new Error('down'));
+    const { buffer, advance } = makeBuffer({ publishBatch, failureThreshold: 1, resetAfterMs: 60_000 });
+    buffer.publish('room:a:signal', '1');
+    await buffer.flush(); // opens the circuit
+
+    buffer.publish('room:a:signal', '2');
+    buffer.publish('room:b:signal', '3');
+
+    expect(buffer.statsFor('room:a:signal').dropped).toBe(1);
+    expect(buffer.statsFor('room:b:signal').dropped).toBe(1);
+    expect(buffer.droppedCount).toBe(2);
+    advance(61_000);
+  });
+
+  it('bounds the number of tracked channels so room churn cannot leak memory', () => {
+    const { buffer } = makeBuffer({ maxChannelStats: 4 });
+    for (let i = 0; i < 10; i++) buffer.publish(`room:${i}:signal`, 'x');
+
+    expect(buffer.trackedChannels).toBeLessThanOrEqual(4);
+    // Global counters are unaffected by stat eviction.
+    expect(buffer.size).toBe(10);
+  });
+});
+
 describe('PublishBuffer backpressure', () => {
   it('drops the oldest entries past the cap and counts them', async () => {
     const { buffer, publishBatch, onDrop } = makeBuffer({ maxQueueSize: 3 });

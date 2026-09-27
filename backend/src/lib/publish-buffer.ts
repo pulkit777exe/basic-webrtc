@@ -37,6 +37,13 @@ export interface PublishBufferOptions {
   resetAfterMs?: number;
   /** A send that takes longer than this counts as a failure. */
   timeoutMs?: number;
+  /**
+   * How many distinct channels keep per-channel stats. Channels are per-room
+   * (`room:{id}:signal`), so without a cap room churn grows this map for the
+   * life of the process. Oldest-inserted entries are evicted first; global
+   * counters are unaffected.
+   */
+  maxChannelStats?: number;
   now?: () => number;
   onDrop?: (dropped: number, size: number) => void;
   onCircuitOpen?: () => void;
@@ -49,6 +56,12 @@ export class PublishBuffer {
   private dropped = 0;
   /** Payloads successfully handed to the transport. */
   private published = 0;
+  /**
+   * Per-channel published/dropped totals. Channels are per-room, so this is
+   * the answer to "is room X's traffic healthy" that the process-wide totals
+   * cannot give. Queued depth is read live from `queues`, not stored here.
+   */
+  private channelStats = new Map<string, { published: number; dropped: number }>();
   private consecutiveFailures = 0;
   private circuitOpenedAt = 0;
   private isOpen = false;
@@ -61,6 +74,7 @@ export class PublishBuffer {
   private readonly failureThreshold: number;
   private readonly resetAfterMs: number;
   private readonly timeoutMs: number;
+  private readonly maxChannelStats: number;
   private readonly now: () => number;
 
   constructor(private readonly options: PublishBufferOptions) {
@@ -69,6 +83,7 @@ export class PublishBuffer {
     this.failureThreshold = options.failureThreshold ?? 5;
     this.resetAfterMs = options.resetAfterMs ?? 30_000;
     this.timeoutMs = options.timeoutMs ?? 5_000;
+    this.maxChannelStats = options.maxChannelStats ?? 2_000;
     this.now = options.now ?? Date.now;
   }
 
@@ -87,6 +102,25 @@ export class PublishBuffer {
    */
   get publishedCount(): number {
     return this.published;
+  }
+
+  /**
+   * Per-channel totals plus live queue depth. Unknown channels report zeros —
+   * reading stats must never create entries, or a status poll over room ids
+   * would itself grow the map the cap exists to bound.
+   */
+  statsFor(channel: string): { published: number; dropped: number; queued: number } {
+    const stats = this.channelStats.get(channel);
+    return {
+      published: stats?.published ?? 0,
+      dropped: stats?.dropped ?? 0,
+      queued: this.queues.get(channel)?.length ?? 0,
+    };
+  }
+
+  /** Distinct channels currently holding stats, so the bound is testable. */
+  get trackedChannels(): number {
+    return this.channelStats.size;
   }
 
   get circuitOpen(): boolean {
@@ -138,6 +172,7 @@ export class PublishBuffer {
     if (this.stopped) return;
     if (this.isOpen) {
       this.dropped += 1;
+      this.channelStat(channel).dropped += 1;
       return;
     }
     this.enqueue(channel, payload);
@@ -177,7 +212,10 @@ export class PublishBuffer {
       try {
         await this.send(batch);
         let count = 0;
-        for (const payloads of batch.values()) count += payloads.length;
+        for (const [channel, payloads] of batch) {
+          count += payloads.length;
+          this.channelStat(channel).published += payloads.length;
+        }
         this.published += count;
         this.consecutiveFailures = 0;
       } catch {
@@ -247,8 +285,29 @@ export class PublishBuffer {
       if (queue.length === 0) this.queues.delete(channel);
       this.queued -= 1;
       this.dropped += 1;
+      this.channelStat(channel).dropped += 1;
       this.options.onDrop?.(1, this.queued);
       if (removed !== undefined) return;
     }
+  }
+
+  /**
+   * Get-or-create a channel's stats, evicting the oldest-inserted entry when
+   * the map is at its cap. `Map` preserves insertion order, so the first key
+   * is the oldest. Re-touching an existing entry does not refresh its age —
+   * that would let one hot room pin the map and starve every other room's
+   * stats out.
+   */
+  private channelStat(channel: string): { published: number; dropped: number } {
+    let stats = this.channelStats.get(channel);
+    if (!stats) {
+      if (this.channelStats.size >= this.maxChannelStats) {
+        const oldest = this.channelStats.keys().next();
+        if (!oldest.done) this.channelStats.delete(oldest.value);
+      }
+      stats = { published: 0, dropped: 0 };
+      this.channelStats.set(channel, stats);
+    }
+    return stats;
   }
 }

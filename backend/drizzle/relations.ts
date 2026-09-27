@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { users, backupCodes, userSessions, loginEvents, rooms, recordingSessions, recordingTracks, deletionRequests, messages, roomParticipants, roomSettings, passwordResetTokens } from "./schema";
+import { users, backupCodes, userSessions, loginEvents, rooms, recordingSessions, deletionRequests, messages, roomParticipants, roomSettings, passwordResetTokens } from "./schema";
 
 export const backupCodesRelations = relations(backupCodes, ({one}) => ({
 	user: one(users, {
@@ -13,7 +13,6 @@ export const usersRelations = relations(users, ({many}) => ({
 	userSessions: many(userSessions),
 	loginEvents: many(loginEvents),
 	recordingSessions: many(recordingSessions),
-	recordingTracks: many(recordingTracks),
 	deletionRequests: many(deletionRequests),
 	messages: many(messages),
 	roomParticipants: many(roomParticipants),
@@ -49,7 +48,6 @@ export const recordingSessionsRelations = relations(recordingSessions, ({one, ma
 		fields: [recordingSessions.startedBy],
 		references: [users.id]
 	}),
-	recordingTracks: many(recordingTracks),
 }));
 
 export const roomsRelations = relations(rooms, ({one, many}) => ({
@@ -61,17 +59,6 @@ export const roomsRelations = relations(rooms, ({one, many}) => ({
 		references: [users.id]
 	}),
 	roomSettings: many(roomSettings),
-}));
-
-export const recordingTracksRelations = relations(recordingTracks, ({one}) => ({
-	recordingSession: one(recordingSessions, {
-		fields: [recordingTracks.sessionId],
-		references: [recordingSessions.id]
-	}),
-	user: one(users, {
-		fields: [recordingTracks.participantId],
-		references: [users.id]
-	}),
 }));
 
 export const deletionRequestsRelations = relations(deletionRequests, ({one}) => ({

@@ -2,6 +2,9 @@ import { store } from '@/store';
 import { audioOutputDeviceIdAtom, localMediaAtom, mutedByHostAtom } from '@/store/atoms';
 import { RTCManager } from '@/lib/rtc-manager';
 import type { QualityLevel } from '@/lib/bandwidth';
+import { scopedLogger } from '@/lib/logger';
+
+const log = scopedLogger('MediaManager');
 
 let localStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
@@ -65,11 +68,10 @@ export async function negotiateBestVideoTrack(
     }
   }
 
-  if (failures.length > 0 && import.meta.env.DEV) {
+  if (failures.length > 0) {
     // Which rungs of the ladder the browser rejected is a local diagnostic;
-    // there is no logger in the frontend bundle, and shipping it to production
-    // just prints noise in the user's console.
-    console.debug('[MediaManager] Video ladder failures:', failures);
+    // debug-level, so it never reaches a production console.
+    log.debug('Video ladder failures:', failures);
   }
 
   // Last resort: let the browser pick anything
@@ -109,9 +111,7 @@ export async function negotiateBestAudioTrack(
     return stream.getAudioTracks()[0] ?? null;
   } catch (err) {
     // DSP constraints rejected — collect the error before the plain fallback attempt
-    if (import.meta.env.DEV) {
-      console.debug('[MediaManager] Audio DSP constraints rejected:', err instanceof Error ? err.message : String(err), '— falling back to plain audio');
-    }
+    log.debug('Audio DSP constraints rejected — falling back to plain audio', err instanceof Error ? err.message : String(err));
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: deviceId ? { deviceId: { exact: deviceId } } : true,
@@ -189,7 +189,7 @@ export const MediaManager = {
         RTCManager.setLocalStream(stream);
         return;
       } catch (error) {
-        console.error('[MediaManager] Unable to enable camera', error);
+        log.error('Unable to enable camera', error);
         return;
       }
     }
@@ -216,7 +216,7 @@ export const MediaManager = {
       const latest = store.get(localMediaAtom);
       const stream = latest.stream;
       if (!stream || stream.id !== capturedStreamId) {
-        console.warn('[MediaManager] toggleVideo: stream changed during async, aborting');
+        log.warn('toggleVideo: stream changed during async, aborting');
         nextTrack.stop();
         return;
       }
@@ -229,7 +229,7 @@ export const MediaManager = {
       const tracks = stream.getTracks();
       let finalTracks: MediaStreamTrack[];
       if (!tracks.includes(nextTrack)) {
-        console.warn('[MediaManager] toggleVideo: nextTrack not in stream.getTracks() after addTrack, using explicit track list');
+        log.warn('toggleVideo: nextTrack not in stream.getTracks() after addTrack, using explicit track list');
         finalTracks = [...stream.getAudioTracks(), nextTrack];
       } else {
         finalTracks = tracks;
@@ -237,7 +237,7 @@ export const MediaManager = {
 
       // Guard: if resulting track list is empty, stop the track and return early
       if (finalTracks.length === 0) {
-        console.warn('[MediaManager] toggleVideo: resulting track list is empty, cleaning up');
+        log.warn('toggleVideo: resulting track list is empty, cleaning up');
         nextTrack.stop();
         return;
       }
@@ -249,7 +249,7 @@ export const MediaManager = {
       RTCManager.setLocalMediaStreamRef(newStream);
       store.set(localMediaAtom, { ...latest, stream: newStream, video: true });
     } catch (error) {
-      console.error('[MediaManager] Unable to enable camera', error);
+      log.error('Unable to enable camera', error);
     }
   },
 
@@ -264,7 +264,7 @@ export const MediaManager = {
       try {
         const newTrack = await negotiateBestAudioTrack();
         if (!newTrack) {
-          console.error('[MediaManager] No audio track available');
+          log.error('No audio track available');
           return;
         }
         newTrack.enabled = true;
@@ -277,7 +277,7 @@ export const MediaManager = {
         RTCManager.replaceTrack('audio', newTrack);
         return;
       } catch (error) {
-        console.error('[MediaManager] Unable to enable microphone', error);
+        log.error('Unable to enable microphone', error);
         return;
       }
     }
@@ -356,7 +356,7 @@ export const MediaManager = {
     // Race condition guard
     const latest = store.get(localMediaAtom);
     if (!latest.stream || latest.stream.id !== capturedStreamId) {
-      console.warn('[MediaManager] switchAudioInput: stream changed during async, aborting');
+      log.warn('switchAudioInput: stream changed during async, aborting');
       nextTrack.stop();
       return;
     }
@@ -391,7 +391,7 @@ export const MediaManager = {
     const latest = store.get(localMediaAtom);
     const stream = latest.stream;
     if (!stream || stream.id !== capturedStreamId) {
-      console.warn('[MediaManager] switchVideoInput: stream changed during async, aborting');
+      log.warn('switchVideoInput: stream changed during async, aborting');
       nextTrack.stop();
       return;
     }
@@ -446,7 +446,7 @@ export const MediaManager = {
         frameRate: { ideal: 30 },
       });
     } catch (error) {
-      console.warn('[MediaManager] could not apply video constraints', error);
+      log.warn('could not apply video constraints', error);
     }
   },
 };

@@ -1,6 +1,9 @@
 import { store } from '@/store';
 import { localMediaAtom } from '@/store/atoms';
 import { RTCManager } from './rtc-manager';
+import { scopedLogger } from '@/lib/logger';
+
+const log = scopedLogger('RTC');
 
 type Signal = {
   type: string;
@@ -18,7 +21,7 @@ export function handleSignal(signal: Signal): void {
         await RTCManager.setRemoteDescription(signal.from!, signal.sdp!);
         await RTCManager.answer(signal.from!);
       } catch (err) {
-        console.error('[RTC] offer handling failed', err);
+        log.error('offer handling failed', err);
       }
     })();
   } else if (signal.type === 'answer' && signal.from && signal.sdp) {
@@ -26,7 +29,7 @@ export function handleSignal(signal: Signal): void {
       try {
         await RTCManager.setRemoteDescription(signal.from!, signal.sdp!);
       } catch (err) {
-        console.error('[RTC] answer handling failed', err);
+        log.error('answer handling failed', err);
       }
     })();
   } else if (signal.type === 'ice' && signal.from && signal.candidate) {

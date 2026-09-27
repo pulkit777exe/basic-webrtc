@@ -63,9 +63,11 @@ resolution ladder, and the warning toast above still carry the story. An SFU is
 the actual answer past ~6 peers.
 
 **To do next, in increasing order of effort:**
-1. **Sender-side `maxBitrate`** alongside the capture ladder — capture
-   resolution bounds pixels, an encoder bitrate cap bounds the encoded stream.
-   Broadly supported and unit-testable with a fake `RTCRtpSender`.
+1. **Sender-side `maxBitrate` — done (2026-09-27).** `RTCManager.setVideoMaxBitrate`
+   caps each video sender via `setParameters`, and `RoomPage` drives it from the
+   ladder rung alongside `updateSimulcastLayers(maxLayerForBudget(...))`. Capture
+   resolution bounds pixels, the encoder cap bounds the stream congestion control
+   reacts to. What remains below is rig coverage and the SFU.
 2. **Extend the rig** — add TURN (a local coturn), a bandwidth-constrained
    scenario, and the per-layer `media-source` stats that simulcast layer
    selection needs. This is the prerequisite for enabling simulcast with
@@ -125,7 +127,14 @@ Each entry was a verified defect, not a carried-over claim.
 - **`popOutScreen` used `document.write`** on a window that renders
   participant-supplied content. Now built with DOM APIs, with a test asserting
   `write` is never called.
-- **Two ungated `console.debug` calls** in `media-manager` are now dev-only.
+- **Stray `console.*` in hot paths (L7)** — the review asked for a logger that is
+  no-op in production for `rtc-manager.ts`. `lib/logger.ts` now exists (`debug` /
+  `info` / `warn` are dev-only; `error` always emits, deliberately — silencing
+  the error channel would remove what Sentry reads), and every `console.*` in
+  `frontend/src/lib/` (`rtc-manager`, `ws-manager`, `media-manager`,
+  `signal-handler`, `live-captions`, `RecordingManager`) routes through it.
+  Components and pages keep direct `console.error` — low-volume user-action
+  errors next to Sentry boundaries, not hot-path noise.
 - **`handRaisedStateFamily` returned a fresh object** on unrelated peer updates,
   rebuilding the participants-panel queue on every camera toggle. Now returns a
   stable identity.
@@ -153,9 +162,11 @@ C3 asked for two things. One is done, one is not:
 
 - **Done:** the publish buffer batches and applies a circuit breaker, so a Redis
   outage degrades fan-out instead of stalling it.
-- **Not done:** a **per-room** `published` counter. `publishedCount` is a single
-  process-wide total, so it cannot answer "is room X's traffic healthy", which is
-  the question C3 was asking. The metric exists; the granularity does not.
+- **Done (2026-09-27):** the **per-room** counter. `PublishBuffer.statsFor(channel)`
+  reports published/dropped/queued per channel, and channels are per-room
+  (`room:{id}:signal`) — so "is room X's traffic healthy" is now answerable.
+  The stat map is capped (default 2000 channels, oldest-evicted) so room churn
+  cannot leak memory; globals are unaffected by eviction.
 - **Not done:** moving `audio-activity` / `media-state` / `active_speaker` to a
   separate lightweight channel. They share the one buffer with everything else.
   The per-connection buckets (10/s each) bound them, so this is a throughput

@@ -135,7 +135,7 @@ basic-webrtc-app/
 │   │   │   └── live-captions-bridge.ts # Deepgram proxy WS
 │   │   ├── db/
 │   │   │   ├── index.ts         # Postgres.js + Drizzle client
-│   │   │   └── schema.ts        # 15 tables (users, rooms, messages, meeting_notes, etc.)
+│   │   │   └── schema.ts        # 14 tables (users, rooms, messages, meeting_notes, etc.)
 │   │   ├── lib/
 │   │   │   ├── redis-rooms.ts   # Room state in Redis (peers, roles, settings)
 │   │   │   ├── room-settings.ts # Room feature settings (Redis mirror + Postgres truth + 5s TTL cache)
@@ -478,11 +478,14 @@ exports run in-process and deletions use a DB-backed poller
 
 ### Unused Code / Incomplete Features
 
-1. **`recordingTracks` table is write-dead** (`backend/src/db/schema.ts:121-131`):
-   nothing ever INSERTs rows (only `deletion-worker.ts` NULLs `participantId`
-   on rows that can never exist). It is leftover from the deleted server-side
-   merge pipeline. Safe to drop via migration; the client-side flow only uses
-   `recordingSessions` metadata + Redis recording state.
+1. **`recordingTracks` table dropped (2026-09-27):** it was write-dead —
+    nothing ever INSERTed rows (only `deletion-worker.ts` NULLed `participantId`
+    on rows that could never exist), leftover from the deleted server-side
+    merge pipeline. Removed from `src/db/schema.ts` and the deletion worker,
+    dropped by migration `drizzle/0002_keen_blazing_skull.sql` (`DROP TABLE
+    ... CASCADE`, verified on PGlite: table and both FK constraints gone).
+    `pgTable` count is now 14. The `drizzle/schema.ts` + `relations.ts` pull
+    artifacts were synced by hand to match.
 
 2. **Server-merge recording pipeline fully removed (2026-09):** the old
    chunk-upload protocol (`recording_upload_progress`, `recording_track_offset`,
@@ -500,17 +503,49 @@ exports run in-process and deletions use a DB-backed poller
 
 ### Inconsistencies Found
 
-6. **`recording_start` signal type** is listed in `backend/src/lib/signals.ts:42` but the recording start handler (`backend/src/websocket/handler.ts:1007`) creates a session in Postgres and sets Redis state. The `signals.ts` type definition does not include `sessionId` as a required field, though the handler sends it.
+6. **`recording_start` / `recording_stop` carry `sessionId` — no mismatch.**
+   An earlier note claimed `signals.ts` omitted it; it is there as an optional
+   field (`signals.ts:42-43`) and the handler always sends it on both messages.
+   Related: the handler also writes `{ type: 'recording_done' }` to the Redis
+   **stream** (`handler.ts`), which is intentionally outside the `Signal` union —
+   `publishSignal` takes `object`, not `Signal`, and the stream is a write-only
+   capped audit log (no reader; real-time fan-out is pub/sub). Do not "fix" this
+   by adding stream types to the union.
 
-7. **Rate limiter Redis commands**: `rate-limiters.ts` has a custom `sendCommand` wrapper that handles `EVALSHA`, `EVAL`, `SCRIPT LOAD`, `PTTL`, `DECR`, and `DEL` — but the actual `rate-limit-redis` package may issue additional commands not handled here, which could throw at runtime.
+7. **Rate limiter Redis commands fail open by design.** `rate-limiters.ts`
+   translates only `EVALSHA`/`EVAL`/`SCRIPT LOAD`/`PTTL`/`DECR`/`DEL` to Upstash
+   calls; anything else hits `throw new Error('Unsupported command...')` *inside*
+   a try whose catch returns safe defaults (`[1, now+60s]` for EVAL-shaped calls).
+   An unhandled command therefore degrades to allowing the request with a warning
+   log — it cannot throw into Express at runtime. Those are also the only commands
+   `rate-limit-redis` v4 issues (Lua script + TTL bookkeeping).
 
-8. **`@types/*` in dependencies** (not devDependencies): `backend/package.json` has `@types/archiver`, `@types/fluent-ffmpeg` (removed but type remains), `@types/multer`, `@types/qrcode`, `@types/ua-parser-js` in `dependencies` instead of `devDependencies`.
+8. **`@types/*` belong in devDependencies.** Four of them
+   (`@types/archiver`, `@types/multer`, `@types/qrcode`, `@types/ua-parser-js`)
+   were in `backend/package.json` `dependencies`; moved to `devDependencies`
+   2026-09-27 (lockfile updated, typecheck/lint/tests green). Types are erased at
+   runtime so the Docker image (full `bun install`, no prune) is unaffected.
+   `drizzle-kit` stays in `dependencies` deliberately — `db:migrate` runs it in
+   `preDeployCommand`, where devDeps may not be installed.
 
 ### Potential Issues
 
-9. **WebSocket heartbeat**: `handler.ts` uses a 30-second ping/pong heartbeat. Clients that fail to respond are terminated. However, the frontend `ws-manager.ts` does not appear to handle `pong` responses or implement client-side ping — it relies on the browser's built-in WebSocket keepalive.
+9. **WebSocket heartbeat is two-sided.** `handler.ts` runs the 30-second
+   ping/pong sweep, and the frontend *does* answer it: `ws-manager.ts` sends
+   `ping` every 25s and closes with 4000 on a 10s pong timeout, so a dead
+   connection is detected from both ends. An earlier note claiming the frontend
+   "does not appear to handle pong" predates that code.
 
-10. **Session TTL mismatch**: `backend/src/services/session.ts:10` sets `DEFAULT_SESSION_TTL_SECONDS = 24 * 60 * 60` (24h), but `backend/src/config/redis.ts:69` sets refresh session TTL to 7 days (`REFRESH_SESSION_TTL_SEC`). Sessions in the DB can expire before the refresh token does.
+10. **No session TTL mismatch.** `services/session.ts` creates each access-token
+   session row with a 24h `expiresAt`, while the *refresh-token binding*
+   (`user:{id}:session`) lives 7 days — different credentials, different
+   lifetimes, not a mismatch. Every `/refresh` mints a **new** 24h session row
+   for the new access token (`routes/auth/session.ts`), and expired rows are
+   pruned daily by the cleanup job (`lib/cleanup-job.ts`). One subtlety worth
+   keeping: `touchSessionActivity` extends only the Redis copy, so a continuously
+   active session can outlive 24h in cache and the DB `expiresAt` binds only cold
+   lookups. Harmless in practice — the access-token JWT itself expires in 15
+   minutes, which is the binding constraint on API auth.
 
 ## 11. HOW TO VERIFY THIS DOCUMENT
 
@@ -525,15 +560,17 @@ exports run in-process and deletions use a DB-backed poller
 | JWT with three secret types | `cat backend/src/utils/jwt.ts:5-11` — JWT_SECRET, JWT_REFRESH_SECRET, JWT_ROOM_SECRET |
 | BullMQ workers (2 queues) | `ls backend/src/jobs/` — export-worker, deletion-worker (recording is inlined) |
 | Sentry with React Router v7 | `cat frontend/src/instrument.ts` — `createRoutesFromChildren`, `matchRoutes` from react-router-dom |
-| 15 database tables | `cat backend/src/db/schema.ts` — count `pgTable` definitions |
+| 14 database tables | `cat backend/src/db/schema.ts` — count `pgTable` definitions |
 | Rate limiting via Redis | `cat backend/src/lib/rate-limiters.ts` — `RedisStore` from `rate-limit-redis` |
 
 ---
 
-**Last verified**: 2026-09-26. Re-checked mechanically: all 39 dependency
-versions against both manifests, every `file:line` reference resolved and read to
-confirm it points at the claim, `pgTable` count (15), the `jobs/` contents, the
-three JWT secrets, and each `cat`/`grep` command in the table above.
+**Last verified**: 2026-09-27. Re-checked mechanically: `pgTable` count (14,
+after the `recording_tracks` drop), the `jobs/` contents, the three JWT secrets,
+`@types/*` placement in `backend/package.json` (all in devDependencies), no
+`console` call in `frontend/src/lib/` outside `logger.ts` itself, every
+`file:line` reference touched by this round resolved and read, and each
+`cat`/`grep` command in the table above.
 
 Every `file:line` reference in this document was re-derived from the code and
 read to confirm it points at the claim, not merely that the line exists. Line
