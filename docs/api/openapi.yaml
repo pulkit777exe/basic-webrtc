@@ -1454,6 +1454,77 @@ paths:
         "503":
           description: TRANSCRIBE_DISABLED — no provider configured
 
+  /api/rooms/{id}/sfu-token:
+    post:
+      tags: [Rooms]
+      summary: Mint a LiveKit credential for this room and user
+      description: >-
+        Authenticates with a room token (Bearer) rather than an account token:
+        an in-call client holds a room token, and the room token proves live
+        admission to exactly this room — the authority needed for a media
+        credential scoped to the same room and user. Waiting-room tokens are
+        rejected. Deliberately outside the idempotency middleware: every call
+        mints a fresh full-lifetime token, so replaying a stored response
+        would hand out an expiring credential. Minting also marks the room
+        SFU-active (best effort) so later joiners converge on the relay.
+      security:
+        - RoomTokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Relay URL and JWT scoped to this room and user
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, token]
+                properties:
+                  url:
+                    type: string
+                  token:
+                    type: string
+        "403":
+          description: INVALID_TOKEN — room token missing, expired, waiting, or for another room
+        "404":
+          description: SFU_DISABLED — LiveKit is not configured; stay on mesh
+        "500":
+          description: INTERNAL_ERROR
+
+  /api/rooms/{id}/sfu-status:
+    get:
+      tags: [Rooms]
+      summary: Whether this room's media has moved to the SFU
+      description: >-
+        Same room-token auth as sfu-token. Fails open to `{ active: false }`
+        when Redis is unavailable — an unknown status must never strand a
+        client waiting on a relay that may not exist.
+      security:
+        - RoomTokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Relay-active flag
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [active]
+                properties:
+                  active:
+                    type: boolean
+        "403":
+          description: INVALID_TOKEN — room token missing, expired, waiting, or for another room
+
   /api/rooms/{id}/state:
     get:
       tags: [Rooms]

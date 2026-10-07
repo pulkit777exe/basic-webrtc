@@ -69,6 +69,7 @@
     "helmet": "^8.2.0",
     "isomorphic-dompurify": "^3.16.0",
     "jsonwebtoken": "^9.0.3",
+    "livekit-server-sdk": "^2.19.1",
     "multer": "^2.1.1",
     "nanoid": "^5.1.11",
     "otplib": "^13.4.1",

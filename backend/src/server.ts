@@ -20,6 +20,7 @@ import oauthRoutes from './routes/oauth';
 import accountRoutes from './routes/account';
 import roomRoutes from './routes/rooms';
 import roomCaptionRoutes from './routes/room-captions';
+import roomSfuRoutes from './routes/room-sfu';
 import notesRoutes from './routes/notes';
 import iceRoutes from './routes/ice';
 import recordingsRoutes from './routes/recordings';
@@ -93,6 +94,10 @@ app.use('/api/account', accountRoutes);
 // Caption uploads authenticate with the room token, not a session token, so this
 // is mounted *before* the access-token-protected rooms router below.
 app.use('/api/rooms', apiLimiter, roomCaptionRoutes);
+// Same for SFU credentials: minted mid-call on the room token a participant
+// already holds. Not behind the idempotency middleware — every call must mint
+// a fresh, full-lifetime token.
+app.use('/api/rooms', apiLimiter, roomSfuRoutes);
 app.use('/api/rooms', authenticateToken, requireVerifiedEmail, apiLimiter, roomRoutes);
 app.use('/api/rooms', authenticateToken, requireVerifiedEmail, apiLimiter, notesRoutes);
 app.use('/api/ice-servers', optionalAuthenticate, apiLimiter, iceRoutes);
