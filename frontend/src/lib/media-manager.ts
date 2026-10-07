@@ -1,10 +1,35 @@
 import { store } from '@/store';
-import { audioOutputDeviceIdAtom, localMediaAtom, mutedByHostAtom } from '@/store/atoms';
+import { audioOutputDeviceIdAtom, localMediaAtom, mutedByHostAtom, sfuActiveAtom } from '@/store/atoms';
 import { RTCManager } from '@/lib/rtc-manager';
+import { getActiveSfuSession } from '@/lib/sfu';
 import type { QualityLevel } from '@/lib/bandwidth';
 import { scopedLogger } from '@/lib/logger';
 
 const log = scopedLogger('MediaManager');
+
+/**
+ * Mirror a local track change onto the live transport. Mesh re-points one
+ * sender per peer; the relay (un)publishes the current capture track. The
+ * `track` argument mirrors replaceTrack's contract — null means "take it
+ * down" — and mute/enabled flips need no call on either path: they propagate
+ * through the already-live track.
+ */
+async function replaceOutgoingTrack(kind: 'audio' | 'video', track: MediaStreamTrack | null): Promise<void> {
+  if (!store.get(sfuActiveAtom)) {
+    RTCManager.replaceTrack(kind, track);
+    return;
+  }
+  const session = getActiveSfuSession();
+  if (!session) {
+    // sfuActive implies a session (set together, cleared together); reaching
+    // here means that invariant broke. Mesh fallback is unavailable mid-call,
+    // so log and keep the local preview working.
+    log.warn(`no relay session for ${kind} track change; media not sent`);
+    return;
+  }
+  if (kind === 'video') await session.setCameraPublished(track !== null);
+  else await session.setMicrophonePublished(track !== null);
+}
 
 let localStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
@@ -203,7 +228,7 @@ export const MediaManager = {
         videoTrack.stop();
       }
       store.set(localMediaAtom, { ...current, stream: current.stream, video: false });
-      if (!current.screen) RTCManager.replaceTrack('video', null);
+      if (!current.screen) void replaceOutgoingTrack('video', null);
       return;
     }
 
@@ -245,9 +270,11 @@ export const MediaManager = {
       // Create a new stream reference to trigger React re-render
       const newStream = new MediaStream(finalTracks);
 
-      if (!latest.screen) RTCManager.replaceTrack('video', nextTrack);
       RTCManager.setLocalMediaStreamRef(newStream);
       store.set(localMediaAtom, { ...latest, stream: newStream, video: true });
+      // After the atom update: the relay publishes the *current* live track,
+      // which is only nextTrack once the store above has landed.
+      if (!latest.screen) void replaceOutgoingTrack('video', nextTrack);
     } catch (error) {
       log.error('Unable to enable camera', error);
     }
@@ -274,7 +301,7 @@ export const MediaManager = {
         const newStream = new MediaStream(tracks);
 
         store.set(localMediaAtom, { ...current, stream: newStream, audio: true });
-        RTCManager.replaceTrack('audio', newTrack);
+        void replaceOutgoingTrack('audio', newTrack);
         return;
       } catch (error) {
         log.error('Unable to enable microphone', error);
@@ -287,7 +314,7 @@ export const MediaManager = {
     audioTrack.enabled = next;
     store.set(localMediaAtom, { ...current, audio: next });
     if (next) store.set(mutedByHostAtom, false);
-    RTCManager.replaceTrack('audio', audioTrack);
+    void replaceOutgoingTrack('audio', audioTrack);
   },
 
   muteAudio(byHost = false) {
@@ -298,7 +325,7 @@ export const MediaManager = {
     audioTrack.enabled = false;
     store.set(localMediaAtom, { ...current, audio: false });
     if (byHost) store.set(mutedByHostAtom, true);
-    RTCManager.replaceTrack('audio', audioTrack);
+    void replaceOutgoingTrack('audio', audioTrack);
   },
 
   unmuteAudio() {
@@ -309,7 +336,7 @@ export const MediaManager = {
     audioTrack.enabled = true;
     store.set(localMediaAtom, { ...current, audio: true });
     store.set(mutedByHostAtom, false);
-    RTCManager.replaceTrack('audio', audioTrack);
+    void replaceOutgoingTrack('audio', audioTrack);
   },
 
   async startScreenShare(audio = false) {
@@ -321,15 +348,32 @@ export const MediaManager = {
     videoTrack.onended = () => MediaManager.stopScreenShare();
     const current = store.get(localMediaAtom);
     store.set(localMediaAtom, { ...current, screen: true });
-    RTCManager.addScreenTrack(videoTrack, screenStream);
+    // Transport-specific publish of identically-acquired tracks: mesh adds a
+    // sender per peer, the relay publishes once. Acquisition (picker,
+    // onended) stays common so the UX cannot diverge.
+    if (store.get(sfuActiveAtom)) {
+      const session = getActiveSfuSession();
+      if (session && videoTrack) await session.publishScreenTrack(videoTrack);
+      else log.warn('screen share started with no relay session; mesh fallback unavailable mid-share');
+    } else {
+      RTCManager.addScreenTrack(videoTrack, screenStream);
+    }
   },
 
   stopScreenShare() {
+    const wasRelayed = store.get(sfuActiveAtom);
     screenStream?.getTracks().forEach((t) => t.stop());
     screenStream = null;
     const current = store.get(localMediaAtom);
     store.set(localMediaAtom, { ...current, screen: false });
-    RTCManager.removeScreenTrack();
+    if (wasRelayed) {
+      // Unpublish before MediaManager forgets the track: LiveKit must release
+      // its subscription, and the track itself is already stopped above.
+      const session = getActiveSfuSession();
+      if (session) void session.unpublishScreenTrack();
+    } else {
+      RTCManager.removeScreenTrack();
+    }
   },
 
   stop() {
@@ -364,7 +408,7 @@ export const MediaManager = {
     const previousTrack = current.stream.getAudioTracks()[0];
     if (previousTrack) { current.stream.removeTrack(previousTrack); previousTrack.stop(); }
     current.stream.addTrack(nextTrack);
-    RTCManager.replaceTrack('audio', nextTrack);
+    void replaceOutgoingTrack('audio', nextTrack);
     store.set(localMediaAtom, { ...current, stream: current.stream });
   },
 
@@ -379,7 +423,7 @@ export const MediaManager = {
       const existingTrack = current.stream.getVideoTracks()[0];
       if (existingTrack) { current.stream.removeTrack(existingTrack); existingTrack.stop(); }
       store.set(localMediaAtom, { ...current, stream: current.stream, video: false });
-      if (!current.screen) RTCManager.replaceTrack('video', null);
+      if (!current.screen) void replaceOutgoingTrack('video', null);
       return;
     }
 
@@ -399,7 +443,7 @@ export const MediaManager = {
     const previousTrack = stream.getVideoTracks()[0];
     if (previousTrack) { stream.removeTrack(previousTrack); previousTrack.stop(); }
     stream.addTrack(nextTrack);
-    if (!latest.screen) RTCManager.replaceTrack('video', nextTrack);
+    if (!latest.screen) void replaceOutgoingTrack('video', nextTrack);
     store.set(localMediaAtom, { ...latest, stream });
   },
 

@@ -1,5 +1,5 @@
 import { store } from '@/store';
-import { localMediaAtom } from '@/store/atoms';
+import { localMediaAtom, sfuActiveAtom } from '@/store/atoms';
 import { RTCManager } from './rtc-manager';
 import { scopedLogger } from '@/lib/logger';
 
@@ -13,6 +13,13 @@ type Signal = {
 };
 
 export function handleSignal(signal: Signal): void {
+  // Relay mode: media travels over LiveKit, so mesh offers/answers/candidates
+  // — including stale in-flight ones from a just-completed migration — must
+  // not create peer connections. Roster/leave handling elsewhere is
+  // transport-agnostic and stays. Strict `=== true`: the atom is boolean, and
+  // strictness keeps this correct under test doubles that answer any atom
+  // with a truthy stub.
+  if (store.get(sfuActiveAtom) === true) return;
   if (signal.type === 'offer' && signal.from && signal.sdp) {
     const stream = store.get(localMediaAtom).stream;
     void (async () => {

@@ -22,6 +22,7 @@ import {
   roomAtom,
   roomLockedAtom,
   screenShareEnabledAtom,
+  sfuActiveAtom,
   speakingPeersAtom,
   uiAtom,
   userAtom,
@@ -490,12 +491,16 @@ export const WSManager = {
           // Resolve participant role (handles both sync and async cases)
           resolveParticipantRole(data.user.id);
           
-          // Only the peer with lexicographically greater userId creates the offer
+          // Only the peer with lexicographically greater userId creates the offer.
+          // Skipped entirely in relay mode: media travels over LiveKit, so a
+          // mesh offer here would build a parallel connection to nowhere.
+          // Strict comparison for the same reason as in signal-handler.
           const currentUserId = store.get(userAtom)?.id;
           if (
             data.user.id !== currentUserId &&
             currentUserId != null &&
-            currentUserId > data.user.id
+            currentUserId > data.user.id &&
+            store.get(sfuActiveAtom) !== true
           ) {
             const localMedia = store.get(localMediaAtom);
             const stream = localMedia?.stream ?? null;

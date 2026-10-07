@@ -20,6 +20,7 @@ import {
   roomLockedAtom,
   roomTokenAtom,
   screenShareEnabledAtom,
+  sfuActiveAtom,
   userAtom,
   peerListAtom,
   pinnedParticipantsAtom,
@@ -45,6 +46,13 @@ import { AudioActivityMonitor } from "@/lib/audio-activity";
 import { startIceRefresh } from "@/lib/ice-refresh";
 import { AdaptiveQualityController } from "@/lib/adaptive-quality";
 import { MESH_WARN_THRESHOLD } from "@/lib/mesh-limits";
+import {
+  connectSfu,
+  disconnectSfu,
+  fetchSfuStatus,
+  fetchSfuToken,
+  shouldUseSfu,
+} from "@/lib/sfu";
 import { maxLayerForBudget } from "@/lib/simulcast";
 import { MediaManager } from "@/lib/media-manager";
 import { RoomVideoGrid } from "@/components/room/RoomVideoGrid";
@@ -125,6 +133,16 @@ export function RoomPage() {
   const chatUnread = useAtomValue(chatUnreadAtom);
   const participants = useAtomValue(participantsAtom);
   const setParticipants = useSetAtom(participantsAtom);
+  const sfuActive = useAtomValue(sfuActiveAtom);
+  // SFU migration guards, all per-mount (reset in the join effect below):
+  // - sfuFailedRef: a relay failure or loss pins this session to mesh. Without
+  //   it, the loss fallback (WS reconnect → roster repopulation → growth effect
+  //   refire) would chase the same dead relay in a toast-spamming loop.
+  // - sfuMigratingRef: serialises concurrent join/growth triggers.
+  // - sfuToastedRef: the uptake/fallback toasts fire once per session.
+  const sfuFailedRef = useRef(false);
+  const sfuMigratingRef = useRef(false);
+  const sfuToastedRef = useRef(false);
   const setChat = useSetAtom(chatAtom);
   const setChatUnread = useSetAtom(chatUnreadAtom);
   const setChatReactions = useSetAtom(chatReactionsAtom);
@@ -164,6 +182,76 @@ export function RoomPage() {
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const { setTheme, resolvedTheme } = useTheme();
 
+  /**
+   * Relay loss fallback. Runs only on *unexpected* SFU disconnects (the session
+   * disconnect path never calls it): tear the WS down and back up so the
+   * server re-emits synthetic joins and the mesh rebuilds from scratch.
+   * Pins the session to mesh — without the pin, the reconnect repopulates the
+   * roster, the growth effect refires, and the client chases the dead relay
+   * in a loop.
+   */
+  const handleSfuLoss = useCallback(() => {
+    if (cleanedUpRef.current) return;
+    sfuFailedRef.current = true;
+    toast.error("Relay connection lost — rejoining over direct connections.");
+    WSManager.disconnect();
+    const token = WSManager.getRoomToken();
+    if (token) WSManager.connect(token);
+  }, []);
+
+  /**
+   * Move this client's media to the relay when the room warrants it. Safe to
+   * call from join and from roster growth: no-ops when already relayed,
+   * migrating, failed, or unneeded. Connect-then-disconnect ordering means an
+   * SFU failure leaves the working mesh untouched.
+   */
+  const ensureSfuTransport = useCallback(async (): Promise<void> => {
+      // Called at join (covers rooms already relayed) and on roster growth
+      // (covers rooms that crossed the threshold mid-call).
+      if (!roomId || sfuFailedRef.current || sfuMigratingRef.current) return;
+      if (store.get(sfuActiveAtom)) return;
+      const active = await fetchSfuStatus(roomId);
+      if (cleanedUpRef.current) return;
+      const count = store.get(participantsAtom).length;
+      if (!active && !shouldUseSfu(count)) return;
+      sfuMigratingRef.current = true;
+      try {
+        const creds = await fetchSfuToken(roomId);
+        if (!creds || cleanedUpRef.current) {
+          sfuFailedRef.current = true;
+          if (!sfuToastedRef.current) {
+            sfuToastedRef.current = true;
+            toast.info('Relay unavailable — staying on direct connections.');
+          }
+          return;
+        }
+        const session = await connectSfu({
+          url: creds.url,
+          token: creds.token,
+          getLiveStream: () => store.get(localMediaAtom).stream,
+          onDisconnected: handleSfuLoss,
+        });
+        if (!session || cleanedUpRef.current) {
+          session?.disconnect();
+          sfuFailedRef.current = true;
+          if (!sfuToastedRef.current) {
+            sfuToastedRef.current = true;
+            toast.info('Relay unavailable — staying on direct connections.');
+          }
+          return;
+        }
+        RTCManager.disconnectAll();
+        if (!sfuToastedRef.current) {
+          sfuToastedRef.current = true;
+          toast.info('Large call — media moved to the relay; chat and controls are unchanged.');
+        }
+      } finally {
+        sfuMigratingRef.current = false;
+      }
+    },
+    [roomId, handleSfuLoss],
+  );
+
   useEffect(() => {
     if (!roomId || !roomToken || !user?.id) {
       navigate("/dashboard", { replace: true });
@@ -177,6 +265,9 @@ export function RoomPage() {
 
     cleanedUpRef.current = false;
     muteOnJoinCheckedRef.current = false;
+    sfuFailedRef.current = false;
+    sfuMigratingRef.current = false;
+    sfuToastedRef.current = false;
 
     RTCManager.init().then(async () => {
       if (cleanedUpRef.current) return;
@@ -220,6 +311,12 @@ export function RoomPage() {
           handRaised: false,
         },
       ]);
+      // Transport decision for this session, after the roster reset above so
+      // the count reflects this room (not the previous one): a room already
+      // relayed (flag set by an earlier occupant) takes us straight to the
+      // SFU; otherwise the roster-growth effect below migrates us if the room
+      // crosses scale.
+      void ensureSfuTransport();
     });
     setChat([]);
     setChatUnread(false);
@@ -231,6 +328,7 @@ export function RoomPage() {
     return () => {
       cleanedUpRef.current = true;
       WSManager.disconnect();
+      disconnectSfu();
       RTCManager.disconnectAll();
       MediaManager.stop();
       setPinnedParticipants(new Set());
@@ -263,6 +361,7 @@ export function RoomPage() {
     setPinnedChatMessage,
     setPinnedParticipants,
     setRecording,
+    ensureSfuTransport,
   ]);
 
   useEffect(() => {
@@ -385,17 +484,28 @@ export function RoomPage() {
     audioActivityRef.current?.setEnabled(localMedia.audio);
   }, [localMedia.audio]);
 
+  // Roster growth converges the room onto one transport: whoever crosses the
+  // threshold first mints (marking the room), and everyone else follows on
+  // their next roster change. No down-migration by design.
+  useEffect(() => {
+    if (!roomId || participants.length <= 0) return;
+    void ensureSfuTransport();
+  }, [participants.length, roomId, ensureSfuTransport]);
+
   // TURN credentials are short-lived (300s) and are invalidated outright by a
   // network change, so renew them for as long as this call is open.
   useEffect(() => {
+    // Mesh-only: the relay manages its own ICE/TURN server-side.
+    if (sfuActive) return;
     const handle = startIceRefresh(() => RTCManager.refreshIceConfiguration());
     return () => handle.stop();
-  }, []);
+  }, [sfuActive]);
 
   // Mesh calls send the same camera stream to every peer, so uplink grows with
   // the room. Step the capture resolution down when the link cannot carry it,
-  // and back up when it can.
+  // and back up when it can. Mesh-only: the relay runs its own layers.
   useEffect(() => {
+    if (sfuActive) return;
     const controller = new AdaptiveQualityController({
       getSamples: () => RTCManager.sampleOutgoingBitrate(),
       getSenderCount: () => Math.max(1, RTCManager.getVideoSenderCount()),
@@ -415,21 +525,22 @@ export function RoomPage() {
     });
     controller.start();
     return () => controller.stop();
-  }, []);
+  }, [sfuActive]);
 
   // Mesh topology warning. Every participant encodes and uploads a separate
   // stream to every other one, so CPU and uplink climb steeply past ~6 people;
-  // warn once per call rather than pretending the room is fine. (Real scaling
-  // needs an SFU — see TODOS.md.)
+  // warn once per call rather than pretending the room is fine. Skipped on the
+  // relay, where uplink is flat by construction.
   const meshWarningShownRef = useRef(false);
   useEffect(() => {
     if (meshWarningShownRef.current) return;
+    if (sfuActive) return;
     if (participants.length <= MESH_WARN_THRESHOLD) return;
     meshWarningShownRef.current = true;
     toast.warning(
       `${participants.length} people in this call — video may stutter above ${MESH_WARN_THRESHOLD}.`
     );
-  }, [participants.length]);
+  }, [participants.length, sfuActive]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

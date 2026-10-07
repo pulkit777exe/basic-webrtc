@@ -369,6 +369,26 @@ export const api = {
     });
   },
 
+  /**
+   * SFU credential, same room-JWT pattern as captions: the caller holds a room
+   * token, not a session token, mid-call. Deliberately outside any
+   * refresh-and-replay: a 401 here means the room token itself is dead, and
+   * replaying it would 401 straight back (see `requestWithRetry`).
+   */
+  async getSfuToken(roomId: string, roomToken: string) {
+    return request<{ url: string; token: string }>(`/api/rooms/${roomId}/sfu-token`, {
+      method: "POST",
+      token: roomToken,
+    });
+  },
+
+  /** Whether this room's media has already moved to the SFU. */
+  async getSfuStatus(roomId: string, roomToken: string) {
+    return request<{ active: boolean }>(`/api/rooms/${roomId}/sfu-status`, {
+      token: roomToken,
+    });
+  },
+
   /** Chat history: requires session auth + membership in the room (server-enforced). */
   async getRoomMessages(roomId: string) {
     return request<{

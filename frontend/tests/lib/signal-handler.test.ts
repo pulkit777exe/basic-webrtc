@@ -136,6 +136,34 @@ describe('handleSignal', () => {
     expect(RTCManager.addIceCandidate).not.toHaveBeenCalled();
   });
 
+  it('ignores mesh signaling while the relay is active', async () => {
+    // Stale in-flight offers from a just-completed migration must not rebuild
+    // mesh legs. The mock answers every atom read, so the guard has to be an
+    // exact `true`, not truthiness.
+    mockStoreGet.mockImplementation((atom: unknown) =>
+      atom === atomsModule.sfuActiveAtom ? true : { stream: makeLocalStream() },
+    );
+
+    handleSignal({ type: 'offer', from: 'peer-relay', sdp: { type: 'offer', sdp: 'v=0...' } });
+    handleSignal({ type: 'answer', from: 'peer-relay', sdp: { type: 'answer', sdp: 'v=0...' } });
+    handleSignal({
+      type: 'ice',
+      from: 'peer-relay',
+      candidate: { candidate: 'candidate:9', sdpMid: '0', sdpMLineIndex: 0 },
+    });
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(RTCManager.createPeer).not.toHaveBeenCalled();
+    expect(RTCManager.setRemoteDescription).not.toHaveBeenCalled();
+    expect(RTCManager.answer).not.toHaveBeenCalled();
+    expect(RTCManager.addIceCandidate).not.toHaveBeenCalled();
+    // The implementation above is per-test: clearAllMocks in beforeEach keeps
+    // implementations, so without this every later test would see an active
+    // relay and drop its signals too.
+    mockStoreGet.mockReset();
+  });
+
   it('logs error when offer handling throws', async () => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const stream = makeLocalStream();
@@ -193,7 +221,10 @@ describe('handleSignal', () => {
       'peer-ice-null',
       candidate,
     );
-    expect(mockStoreGet).not.toHaveBeenCalled();
+    // The only store read on this path is the relay guard: the ice path
+    // itself still never touches the media stream.
+    expect(mockStoreGet).toHaveBeenCalledTimes(1);
+    expect(mockStoreGet).toHaveBeenCalledWith(atomsModule.sfuActiveAtom);
   });
 
   it('offer with null stream passes null to createPeer', async () => {

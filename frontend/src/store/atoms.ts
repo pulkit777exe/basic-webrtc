@@ -205,6 +205,14 @@ export type ConnectionStatus =
   | "offline"
   | "disconnected";
 export const connectionStatusAtom = atom<ConnectionStatus>("connecting");
+/**
+ * Which transport carries this call's media. Mesh by default; `true` once the
+ * client migrates to the SFU (room above threshold, relay configured and
+ * reachable). Lives in the store — not in the sfu module — so the WS layer
+ * (`ws-manager` join offers, `signal-handler` offer/answer/ICE) can ignore
+ * mesh signaling while it holds, without importing media code.
+ */
+export const sfuActiveAtom = atom<boolean>(false);
 /** Current reconnect attempt number (0 when connected/connecting). */
 export const reconnectAttemptAtom = atom<number>(0);
 export const reactionsEnabledAtom = atom<boolean>(true);
