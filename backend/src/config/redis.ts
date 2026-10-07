@@ -54,6 +54,28 @@ export const redis: Redis = new Proxy({} as Redis, {
 
 let redisSub: Redis | null = null;
 
+/**
+ * Run a Redis command that sits on a must-not-fail path (login, session
+ * validation, /me) and return `fallback` instead of throwing.
+ *
+ * Postgres is the source of truth for sessions, account locks, and counters;
+ * Redis only accelerates them. A dead Upstash hostname therefore has to degrade
+ * to "slower, less accurate" — never "sign-in returns 500". Same stance as the
+ * fail-open rate limiters and the idempotency cache.
+ */
+export async function redisFailOpen<T>(
+  what: string,
+  op: () => Promise<T>,
+  fallback: T,
+): Promise<T> {
+  try {
+    return await op();
+  } catch (err) {
+    logger.warn('[Redis] command failed, using fallback', { what, err: String(err) });
+    return fallback;
+  }
+}
+
 export function getRedisSub(): Redis | null {
   if (redisSub) return redisSub;
   const url = process.env.UPSTASH_REDIS_REST_URL;
@@ -77,19 +99,32 @@ function userSessionInvalidBeforeKey(userId: string): string {
 }
 
 export async function setRefreshSession(userId: string, tokenHash: string): Promise<void> {
-  await redis.set(userSessionKey(userId), tokenHash, { ex: REFRESH_SESSION_TTL_SEC });
+  // Fail open: the refresh cookie is already set by the caller, and a login that
+  // 500s here would strand the user after a successful password check. Losing the
+  // stored hash only means the next refresh is rejected and they sign in again.
+  await redisFailOpen(
+    'setRefreshSession',
+    () => redis.set(userSessionKey(userId), tokenHash, { ex: REFRESH_SESSION_TTL_SEC }),
+    undefined,
+  );
 }
 
 export async function getRefreshSession(userId: string): Promise<string | null> {
-  return redis.get<string>(userSessionKey(userId));
+  // Deliberately not failing open: no stored hash means no refresh, so a Redis
+  // outage can never be used to mint a session the server cannot look up.
+  return redisFailOpen('getRefreshSession', () => redis.get<string>(userSessionKey(userId)), null);
 }
 
 export async function deleteRefreshSession(userId: string): Promise<void> {
-  await redis.del(userSessionKey(userId));
+  await redisFailOpen('deleteRefreshSession', () => redis.del(userSessionKey(userId)), undefined);
 }
 
 export async function getUserSessionInvalidBefore(userId: string): Promise<number | null> {
-  const raw = await redis.get<string>(userSessionInvalidBeforeKey(userId));
+  const raw = await redisFailOpen<string | null>(
+    'getUserSessionInvalidBefore',
+    () => redis.get<string>(userSessionInvalidBeforeKey(userId)),
+    null,
+  );
   if (!raw) return null;
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : null;

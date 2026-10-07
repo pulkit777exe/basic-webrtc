@@ -4,7 +4,7 @@ import { cookieOptions } from '../../utils/cookies.js';
 import { Router, Request, Response } from 'express';
 import { eq, sql } from 'drizzle-orm';
 import { refreshTokens } from '../../services/auth.js';
-import { redis, deleteRefreshSession } from '../../config/redis.js';
+import { redis, redisFailOpen, deleteRefreshSession } from '../../config/redis.js';
 import { logoutRevoke } from '../../middleware/auth.js';
 import { db } from '../../db/index.js';
 import { users } from '../../db/schema.js';
@@ -194,9 +194,17 @@ router.post('/login', loginLimiter, async (req: Request, res: Response): Promise
         userId: user.id,
         email: user.email,
       });
-      await redis.set(twoFactorPendingLoginKey(hashToken(pendingToken)), user.id, {
-        ex: TWO_FACTOR_PENDING_LOGIN_WINDOW_SECONDS,
-      });
+      // Redis is only a fast lookup for a token whose expiry is also enforced
+      // by its signature; if the write fails the 2FA challenge simply reports
+      // an expired/invalid token on the next step instead of 500ing the login.
+      await redisFailOpen(
+        'login.2faPending',
+        () =>
+          redis.set(twoFactorPendingLoginKey(hashToken(pendingToken)), user.id, {
+            ex: TWO_FACTOR_PENDING_LOGIN_WINDOW_SECONDS,
+          }),
+        undefined,
+      );
       res.status(200).json({
         requires2FA: true,
         pendingToken,
