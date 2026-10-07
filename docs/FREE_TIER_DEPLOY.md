@@ -106,9 +106,18 @@ shape is **LiveKit Cloud's free tier** as the media server:
   (e.g. `wss://<your-project>.livekit.cloud`), `LIVEKIT_API_KEY`,
   `LIVEKIT_API_SECRET`. All three or none: unset → the backend answers
   `404 SFU_DISABLED` on the credential endpoint and every call stays on mesh.
+  Paste the **wss:// endpoint**, not the https:// dashboard URL — a non-`ws(s)`
+  scheme is rejected with the same 404 (and a server log line) instead of
+  minting credentials no browser can dial.
 - Frontend (Vercel → Environment): `VITE_LIVEKIT_URL` — the same `wss://…`
   URL. Unset → the client never asks for the relay. Like the other
   `VITE_*` values this bakes in at build time, so redeploy after setting it.
+- First-call smoke test (managed Cloud is configured here, not run — the rig
+  verifies against self-hosted 1.13.8): grow a room past 6 and confirm both
+  sides show relayed video with chat/controls unchanged, i.e. the same
+  assertions as `frontend/e2e/specs/sfu.spec.ts`. Any relay failure falls
+  back to mesh with a toast, so the worst case is a small-room experience,
+  never a dead call.
 
 Migration is one-way per room and fail-open: rooms start on mesh, the first
 client that needs the relay mints a credential (which marks the room
@@ -136,7 +145,25 @@ run, here.
 Then add the Vercel URL to the backend's `ALLOWED_ORIGINS` (CORS + cookies
 require an exact match, no trailing slash).
 
-## 3. How the code stays free-tier safe
+## 3. Verify the deploy
+
+`scripts/verify-deploy.sh` checks a live stack without needing anything
+secret — all endpoints it touches are public or correctly rejected without
+credentials:
+
+```sh
+scripts/verify-deploy.sh https://<your-render-service>.onrender.com https://<your-app>.vercel.app
+```
+
+It asserts liveness (`/health` 200 even with Redis down), readiness shape
+(200, or 503 with a JSON body saying what is degraded), the public API
+serving (`/api/ice-servers`), the SFU route mounted and gated (403 without
+a token — never 404 or 500), and the SPA fallback (unknown routes serve the
+app, so room deep-links and refreshes don't 404). `... --static` runs the
+repo-side half (render.yaml paths, vercel.json agreement) and also runs in
+CI after the frontend build.
+
+## 4. How the code stays free-tier safe
 
 - **Jobs without BullMQ** (`backend/src/jobs/account-jobs.ts`): exports run
   in-process; account deletions are scheduled via the `scheduledFor` column
@@ -166,7 +193,7 @@ require an exact match, no trailing slash).
   `/health/ready` is 503 only when Postgres is down; Redis reports
   `ok` / `error` / `disabled`.
 
-## 4. Local dev (unchanged)
+## 5. Local dev (unchanged)
 
 `docker-compose.yml` still provides local Postgres + TCP Redis + hot-reload
 for development. `docker-compose.prod.yml` mirrors the single-instance

@@ -24,6 +24,14 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
     the mesh-size warning all stand down (exact-`true` guards on
     `sfuActiveAtom`, so test doubles answering truthy don't trip them) —
     LiveKit runs its own layers (dynacast).
+  - **Migration choreography is a tested controller, not page closures.**
+    `lib/sfu-migration.ts` (`createSfuMigrationController`, deps-injected)
+    owns the guards (failed/migrating/toasted), the connect-then-teardown
+    order, and the loss fallback; `RoomPage` only creates it in the join
+    effect and triggers it. 14 unit tests assert every early return, the
+    call order, the concurrent-trigger serialisation (the slot is claimed
+    *before* the status fetch — after it lets every caller through), and the
+    mid-flight-cleanup disconnect.
 
 ### WebRTC (`lib/rtc-manager.ts`)
 

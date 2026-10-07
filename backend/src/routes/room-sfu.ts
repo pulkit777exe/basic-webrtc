@@ -36,7 +36,18 @@ function livekitConfig(): { url: string; apiKey: string; apiSecret: string } | n
   const url = process.env.LIVEKIT_URL?.trim();
   const apiKey = process.env.LIVEKIT_API_KEY?.trim();
   const apiSecret = process.env.LIVEKIT_API_SECRET?.trim();
-  return url && apiKey && apiSecret ? { url, apiKey, apiSecret } : null;
+  if (!url || !apiKey || !apiSecret) return null;
+  // Fail fast on a URL the browser client can never dial (the common mistake
+  // is pasting the https:// dashboard URL instead of the wss:// endpoint).
+  // Minting tokens against it would look configured while every connect
+  // falls back to mesh — 404 keeps the failure visible in one place.
+  if (!/^wss?:\/\//.test(url)) {
+    logger.warn('[sfu] LIVEKIT_URL is not a ws(s) endpoint; treating the relay as disabled', {
+      url,
+    });
+    return null;
+  }
+  return { url, apiKey, apiSecret };
 }
 
 /** Room-token gate. Mirrors the captions router: case-insensitive room match

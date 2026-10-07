@@ -53,6 +53,11 @@ jobs:
         env:
           VITE_API_URL: http://localhost:4000
           VITE_WS_URL: ws://localhost:4000
+      # Repo-side deploy contract: every path render.yaml points at exists,
+      # vercel.json agrees with package.json, and the just-built dist/ is
+      # present. Catches config drift before it reaches Render/Vercel.
+      - name: Verify deploy contract (static)
+        run: bash ../scripts/verify-deploy.sh --static
 
   e2e-webrtc:
     runs-on: ubuntu-latest

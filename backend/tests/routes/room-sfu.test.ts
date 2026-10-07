@@ -113,6 +113,19 @@ describe('POST /api/rooms/:id/sfu-token (room-token auth)', () => {
     expect(body.code).toBe('SFU_DISABLED');
   });
 
+  it('returns 404 SFU_DISABLED when the URL is not a ws(s) endpoint', async () => {
+    // The common mistake is pasting the https:// dashboard URL instead of the
+    // wss:// endpoint. Minting against it would look configured while every
+    // connect falls back to mesh — fail fast instead.
+    process.env.LIVEKIT_URL = 'https://sfu.example.test/dashboard';
+    process.env.LIVEKIT_API_KEY = LIVEKIT_ENV.LIVEKIT_API_KEY;
+    process.env.LIVEKIT_API_SECRET = LIVEKIT_ENV.LIVEKIT_API_SECRET;
+    const token = generateRoomToken('user-1', 'room-1');
+    const { status, body } = await post('room-1', token);
+    expect(status).toBe(404);
+    expect(body.code).toBe('SFU_DISABLED');
+  });
+
   it('mints a token scoped to exactly this room and user, even with Redis down', async () => {
     // No UPSTASH_* in this process, so the active-flag write fails open — the
     // mint itself must still succeed. This is the free-tier reality, not a mock.

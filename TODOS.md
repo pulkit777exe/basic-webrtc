@@ -92,10 +92,10 @@ the actual answer past ~6 peers.
    tracks silently yield zero tiles). Backend: 13 token/flag tests incl.
    Redis-down fail-open; frontend: 20 `sfu.ts` tests incl. a
    mutation-discriminating wrapper regression test.
-   Residual, stated plainly: the `RoomPage` migration choreography itself
-   (join/growth triggers, loss fallback) has no app-level test — only its
-   pieces do; and managed LiveKit Cloud is the documented free-tier target
-   but only the self-hosted 1.13.8 binary is rig-verified. Provisioning
+   Residual, stated plainly: managed LiveKit Cloud is the documented free-tier
+   target but only the self-hosted 1.13.8 binary is rig-verified, so the first
+   Cloud call should be treated as a smoke test (both peers decoding, zero
+   mesh legs — the same assertions as `specs/sfu.spec.ts`). Provisioning
    (`LIVEKIT_*` on Render, `VITE_LIVEKIT_URL` on Vercel) is documented in
    `docs/FREE_TIER_DEPLOY.md`.
 

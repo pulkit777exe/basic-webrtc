@@ -51,8 +51,8 @@ import {
   disconnectSfu,
   fetchSfuStatus,
   fetchSfuToken,
-  shouldUseSfu,
 } from "@/lib/sfu";
+import { createSfuMigrationController, type SfuMigrationController } from "@/lib/sfu-migration";
 import { maxLayerForBudget } from "@/lib/simulcast";
 import { MediaManager } from "@/lib/media-manager";
 import { RoomVideoGrid } from "@/components/room/RoomVideoGrid";
@@ -134,15 +134,15 @@ export function RoomPage() {
   const participants = useAtomValue(participantsAtom);
   const setParticipants = useSetAtom(participantsAtom);
   const sfuActive = useAtomValue(sfuActiveAtom);
-  // SFU migration guards, all per-mount (reset in the join effect below):
-  // - sfuFailedRef: a relay failure or loss pins this session to mesh. Without
-  //   it, the loss fallback (WS reconnect → roster repopulation → growth effect
-  //   refire) would chase the same dead relay in a toast-spamming loop.
-  // - sfuMigratingRef: serialises concurrent join/growth triggers.
-  // - sfuToastedRef: the uptake/fallback toasts fire once per session.
-  const sfuFailedRef = useRef(false);
-  const sfuMigratingRef = useRef(false);
-  const sfuToastedRef = useRef(false);
+  // SFU migration choreography (guards, ordering, fallback pins) lives in
+  // lib/sfu-migration.ts with 14 unit tests; the page only owns *when* it
+  // runs. Created in the join effect (effects, never render), fresh per room.
+  const sfuMigrationRef = useRef<SfuMigrationController | null>(null);
+  // Thin trigger: the join effect creates the controller (effects, never
+  // render — its deps close over refs), and join + growth call through here.
+  const ensureSfuTransport = useCallback(() => {
+    void sfuMigrationRef.current?.ensure();
+  }, []);
   const setChat = useSetAtom(chatAtom);
   const setChatUnread = useSetAtom(chatUnreadAtom);
   const setChatReactions = useSetAtom(chatReactionsAtom);
@@ -182,76 +182,6 @@ export function RoomPage() {
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const { setTheme, resolvedTheme } = useTheme();
 
-  /**
-   * Relay loss fallback. Runs only on *unexpected* SFU disconnects (the session
-   * disconnect path never calls it): tear the WS down and back up so the
-   * server re-emits synthetic joins and the mesh rebuilds from scratch.
-   * Pins the session to mesh — without the pin, the reconnect repopulates the
-   * roster, the growth effect refires, and the client chases the dead relay
-   * in a loop.
-   */
-  const handleSfuLoss = useCallback(() => {
-    if (cleanedUpRef.current) return;
-    sfuFailedRef.current = true;
-    toast.error("Relay connection lost — rejoining over direct connections.");
-    WSManager.disconnect();
-    const token = WSManager.getRoomToken();
-    if (token) WSManager.connect(token);
-  }, []);
-
-  /**
-   * Move this client's media to the relay when the room warrants it. Safe to
-   * call from join and from roster growth: no-ops when already relayed,
-   * migrating, failed, or unneeded. Connect-then-disconnect ordering means an
-   * SFU failure leaves the working mesh untouched.
-   */
-  const ensureSfuTransport = useCallback(async (): Promise<void> => {
-      // Called at join (covers rooms already relayed) and on roster growth
-      // (covers rooms that crossed the threshold mid-call).
-      if (!roomId || sfuFailedRef.current || sfuMigratingRef.current) return;
-      if (store.get(sfuActiveAtom)) return;
-      const active = await fetchSfuStatus(roomId);
-      if (cleanedUpRef.current) return;
-      const count = store.get(participantsAtom).length;
-      if (!active && !shouldUseSfu(count)) return;
-      sfuMigratingRef.current = true;
-      try {
-        const creds = await fetchSfuToken(roomId);
-        if (!creds || cleanedUpRef.current) {
-          sfuFailedRef.current = true;
-          if (!sfuToastedRef.current) {
-            sfuToastedRef.current = true;
-            toast.info('Relay unavailable — staying on direct connections.');
-          }
-          return;
-        }
-        const session = await connectSfu({
-          url: creds.url,
-          token: creds.token,
-          getLiveStream: () => store.get(localMediaAtom).stream,
-          onDisconnected: handleSfuLoss,
-        });
-        if (!session || cleanedUpRef.current) {
-          session?.disconnect();
-          sfuFailedRef.current = true;
-          if (!sfuToastedRef.current) {
-            sfuToastedRef.current = true;
-            toast.info('Relay unavailable — staying on direct connections.');
-          }
-          return;
-        }
-        RTCManager.disconnectAll();
-        if (!sfuToastedRef.current) {
-          sfuToastedRef.current = true;
-          toast.info('Large call — media moved to the relay; chat and controls are unchanged.');
-        }
-      } finally {
-        sfuMigratingRef.current = false;
-      }
-    },
-    [roomId, handleSfuLoss],
-  );
-
   useEffect(() => {
     if (!roomId || !roomToken || !user?.id) {
       navigate("/dashboard", { replace: true });
@@ -265,9 +195,26 @@ export function RoomPage() {
 
     cleanedUpRef.current = false;
     muteOnJoinCheckedRef.current = false;
-    sfuFailedRef.current = false;
-    sfuMigratingRef.current = false;
-    sfuToastedRef.current = false;
+    // Fresh controller per session (created here, in an effect — its deps
+    // close over refs, which render may not touch).
+    sfuMigrationRef.current = createSfuMigrationController({
+      getRoomId: () => roomId,
+      isCleanedUp: () => cleanedUpRef.current,
+      isSfuActive: () => store.get(sfuActiveAtom),
+      getParticipantCount: () => store.get(participantsAtom).length,
+      getLiveStream: () => store.get(localMediaAtom).stream,
+      fetchSfuStatus,
+      fetchSfuToken,
+      connectSfu,
+      teardownMesh: () => RTCManager.disconnectAll(),
+      reconnectSignaling: () => {
+        WSManager.disconnect();
+        const token = WSManager.getRoomToken();
+        if (token) WSManager.connect(token);
+      },
+      notifyInfo: (message) => toast.info(message),
+      notifyError: (message) => toast.error(message),
+    });
 
     RTCManager.init().then(async () => {
       if (cleanedUpRef.current) return;
