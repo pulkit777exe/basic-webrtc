@@ -14,10 +14,15 @@ type Policy = {
   bucket?: { key: string; perSecond: number };
   exemptFromRoomBurst: boolean;
   mustDeliver: boolean;
+  lane: 'signal' | 'presence';
 };
 
 const policy = (type: string): Policy =>
-  (MESSAGE_POLICY as Record<string, Policy>)[type] ?? { exemptFromRoomBurst: false, mustDeliver: false };
+  (MESSAGE_POLICY as Record<string, Policy>)[type] ?? {
+    exemptFromRoomBurst: false,
+    mustDeliver: false,
+    lane: 'signal',
+  };
 
 describe('per-message traffic policy', () => {
   it('negotiation shares one bucket, so setup cannot spend 3x the allowance', () => {
@@ -133,5 +138,27 @@ describe('per-message traffic policy', () => {
     const known = new Set<string>(CLIENT_SIGNAL_TYPES);
     const extra = Object.keys(MESSAGE_POLICY).filter((t) => !known.has(t));
     expect(extra, `policy entries for unknown types: ${extra.join(', ')}`).toEqual([]);
+  });
+
+  it('sends only self-correcting advisory traffic down the presence lane', () => {
+    // The presence lane is a second buffer with its own breaker for traffic
+    // where a drop is free: the next update self-corrects. Anything a client
+    // cannot reconstruct — chat, captions, control, negotiation — must stay on
+    // the signal lane, or a full presence queue would eat messages that matter.
+    const presence = Object.entries(MESSAGE_POLICY as Record<string, Policy>)
+      .filter(([, p]) => p.lane === 'presence')
+      .map(([type]) => type)
+      .sort();
+    expect(presence).toEqual(['active_speaker', 'audio-activity', 'media-state']);
+  });
+
+  it('never puts must-deliver traffic on the presence lane', () => {
+    // mustDeliver bypasses buffering entirely, so this is a contradiction in
+    // the table rather than a live bug — but a contradiction that would
+    // mislead the next reader about what the lane means.
+    for (const [type, p] of Object.entries(MESSAGE_POLICY as Record<string, Policy>)) {
+      if (!p.mustDeliver) continue;
+      expect(p.lane, `${type} is must-deliver`).toBe('signal');
+    }
   });
 });

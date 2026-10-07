@@ -36,7 +36,7 @@ import { retry } from '../lib/retry';
 import { authorizeInbound } from '../lib/ws-authz';
 import { hasActiveSession } from '../services/session';
 import { PublishBuffer } from '../lib/publish-buffer';
-import { createRoomFanoutBuffer } from '../lib/room-fanout';
+import { createPresenceFanoutBuffer, createRoomFanoutBuffer } from '../lib/room-fanout';
 import { generateRoomToken, verifyRoomToken } from '../utils/jwt';
 import { nanoid } from 'nanoid';
 import { WS_MAX_MESSAGE_BYTES } from '../config/scaling';
@@ -75,7 +75,7 @@ async function failOpen<T>(lookup: Promise<T>): Promise<T | null> {
  * up rate limited in a way nobody documented, or documented at a limit the code
  * does not apply.
  *
- * Three independent questions per type, so they are answered together:
+ * Four independent questions per type, so they are answered together:
  *
  * - `bucket` — this connection's per-second allowance, and which bucket it draws
  *   from. Types sharing a bucket share the refill. Absent means no per-type cap,
@@ -88,6 +88,10 @@ async function failOpen<T>(lookup: Promise<T>): Promise<T | null> {
  *   and roster changes, where losing one is unrecoverable (an offer with no peer
  *   to receive it is a call that never connects) and reordering against the
  *   immediate local hop can hand a client newer state before older.
+ * - `lane` — which publish buffer carries cross-node fan-out: `signal` (chat,
+ *   captions, negotiation, control) or `presence` (high-frequency advisory a
+ *   client reconstructs from the next tick). mustDeliver traffic never reaches
+ *   a buffer, so its lane is documentation only.
  *
  * `ice` is deliberately bucketed but NOT must-deliver: candidates arrive
  * continuously (up to 100/s per connection) and the receiver tolerates losing
@@ -98,11 +102,14 @@ interface MessagePolicy {
   bucket?: { key: string; perSecond: number };
   exemptFromRoomBurst: boolean;
   mustDeliver: boolean;
+  lane: 'signal' | 'presence';
 }
 
-const NO_POLICY: MessagePolicy = { exemptFromRoomBurst: false, mustDeliver: false };
+const NO_POLICY: MessagePolicy = { exemptFromRoomBurst: false, mustDeliver: false, lane: 'signal' };
 /** Roster/host control: must not be dropped, but is not high-volume enough to meter. */
-const CONTROL_ONLY: MessagePolicy = { exemptFromRoomBurst: false, mustDeliver: true };
+const CONTROL_ONLY: MessagePolicy = { exemptFromRoomBurst: false, mustDeliver: true, lane: 'signal' };
+/** Self-correcting advisory: the next update repairs a drop, so it rides alone. */
+const PRESENCE: MessagePolicy = { exemptFromRoomBurst: true, mustDeliver: false, lane: 'presence' };
 
 /** Exported so a test can assert every signal type has an entry. */
 export const MESSAGE_POLICY: Readonly<Record<string, MessagePolicy>> = {
@@ -110,22 +117,22 @@ export const MESSAGE_POLICY: Readonly<Record<string, MessagePolicy>> = {
   // deliberately share one bucket: they are the same traffic in shape (a burst at
   // connection setup, then trickle), and a separate allowance for each would let a
   // client spend 3x the intended setup burst.
-  offer: { bucket: { key: 'ice', perSecond: 100 }, exemptFromRoomBurst: true, mustDeliver: true },
-  answer: { bucket: { key: 'ice', perSecond: 100 }, exemptFromRoomBurst: true, mustDeliver: true },
-  ice: { bucket: { key: 'ice', perSecond: 100 }, exemptFromRoomBurst: true, mustDeliver: false },
+  offer: { bucket: { key: 'ice', perSecond: 100 }, exemptFromRoomBurst: true, mustDeliver: true, lane: 'signal' },
+  answer: { bucket: { key: 'ice', perSecond: 100 }, exemptFromRoomBurst: true, mustDeliver: true, lane: 'signal' },
+  ice: { bucket: { key: 'ice', perSecond: 100 }, exemptFromRoomBurst: true, mustDeliver: false, lane: 'signal' },
   join: { ...CONTROL_ONLY },
   leave: { ...CONTROL_ONLY },
   // Keep-alives are exempt from the room burst limit but not free: each one costs
   // a kick check plus a room-meta read. 10/s is ~250x a real client heartbeat
   // (1 per 25s), so only deliberate flooding is dropped.
-  ping: { bucket: { key: 'ping', perSecond: 10 }, exemptFromRoomBurst: true, mustDeliver: false },
-  pong: { bucket: { key: 'ping', perSecond: 10 }, exemptFromRoomBurst: true, mustDeliver: false },
+  ping: { bucket: { key: 'ping', perSecond: 10 }, exemptFromRoomBurst: true, mustDeliver: false, lane: 'signal' },
+  pong: { bucket: { key: 'ping', perSecond: 10 }, exemptFromRoomBurst: true, mustDeliver: false, lane: 'signal' },
   // Media state changes continuously and a dropped one self-corrects on the next.
-  'media-state': { bucket: { key: 'media', perSecond: 10 }, exemptFromRoomBurst: true, mustDeliver: false },
-  'audio-activity': { bucket: { key: 'audio', perSecond: 10 }, exemptFromRoomBurst: true, mustDeliver: false },
-  active_speaker: { exemptFromRoomBurst: true, mustDeliver: false },
+  'media-state': { bucket: { key: 'media', perSecond: 10 }, ...PRESENCE },
+  'audio-activity': { bucket: { key: 'audio', perSecond: 10 }, ...PRESENCE },
+  active_speaker: { ...PRESENCE },
   // Renewal must not be starved by a busy room.
-  token_refresh: { exemptFromRoomBurst: true, mustDeliver: false },
+  token_refresh: { exemptFromRoomBurst: true, mustDeliver: false, lane: 'signal' },
   // Chat and reactions are the traffic the per-room limit exists for.
   chat: { ...NO_POLICY },
   chat_pin: { ...NO_POLICY },
@@ -183,11 +190,16 @@ export class WebSocketHandler {
   private chatBuffer: ChatBufferEntry[] = [];
   private chatFlushInFlight: Promise<void> | null = null;
   private readonly publishBuffer: PublishBuffer;
+  private readonly presenceBuffer: PublishBuffer;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private chatFlushTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private wss: WebSocketServer, publishBuffer?: PublishBuffer) {
-    this.publishBuffer = publishBuffer ?? createRoomFanoutBuffer();
+  constructor(
+    private wss: WebSocketServer,
+    buffers?: { signal?: PublishBuffer; presence?: PublishBuffer },
+  ) {
+    this.publishBuffer = buffers?.signal ?? createRoomFanoutBuffer();
+    this.presenceBuffer = buffers?.presence ?? createPresenceFanoutBuffer();
     this.initialize();
   }
 
@@ -233,6 +245,7 @@ export class WebSocketHandler {
     }, CHAT_FLUSH_INTERVAL_MS);
 
     this.publishBuffer.start();
+    this.presenceBuffer.start();
 
     const redisSub = getRedisSub();
     if (!redisSub) {
@@ -578,7 +591,13 @@ export class WebSocketHandler {
     // Everything else is ephemeral fan-out: reactions, captions, media state,
     // chat notifications. Buffered, batched, and bounded — durable content is
     // persisted before it is published, so a drop costs a live update, not data.
-    this.publishBuffer.publish(channel, serialized);
+    //
+    // Advisory traffic rides the presence lane: same Redis channels, separate
+    // queue and breaker, so a media-state burst cannot fill the buffer chat
+    // relies on or trip chat's breaker with it.
+    const lane =
+      policyFor(payload.type).lane === 'presence' ? this.presenceBuffer : this.publishBuffer;
+    lane.publish(channel, serialized);
   }
 
   private forwardFromRedis(
@@ -997,6 +1016,7 @@ export class WebSocketHandler {
   stop(): void {
     this.stopBackgroundWork();
     this.publishBuffer.stop();
+    this.presenceBuffer.stop();
   }
 
   /**

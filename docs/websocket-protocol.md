@@ -273,9 +273,13 @@ and reordering them against the immediate local hop can hand a client newer
 state before older.
 
 Everything else is batched through a bounded queue that sheds the oldest entries
-under sustained pressure. Durable content is persisted before it is published,
-so a shed message costs a live update rather than data. `ice` sits in this group
-deliberately: candidates arrive continuously (up to 100/s per connection), the
+under sustained pressure — on one of two lanes. Chat, captions, negotiation
+and remaining control share the signal lane; `media-state`, `audio-activity`
+and `active_speaker` ride a separate presence lane with its own queue and
+breaker, so a state burst cannot fill the buffer chat relies on. Durable
+content is persisted before it is published,
+so a shed message costs a live update rather than data. `ice` sits in the
+signal lane deliberately: candidates arrive continuously (up to 100/s per connection), the
 receiver tolerates losing one, and that volume would defeat the circuit
 breaker.
 
@@ -295,9 +299,9 @@ two Redis calls per message. 10/second is ~250x a real client heartbeat (1 per
 25s), so only deliberate flooding is dropped.
 
 All of the above is one table in `backend/src/websocket/handler.ts`
-(`MESSAGE_POLICY`), keyed by message type and holding all three decisions per type:
-the per-connection bucket, exemption from the room burst limit, and whether the
-message bypasses the publish buffer. This section summarises it; the code is the
+(`MESSAGE_POLICY`), keyed by message type and holding all four decisions per type:
+the per-connection bucket, exemption from the room burst limit, whether the
+message bypasses the publish buffer, and which buffer lane it rides. This section summarises it; the code is the
 authority, and a test asserts every client-sendable type has an entry.
 
 Exceeding a per-type bucket drops the message silently (they are advisory).

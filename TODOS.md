@@ -188,7 +188,7 @@ than discovered later.
 
 ## Known partial: C3 (Redis pub/sub bottleneck)
 
-C3 asked for two things. One is done, one is not:
+C3 asked for two things. Both are now done:
 
 - **Done:** the publish buffer batches and applies a circuit breaker, so a Redis
   outage degrades fan-out instead of stalling it.
@@ -197,7 +197,9 @@ C3 asked for two things. One is done, one is not:
   (`room:{id}:signal`) — so "is room X's traffic healthy" is now answerable.
   The stat map is capped (default 2000 channels, oldest-evicted) so room churn
   cannot leak memory; globals are unaffected by eviction.
-- **Not done:** moving `audio-activity` / `media-state` / `active_speaker` to a
-  separate lightweight channel. They share the one buffer with everything else.
-  The per-connection buckets (10/s each) bound them, so this is a throughput
-  improvement rather than a correctness one.
+- **Done (2026-10-07):** the separate lightweight channel.
+  `audio-activity` / `media-state` / `active_speaker` ride a presence lane —
+  same Redis channels, separate queue (25ms flush, 200 cap) and breaker — so a
+  state burst cannot fill the buffer chat relies on or trip chat's breaker.
+  Routing is a fourth `MESSAGE_POLICY` field with tests pinning exactly these
+  three types to the lane; shutdown drains both lanes.

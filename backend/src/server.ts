@@ -1,3 +1,6 @@
+// Must stay first: registers the process rejection/exception handlers before
+// any other module can fail at import time (see lib/process-handlers).
+import { setShutdownHook } from './lib/process-handlers';
 import express from 'express';
 import { createServer } from 'http';
 import * as Sentry from '@sentry/node';
@@ -28,7 +31,7 @@ import { requireVerifiedEmail } from './middleware/verified-email';
 import { globalLimiter, apiLimiter, authLimiter } from './lib/rate-limiters';
 import { logger } from './lib/logger';
 import { configureTrustProxy } from './config/scaling';
-import { createRoomFanoutBuffer } from './lib/room-fanout';
+import { createPresenceFanoutBuffer, createRoomFanoutBuffer } from './lib/room-fanout';
 import { asc, gt } from 'drizzle-orm';
 import { closeDatabase, db } from './db';
 import { startCleanupJob } from './lib/cleanup-job';
@@ -138,8 +141,11 @@ const server = createServer(app);
 
 const wss = new WebSocketServer({ noServer: true });
 const wssLive = new WebSocketServer({ noServer: true });
-// One buffer for every room publish, shared by signaling and live captions.
+// One buffer for every room publish, shared by signaling and live captions —
+// plus the advisory lane for self-correcting presence traffic, which gets its
+// own queue and breaker (see MESSAGE_POLICY `lane`).
 const roomFanout = createRoomFanoutBuffer();
+const presenceFanout = createPresenceFanoutBuffer();
 attachLiveCaptionsBridge(wssLive, roomFanout);
 
 server.on('upgrade', (request, socket, head) => {
@@ -209,7 +215,7 @@ server.on('upgrade', (request, socket, head) => {
   });
 });
 
-const wsHandler = new WebSocketHandler(wss, roomFanout);
+const wsHandler = new WebSocketHandler(wss, { signal: roomFanout, presence: presenceFanout });
 
 let shuttingDown = false;
 function gracefulShutdown(signal: string) {
@@ -239,11 +245,14 @@ function gracefulShutdown(signal: string) {
           try {
             // Give the leave messages produced by the socket closes one last
             // chance to reach the other nodes, waiting out anything already in
-            // flight rather than abandoning the rest of the queue.
-            await roomFanout
-              .flushAll()
-              .catch((e) => logger.error('Final fanout flush failed', { err: String(e) }));
+            // flight rather than abandoning the rest of the queue. Both lanes:
+            // a `leave` is signal-lane, but media-state already queued on the
+            // presence lane deserves the same last chance.
+            await Promise.all([roomFanout.flushAll(), presenceFanout.flushAll()]).catch((e) =>
+              logger.error('Final fanout flush failed', { err: String(e) }),
+            );
             roomFanout.stop();
+            presenceFanout.stop();
             wsHandler.stop();
             await closeDatabase();
             logger.info('Graceful shutdown complete');
@@ -263,23 +272,10 @@ function gracefulShutdown(signal: string) {
 process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.once('SIGINT', () => gracefulShutdown('SIGINT'));
 
-// Nothing in this process should leave a promise rejection unobserved: an
-// unhandled rejection in Bun/Node terminates the process by default, taking
-// every open call with it. Log it, keep serving.
-process.on('unhandledRejection', (reason) => {
-  logger.error('Unhandled promise rejection', { err: String(reason) });
-});
-process.on('uncaughtException', (err) => {
-  // Shut down rather than carry on. Once an exception has escaped, the process
-  // state is undefined — a half-applied DB write, a poisoned connection pool, a
-  // half-mutated room roster — and a video server that keeps accepting calls on
-  // top of that can hand a participant a corrupted room while reporting itself
-  // healthy. Logging and continuing (which is right for a rejection) is not right
-  // here: the platform restarts us, every open call is told 1001, and clients
-  // reconnect to a process that is actually consistent.
-  logger.error('Uncaught exception, shutting down', { err: String(err) });
-  gracefulShutdown('uncaughtException');
-});
+// Registered by `./lib/process-handlers` as server.ts's very first import, so
+// they cover failures raised while the module graph was still evaluating; the
+// hook only needs wiring now that `gracefulShutdown` exists.
+setShutdownHook(gracefulShutdown);
 
 server.listen(PORT, () => {
   logger.info(`Server running on http://localhost:${PORT}`);
