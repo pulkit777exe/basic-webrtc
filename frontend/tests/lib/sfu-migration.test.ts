@@ -108,6 +108,17 @@ beforeEach(() => {
   vi.stubEnv('VITE_LIVEKIT_URL', 'wss://sfu.example.test');
 });
 
+/**
+ * Fire the captured SFU onDisconnected and wait for the detached handleLoss
+ * chain to settle. The SDK calls the callback synchronously without awaiting
+ * (fire-and-forget by design), so every fake here resolves immediately and one
+ * macrotask drain is enough for the whole chain.
+ */
+async function triggerLoss(calls: Calls): Promise<void> {
+  await calls.lastOnDisconnected!();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe('sfu migration controller', () => {
   it('does nothing without a room id, touching nothing', async () => {
     const { controller, calls } = setup({ roomId: undefined });
@@ -213,11 +224,31 @@ describe('sfu migration controller', () => {
     expect(wired.calls.infos).toEqual([SFU_UNAVAILABLE_MESSAGE]);
   });
 
-  it('routes an unexpected relay disconnect through the loss fallback, once', async () => {
+  it('rejoins the relay silently when a re-mint succeeds (credential expiry)', async () => {
+    // The common 2h-expiry case: admission lives on, so the mint works and
+    // the call stays relayed — no error toast, no mesh rebuild, no pin.
     const { controller, calls } = setup({ participantCount: 9, statusActive: true });
     await controller.ensure();
     expect(calls.lastOnDisconnected).not.toBeNull();
-    calls.lastOnDisconnected!();
+    await triggerLoss(calls);
+    expect(calls.tokenCalls).toBe(2);
+    expect(calls.connectCalls).toBe(2);
+    expect(calls.errors).toEqual([]);
+    expect(calls.signalingReconnects).toBe(0);
+    expect(calls.meshTeardowns).toBe(1);
+    // Still converged: a growth refire afterwards is a no-op, not a migration.
+    await controller.ensure();
+    expect(calls.connectCalls).toBe(2);
+  });
+
+  it('falls back to mesh, pinned, when the re-mint fails', async () => {
+    const { controller, calls, deps } = setup({ participantCount: 9, statusActive: true });
+    await controller.ensure();
+    deps.fetchSfuToken = async () => {
+      calls.tokenCalls += 1;
+      return null;
+    };
+    await triggerLoss(calls);
     expect(calls.errors).toEqual([SFU_LOSS_MESSAGE]);
     expect(calls.signalingReconnects).toBe(1);
     // Pinned afterwards: the reconnect repopulates the roster and the growth
@@ -226,11 +257,46 @@ describe('sfu migration controller', () => {
     expect(calls.connectCalls).toBe(1);
   });
 
+  it('falls back to mesh when the rejoin connects to nothing', async () => {
+    const { controller, calls, deps } = setup({ participantCount: 9, statusActive: true });
+    await controller.ensure();
+    deps.connectSfu = async () => {
+      calls.connectCalls += 1;
+      return null;
+    };
+    await triggerLoss(calls);
+    expect(calls.errors).toEqual([SFU_LOSS_MESSAGE]);
+    expect(calls.signalingReconnects).toBe(1);
+    expect(calls.meshTeardowns).toBe(1);
+  });
+
+  it('falls back to mesh when the rejoin throws, without stranding the call', async () => {
+    const { controller, calls, deps } = setup({ participantCount: 9, statusActive: true });
+    await controller.ensure();
+    deps.connectSfu = async () => {
+      throw new Error('relay unreachable');
+    };
+    await triggerLoss(calls);
+    expect(calls.errors).toEqual([SFU_LOSS_MESSAGE]);
+    expect(calls.signalingReconnects).toBe(1);
+  });
+
+  it('skips the re-mint and falls back directly without a room id', async () => {
+    const { controller, calls, deps } = setup({ participantCount: 9, statusActive: true });
+    await controller.ensure();
+    deps.getRoomId = () => undefined;
+    await triggerLoss(calls);
+    expect(calls.tokenCalls).toBe(1);
+    expect(calls.errors).toEqual([SFU_LOSS_MESSAGE]);
+    expect(calls.signalingReconnects).toBe(1);
+  });
+
   it('does nothing on loss after cleanup (page already gone)', async () => {
     const { controller, calls } = setup({ participantCount: 9, cleanedUp: true });
-    controller.handleLoss();
+    await controller.handleLoss();
     expect(calls.errors).toEqual([]);
     expect(calls.signalingReconnects).toBe(0);
+    expect(calls.tokenCalls).toBe(0);
   });
 
   it('reset clears the pin so a new session can migrate', async () => {

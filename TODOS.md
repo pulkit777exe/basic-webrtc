@@ -72,10 +72,16 @@ the actual answer past ~6 peers.
 2. **Extend the rig** — TURN is done (2026-10-07): no coturn dependency, the
    rig owns a minimal TURN/UDP server (`frontend/e2e/turn-server.ts`) and
    `specs/turn.spec.ts` proves relay-only pair formation plus media both ways.
-   Still open: a bandwidth-constrained scenario (CDP throttling was tried and
-   does not reach the bandwidth estimator, so this needs another mechanism),
-   and the per-layer `media-source` stats that simulcast layer selection
-   needs. These remain prerequisites for simulcast confidence at size.
+   Bandwidth constraint is done (2026-10-08) without CDP: the rig TURN
+   server drops a configured fraction of relayed media datagrams
+   (`--drop=`, data path only — the handshake stays reliable), and
+   `specs/bandwidth.spec.ts` proves the production estimator collapses
+   (median ~210k under 15% loss vs the 500k bound) while the call survives —
+   triangulated with the server's own drop log so the effect is load-bearing
+   on the mechanism, not a quiet room. Receiving-side layer proof is done
+   too: the harness reports inbound-rtp picture size, and the simulcast spec
+   asserts the receiver decodes near-full-size on layer f and near-quarter
+   on layer q. What remains below is the SFU.
 3. **SFU** (LiveKit) — **implemented (2026-10-07), behind configuration.**
    One uplink per participant, fan-out downstream; mesh stays the default for
    small rooms. Backward-compatible as planned: rooms start on mesh, the first

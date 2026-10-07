@@ -67,6 +67,37 @@ function report(page: Page, peerId: string): Promise<SimulcastReport | null> {
   return page.evaluate((id) => window.__e2e.simulcast(id), peerId);
 }
 
+/** Inbound picture size, polled until it settles inside the range *and* fresh
+ * frames arrive at it — a stale stat could otherwise report the previous
+ * layer's size forever. */
+async function waitForInboundSize(
+  page: Page,
+  minWidth: number,
+  maxWidth: number,
+  label: string,
+  timeoutMs = 30_000,
+): Promise<{ frameWidth: number; frameHeight: number }> {
+  const deadline = Date.now() + timeoutMs;
+  let lastFrames = -1;
+  let last: E2EStats | null = null;
+  while (Date.now() < deadline) {
+    last = await page.evaluate(() => window.__e2e.stats());
+    const inbound = last.inboundVideo;
+    if (
+      inbound &&
+      inbound.frameWidth >= minWidth &&
+      inbound.frameWidth <= maxWidth &&
+      inbound.framesDecoded > lastFrames &&
+      lastFrames !== -1
+    ) {
+      return { frameWidth: inbound.frameWidth, frameHeight: inbound.frameHeight };
+    }
+    if (inbound) lastFrames = inbound.framesDecoded;
+    await page.waitForTimeout(250);
+  }
+  throw new Error(`timed out waiting for ${label}; last stats: ${JSON.stringify(last)}`);
+}
+
 test.describe('simulcast', () => {
   let roomCounter = 0;
 
@@ -165,6 +196,41 @@ test.describe('simulcast', () => {
     await bravo.evaluate(() => window.__e2e.stop());
     await alphaCtx.close();
     await bravoCtx.close();
+  });
+
+  test('the receiver sees the forced layer’s resolution, not just live video', async ({
+    browser,
+  }) => {
+    // Sender-side byte growth (previous test) proves what the encoder emits;
+    // this proves what arrives. Capture is 320x240, so layer f (scale 1)
+    // must decode near full size and layer q (scale 4) near a quarter —
+    // ranges, not exact pixels, because the encoder rounds.
+    const alphaCtx = await browser.newContext({ permissions: ['camera', 'microphone'] });
+    const bravoCtx = await browser.newContext({ permissions: ['camera', 'microphone'] });
+    const alpha = await alphaCtx.newPage();
+    const bravo = await bravoCtx.newPage();
+
+    try {
+      const roomId = `sim-recv-${++roomCounter}-${Date.now()}`;
+      await Promise.all([openPeer(alpha, 'alpha', roomId), openPeer(bravo, 'bravo', roomId)]);
+      await waitForMedia(alpha, 'alpha media');
+      await waitForMedia(bravo, 'bravo media');
+
+      // Bravo offers, so bravo’s sender to alpha is the layered one.
+      await bravo.evaluate(() => window.__e2e.forceSimulcastLayer('alpha', 2));
+      const full = await waitForInboundSize(alpha, 240, 340, 'full-layer picture on alpha');
+      expect(full.frameHeight).toBeGreaterThanOrEqual(150);
+
+      await bravo.evaluate(() => window.__e2e.forceSimulcastLayer('alpha', 0));
+      const quarter = await waitForInboundSize(alpha, 1, 120, 'quarter-layer picture on alpha');
+      expect(quarter.frameWidth).toBeLessThan(full.frameWidth);
+
+      await alpha.evaluate(() => window.__e2e.stop());
+      await bravo.evaluate(() => window.__e2e.stop());
+    } finally {
+      await alphaCtx.close();
+      await bravoCtx.close();
+    }
   });
 
   test('the answering side degrades to one layer but keeps sending video', async ({ browser }) => {

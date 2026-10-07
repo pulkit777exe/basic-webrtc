@@ -51,8 +51,13 @@ export const SFU_LOSS_MESSAGE = 'Relay connection lost — rejoining over direct
 export interface SfuMigrationController {
   /** Move media to the relay when the room warrants it. Safe to call often. */
   ensure: () => Promise<void>;
-  /** Unexpected relay loss: pin to mesh and rebuild it. Never throws. */
-  handleLoss: () => void;
+  /**
+   * Unexpected relay loss. Re-mints once before falling back: the 2h SFU
+   * credential dies while admission (renewed room token) lives on, so expiry
+   * — not failure — is the common case on a long healthy call. Only a failed
+   * re-mint/reconnect pins to mesh and rebuilds it. Never throws.
+   */
+  handleLoss: () => Promise<void>;
   /** Per-session reset (the join effect calls this on mount). */
   reset: () => void;
 }
@@ -93,7 +98,9 @@ export function createSfuMigrationController(deps: SfuMigrationDeps): SfuMigrati
         url: creds.url,
         token: creds.token,
         getLiveStream: deps.getLiveStream,
-        onDisconnected: () => controller.handleLoss(),
+        onDisconnected: () => {
+          void controller.handleLoss();
+        },
       });
       if (!session || deps.isCleanedUp()) {
         session?.disconnect();
@@ -110,7 +117,32 @@ export function createSfuMigrationController(deps: SfuMigrationDeps): SfuMigrati
     }
   }
 
-  function handleLoss(): void {
+  async function handleLoss(): Promise<void> {
+    if (deps.isCleanedUp()) return;
+    const roomId = deps.getRoomId();
+    // One re-mint before giving up the relay: at most one extra handshake per
+    // loss, and a flap cannot loop — a failed rejoin lands on the mesh pin
+    // below, where no SFU session exists to disconnect again.
+    if (roomId && !failed) {
+      try {
+        const creds = await deps.fetchSfuToken(roomId);
+        if (creds && !deps.isCleanedUp()) {
+          const session = await deps.connectSfu({
+            url: creds.url,
+            token: creds.token,
+            getLiveStream: deps.getLiveStream,
+            onDisconnected: () => {
+              void controller.handleLoss();
+            },
+          });
+          if (session && !deps.isCleanedUp()) return;
+          session?.disconnect();
+        }
+      } catch {
+        // A throwing mint/connect is a failed rejoin like any other — fall
+        // through to the mesh fallback rather than stranding the call.
+      }
+    }
     if (deps.isCleanedUp()) return;
     failed = true;
     deps.notifyError(SFU_LOSS_MESSAGE);

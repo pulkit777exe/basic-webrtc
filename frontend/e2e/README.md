@@ -86,6 +86,16 @@ XOR-RELAYED-ADDRESS: browsers on the same host reliably reach the LAN
 address, while loopback-targeted UDP from a Chromium sandbox has been
 observed to never arrive.
 
+Constrained links **are** covered too, without CDP (whose throttling does
+not reach the bandwidth estimator): `turn-server.ts` drops a configured
+fraction of relayed *media* datagrams (`--drop=0.15`; Allocate/Refresh/
+Permission/ChannelBind responses are never dropped, so the handshake stays
+reliable and only the path degrades), and `specs/bandwidth.spec.ts` runs a
+relay-only pair through it, asserting the production estimate collapses
+(median well under the bound) while frames keep decoding. The harness also
+reports inbound-rtp picture size, so the simulcast spec asserts the
+*receiver* decodes the forced layer's resolution.
+
 ## Files
 
 | File | Purpose |

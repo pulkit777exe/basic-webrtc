@@ -41,6 +41,26 @@ export interface TurnServerOptions {
    * advertised; pass 127.0.0.1 for strictly loopback-only operation.
    */
   host?: string;
+  /**
+   * Fraction of *relayed media datagrams* to drop (0..1, default 0), for the
+   * bandwidth-constrained rig scenario. Applies to the data path only
+   * (ChannelData, Send/Data indications — including the STUN/DTLS/RTP they
+   * carry once relayed); Allocate/Refresh/Permission/ChannelBind responses
+   * are never dropped, so the relay handshake itself stays reliable and only
+   * the media path degrades. Clamped to [0, 1].
+   */
+  dropRate?: number;
+}
+
+/**
+ * Loss-emulation decision, pure over its inputs so the boundary is unit
+ * testable without sockets: drop when the roll falls under the rate. Edges
+ * (0 never, 1 always) are pinned in tests; the interior is statistics.
+ */
+export function shouldDropMedia(dropRate: number, roll: number): boolean {
+  if (!(dropRate > 0)) return false;
+  if (dropRate >= 1) return true;
+  return roll < dropRate;
 }
 
 const MAGIC = 0x2112a442;
@@ -330,6 +350,20 @@ export async function startServer(options: TurnServerOptions = {}): Promise<{
   // candidates carry. An explicit --host pins both bind and advertisement.
   const bindHost = options.host ?? '0.0.0.0';
   const advertiseHost = options.host ?? pickAdvertiseAddress(networkInterfaces());
+  // Clamped once here so every data site below can use it blindly.
+  const dropRate = Math.min(1, Math.max(0, options.dropRate ?? 0));
+  let droppedMedia = 0;
+  /** Drop-tail loss emulation for one relayed media datagram. Never throws. */
+  function dropMedia(): boolean {
+    if (!shouldDropMedia(dropRate, Math.random())) return false;
+    droppedMedia += 1;
+    // Periodic, not per-packet: at 15% of a video call the stderr volume of
+    // per-packet logging would drown the spec output that asserts on it.
+    if (droppedMedia % 500 === 0) {
+      console.error(`[turn] dropped ${droppedMedia} media datagrams (loss emulation)`);
+    }
+    return true;
+  }
 
   const allocations = new Map<string, Allocation>();
   const sock = createSocket('udp4');
@@ -449,6 +483,9 @@ export async function startServer(options: TurnServerOptions = {}): Promise<{
     const pk = peerKey(peer.address, peer.port);
     const installed = alloc.permissions.get(pk);
     if (!installed || installed < Date.now()) return;
+    // Peer-to-client media. Dropped here, the client retransmits what matters
+    // (STUN/DTLS) and the estimator sees the loss it would see on a bad link.
+    if (dropMedia()) return;
     const to = { address: alloc.clientAddress, port: alloc.clientPort } as RemoteInfo;
     const channel = alloc.peerChannel.get(pk);
     if (channel !== undefined) {
@@ -565,6 +602,8 @@ export async function startServer(options: TurnServerOptions = {}): Promise<{
     if (!peer || !data) return;
     const installed = alloc.permissions.get(peerKey(peer.address, peer.port));
     if (!installed || installed < Date.now()) return;
+    // Client-to-peer media via Send indication (pre-ChannelBind traffic).
+    if (dropMedia()) return;
     alloc.relay.send(data, peer.port, peer.address);
   }
 
@@ -576,6 +615,8 @@ export async function startServer(options: TurnServerOptions = {}): Promise<{
     const length = msg.readUInt16BE(2);
     const peer = alloc.channels.get(channel);
     if (!peer) return;
+    // Client-to-peer media via a bound channel (the steady-state path).
+    if (dropMedia()) return;
     const separator = peer.lastIndexOf(':');
     alloc.relay.send(
       msg.subarray(4, 4 + length),
@@ -655,13 +696,15 @@ export async function startServer(options: TurnServerOptions = {}): Promise<{
   };
 }
 
-function parseArgs(argv: string[]): TurnServerOptions {
+/** Exported for unit tests of the CLI contract (the server itself is covered by the rig). */
+export function parseArgs(argv: string[]): TurnServerOptions {
   const options: TurnServerOptions = {};
   for (const arg of argv) {
     if (arg.startsWith('--user=')) options.username = arg.slice('--user='.length);
     else if (arg.startsWith('--pass=')) options.password = arg.slice('--pass='.length);
     else if (arg.startsWith('--realm=')) options.realm = arg.slice('--realm='.length);
     else if (arg.startsWith('--host=')) options.host = arg.slice('--host='.length);
+    else if (arg.startsWith('--drop=')) options.dropRate = Number(arg.slice('--drop='.length));
     else if (!Number.isNaN(Number(arg))) options.port = Number(arg);
   }
   return options;

@@ -183,6 +183,7 @@ async function collectStats(): Promise<E2EStats> {
     selectedPair: null,
     storeRemoteTracks: 0,
     storeHasLiveVideo: false,
+    inboundVideo: null,
     signals: { ...signals },
     error: failure,
   };
@@ -211,6 +212,16 @@ async function collectStats(): Promise<E2EStats> {
       if (entry.type === 'inbound-rtp') {
         stats.bytesReceived += Number(entry.bytesReceived ?? 0);
         stats.framesDecoded += Number(entry.framesDecoded ?? 0);
+        // Receiving-side layer proof (see the field contract): the picture
+        // size of the inbound video track. First video entry wins — the rig
+        // specs that read this run exactly one media link per page.
+        if (entry.kind === 'video' && stats.inboundVideo === null) {
+          stats.inboundVideo = {
+            frameWidth: Number(entry.frameWidth ?? 0),
+            frameHeight: Number(entry.frameHeight ?? 0),
+            framesDecoded: Number(entry.framesDecoded ?? 0),
+          };
+        }
       }
       if (entry.type === 'candidate-pair' && entry.state === 'succeeded') {
         stats.candidatePairsSucceeded += 1;
@@ -492,6 +503,7 @@ Object.defineProperty(window, '__e2e', {
       return peerIds.length > 0 ? collectSimulcast(peerIds[0]!) : null;
     },
     stop,
+    bandwidth: () => RTCManager.sampleOutgoingBitrate(),
     ...(SFU_MODE ? { sfuStats } : {}),
   } satisfies HarnessApi,
   writable: false,

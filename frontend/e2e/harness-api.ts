@@ -28,6 +28,13 @@ export interface E2EStats {
   /** Remote tracks as merged by the production ontrack handler into the store. */
   storeRemoteTracks: number;
   storeHasLiveVideo: boolean;
+  /**
+   * The received video picture, from `inbound-rtp`. Resolution — not just
+   * "video is live" — is the receiving-side proof of *which* simulcast layer
+   * the far end is really sending: forcing layer f must widen this toward the
+   * capture size, forcing q must shrink it. Null when nothing is received yet.
+   */
+  inboundVideo: { frameWidth: number; frameHeight: number; framesDecoded: number } | null;
   signals: { joined: number; offer: number; answer: number; ice: number; peerLeft: number };
   error: string | null;
 }
@@ -70,6 +77,12 @@ export interface HarnessApi {
    * engine honours a layer switch, not which layer policy would pick.
    */
   forceSimulcastLayer: (peerId: string, index: number) => Promise<SimulcastReport | null>;
+  /**
+   * One uplink estimate per peer connection, via the same production sampler
+   * the adaptive controller reads. Null where a link has no estimate yet.
+   * The bandwidth spec watches these collapse under a lossy relay.
+   */
+  bandwidth: () => Promise<Array<number | null>>;
   /**
    * Relay-mode report (SFU spec only): who this page sees over the relay and
    * whether their video is actually decoding frames. Absent in mesh mode.
