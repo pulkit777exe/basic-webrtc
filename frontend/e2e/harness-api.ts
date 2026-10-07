@@ -70,7 +70,36 @@ export interface HarnessApi {
    * engine honours a layer switch, not which layer policy would pick.
    */
   forceSimulcastLayer: (peerId: string, index: number) => Promise<SimulcastReport | null>;
+  /**
+   * Relay-mode report (SFU spec only): who this page sees over the relay and
+   * whether their video is actually decoding frames. Absent in mesh mode.
+   */
+  sfuStats?: () => Promise<SfuStats | null>;
   stop: () => void;
+}
+
+/**
+ * What one harness page observes over the SFU. `videoReadyState` is the
+ * `<video>` element state for the peer's merged stream — `HAVE_CURRENT_DATA`
+ * (2) or better means frames really decoded, not just that a track exists.
+ */
+export interface SfuStats {
+  sfuConnected: boolean;
+  peers: Array<{ userId: string; tracks: number; liveVideo: boolean; videoReadyState: number }>;
+  /** Local tracks the relay session actually published — distinguishes a publish failure from a subscribe failure. */
+  localPublications: string[];
+  /** Remote participant identities the relay session currently sees. */
+  remoteParticipants: string[];
+  /** Per-publication subscription state from the relay's point of view. */
+  remotePublications: Array<{
+    participant: string;
+    source: string;
+    subscribed: boolean;
+    hasTrack: boolean;
+  }>;
+  /** Subscriber PeerConnection state (null when the media path never got that far). */
+  subscriberPcState: string | null;
+  error: string | null;
 }
 
 declare global {

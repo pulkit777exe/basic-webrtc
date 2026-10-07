@@ -2,7 +2,7 @@
 
 ## 1. OVERVIEW
 
-A WebRTC video conferencing application with a React single-page frontend and an Express backend. Users authenticate via email/password or Google OAuth, create/join rooms, and communicate via real-time audio/video using peer-to-peer mesh WebRTC. Signaling (SDP offers/answers, ICE candidates) routes through a WebSocket server backed by Redis pub/sub. Persistent data (users, rooms, messages, sessions) lives in PostgreSQL via Drizzle ORM. The system targets deployment on Render with Docker.
+A WebRTC video conferencing application with a React single-page frontend and an Express backend. Users authenticate via email/password or Google OAuth, create/join rooms, and communicate via real-time audio/video using peer-to-peer mesh WebRTC by default, moving to a LiveKit SFU relay for rooms past mesh scale. Signaling (SDP offers/answers, ICE candidates) routes through a WebSocket server backed by Redis pub/sub. Persistent data (users, rooms, messages, sessions) lives in PostgreSQL via Drizzle ORM. The system targets deployment on Render with Docker.
 
 ## 2. TECH STACK
 
@@ -431,18 +431,18 @@ exports run in-process and deletions use a DB-backed poller
 
 ## 9. KEY ARCHITECTURAL DECISIONS & TRADE-OFFS
 
-### Mesh WebRTC (no SFU/MCU)
+### Mesh WebRTC with an SFU path past threshold
 
-**CONFIRMED** — `frontend/src/lib/rtc-manager.ts` creates one `RTCPeerConnection` per remote peer. Each participant sends/receives streams directly to every other participant.
+**CONFIRMED** — `frontend/src/lib/rtc-manager.ts` creates one `RTCPeerConnection` per remote peer for mesh calls. Past `MESH_WARN_THRESHOLD` (6) participants, or when the room is already SFU-active, `frontend/src/lib/sfu.ts` moves media to LiveKit instead: one uplink per client, everything else (signaling-adjacent WS, recording, auth) unchanged. No down-migration by design.
 
-**Product constraint (explicit)**: Maximum **6 participants** per room. Beyond this, O(n²) connections cause:
+**Product constraint (explicit)**: rooms start on mesh. Beyond ~6 participants O(n²) mesh connections cause:
 - Bandwidth saturation (each participant uploads to n-1 peers)
 - CPU overload from encoding/decoding multiple streams
 - ICE/DTLS handshake storms on join
 
-**If scaling beyond 6 is needed**: Spike a free/cheap SFU (e.g. LiveKit free tier, Mediasoup) as a feature-flagged alternative path. Do not mix into this hardening pass.
+**Scaling answer (2026-10-07)**: the SFU path above — `POST /api/rooms/:id/sfu-token` mints a LiveKit credential on room-token auth (waiting tokens rejected, unconfigured relay answers 404 `SFU_DISABLED`), the mint marks the room SFU-active in Redis so late joiners converge, and any relay failure falls back to mesh. Proven in real browsers against a pinned LiveKit server (`frontend/e2e/specs/sfu.spec.ts`); managed LiveKit Cloud is the documented free-tier deployment, configured but not run here.
 
-**Trade-off**: Simple server (no media relay), but scales poorly beyond ~6 participants due to O(n²) connections and bandwidth.
+**Trade-off**: mesh stays the default (no media server to run for small calls); large rooms depend on an external relay that must be provisioned (`LIVEKIT_*`, `VITE_LIVEKIT_URL`).
 
 ### Client-Side Recording (no server-side merge)
 
@@ -552,7 +552,7 @@ exports run in-process and deletions use a DB-backed poller
 | Claim | Verification |
 |-------|-------------|
 | React 19.2.7, Vite 8.0.16, Express 5.2.1 | `cat frontend/package.json \| grep -E '"react"\|"vite"'` and `cat backend/package.json \| grep '"express"'` |
-| Mesh WebRTC (no SFU) | `grep -r "RTCPeerConnection" frontend/src/lib/rtc-manager.ts` — one PC per peer, no relay |
+| Mesh WebRTC with SFU path | `grep -r "RTCPeerConnection" frontend/src/lib/rtc-manager.ts` — one PC per peer on mesh; `frontend/src/lib/sfu.ts` for the relay path |
 | Drizzle ORM with postgres.js | `cat backend/src/db/index.ts` — imports `drizzle-orm/postgres-js` |
 | Upstash Redis (REST, not TCP) | `cat backend/src/config/redis.ts` — `import { Redis } from '@upstash/redis'` |
 | Recording is client-side only | `cat frontend/src/lib/RecordingManager.ts` — stores in IndexedDB, no upload |

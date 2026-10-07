@@ -58,6 +58,18 @@ services:
         sync: false
       - key: DEEPGRAM_API_KEY
         sync: false
+      # ── Optional: SFU relay (LiveKit) for rooms past mesh scale ──
+      # Unset → mesh-only; the backend answers 404 SFU_DISABLED and clients
+      # never leave mesh. With LiveKit Cloud's free tier, create a project and
+      # set these three plus VITE_LIVEKIT_URL on the frontend (see
+      # docs/FREE_TIER_DEPLOY.md § SFU relay). The URL below is the Cloud
+      # default; self-hosted servers use their own ws(s) address.
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
       - key: MAX_PARTICIPANTS
         value: 8
       # ── Scale-up only (paid): TCP Redis for BullMQ delayed/queued jobs.

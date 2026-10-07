@@ -99,3 +99,17 @@ observed to never arrive.
 | `specs/webrtc.spec.ts` | Two-peer media, teardown, three-peer mesh |
 | `specs/simulcast.spec.ts` | Layers negotiated, promoted, demoted, held under a ceiling |
 | `specs/turn.spec.ts` | Relay-only pair formation and media through the rig TURN server |
+| `specs/sfu.spec.ts` | Two peers publish/subscribe live media through a real LiveKit server |
+
+### SFU spec (`specs/sfu.spec.ts`)
+
+Boots the pinned `livekit-server` binary from `e2e/bin/` (run
+`e2e/setup-livekit.sh` once to download it — checksum-verified, gitignored;
+the spec *skips* with an explanation when the binary is absent rather than
+failing). `--dev` supplies the well-known devkey/secret pair, so the spec
+mints its own tokens; the harness drives the **production** `lib/sfu.ts`
+(`?sfu=1&sfuUrl=…&sfuToken=…`), skipping mesh entirely. Like the TURN server
+it binds all interfaces and advertises the LAN IPv4, for the same
+loopback-UDP reason. The spec asserts both peers publish, both see the other
+with live video at `readyState >= 2` (frames really decoding), and that zero
+mesh peer connections exist alongside the relay.

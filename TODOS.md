@@ -76,13 +76,33 @@ the actual answer past ~6 peers.
    does not reach the bandwidth estimator, so this needs another mechanism),
    and the per-layer `media-source` stats that simulcast layer selection
    needs. These remain prerequisites for simulcast confidence at size.
-3. **SFU** (mediasoup or LiveKit) — the real fix. One uplink per participant,
-   fan-out downstream. Backward-compatible plan: keep mesh for 1-to-1, move to
-   the SFU above a threshold. Weeks of work, tracked separately.
+3. **SFU** (LiveKit) — **implemented (2026-10-07), behind configuration.**
+   One uplink per participant, fan-out downstream; mesh stays the default for
+   small rooms. Backward-compatible as planned: rooms start on mesh, the first
+   client that needs the relay mints `POST /api/rooms/:id/sfu-token`
+   (room-token auth, waiting tokens rejected, `404 SFU_DISABLED` when
+   unconfigured, never idempotent), which marks the room SFU-active in Redis
+   so late joiners converge; no down-migration; any relay failure pins the
+   session to mesh with a toast. Media alone moves — signaling-adjacent WS,
+   recording, and auth are untouched, and `livekit-client` rides a separate
+   chunk the mesh path never downloads (verified in the production build).
+   Relay proof is a real LiveKit server in the rig (`specs/sfu.spec.ts`):
+   both peers publish, both decode the other (`readyState >= 2`), zero mesh
+   legs — and the run caught a real bug first (un-unwrapped SDK wrapper
+   tracks silently yield zero tiles). Backend: 13 token/flag tests incl.
+   Redis-down fail-open; frontend: 20 `sfu.ts` tests incl. a
+   mutation-discriminating wrapper regression test.
+   Residual, stated plainly: the `RoomPage` migration choreography itself
+   (join/growth triggers, loss fallback) has no app-level test — only its
+   pieces do; and managed LiveKit Cloud is the documented free-tier target
+   but only the self-hosted 1.13.8 binary is rig-verified. Provisioning
+   (`LIVEKIT_*` on Render, `VITE_LIVEKIT_URL` on Vercel) is documented in
+   `docs/FREE_TIER_DEPLOY.md`.
 
 **Files:** `frontend/src/lib/rtc-manager.ts`, `frontend/src/lib/bandwidth.ts`,
 `frontend/src/lib/adaptive-quality.ts`, `frontend/src/lib/mesh-limits.ts`,
-`backend/src/routes/rooms.ts`
+`frontend/src/lib/sfu.ts`, `frontend/src/pages/RoomPage.tsx`,
+`backend/src/routes/rooms.ts`, `backend/src/routes/room-sfu.ts`
 
 ---
 

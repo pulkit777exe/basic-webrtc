@@ -73,6 +73,11 @@ jobs:
       - name: Install Chromium
         run: bunx playwright install --with-deps chromium
         working-directory: frontend
+      # Pinned livekit-server binary for the SFU spec (checksum-verified by
+      # the script). Absent binary = spec skips; present = relay proven.
+      - name: Install livekit-server (SFU rig)
+        run: bash e2e/setup-livekit.sh
+        working-directory: frontend
       # Real browsers negotiating real SDP/ICE and pushing real media. This is
       # the only check that covers the parts of the stack jsdom cannot reach.
       - name: Run browser WebRTC rig

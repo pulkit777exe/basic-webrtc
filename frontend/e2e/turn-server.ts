@@ -55,7 +55,10 @@ const PERMISSION_LIFETIME_MS = 300_000;
  * so the preference order is checkable without touching the machine.
  */
 export function pickAdvertiseAddress(
-  interfaces: Record<string, Array<{ address: string; family: string | number; internal: boolean; cidr?: string | null }>>,
+  interfaces: Record<
+    string,
+    Array<{ address: string; family: string | number; internal: boolean; cidr?: string | null }> | undefined
+  >,
 ): string {
   const isV4 = (f: string | number) => f === 'IPv4' || f === 4;
   const skippedIface = /^(docker|br-|veth|tun|tap|wg|proton|tailscale|utun|awdl|anpi|bridge)/;
@@ -314,6 +317,12 @@ export async function startServer(options: TurnServerOptions = {}): Promise<{
   const username = options.username ?? 'e2e';
   const password = options.password ?? 'e2e-pass';
   const realm = options.realm ?? 'e2e';
+  // MD5 is not an oversight: RFC 5389 §15.4 defines the long-term credential
+  // key as MD5(username ":" realm ":" password), and that key is exactly what
+  // Chromium and every other TURN client use to compute MESSAGE-INTEGRITY
+  // (HMAC-SHA1, see buildStunMessage). Substituting a stronger hash here would
+  // break interoperability with real clients rather than harden anything — the
+  // password never travels anywhere, it only labels a test rig (see header).
   const integrityKey = createHash('md5').update(`${username}:${realm}:${password}`).digest();
   const nonce = randomBytes(8).toString('hex');
   // Bind all interfaces but advertise one reachable address: browsers on this

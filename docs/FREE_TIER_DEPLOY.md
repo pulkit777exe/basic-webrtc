@@ -94,6 +94,30 @@ signed with the secret; `TURN_TTL_SEC` default 300 s), so the shared secret
 itself never reaches a browser. Left unset → STUN-only ICE: most calls
 connect, but symmetric-NAT peers never will.
 
+### SFU relay (optional — rooms past ~6 peers)
+
+Mesh costs every client one uplink per peer; past ~6 participants modest
+hardware starts dropping frames. The app can move large rooms to an SFU
+without changing anything else (chat, roles, recording, and auth stay on the
+app's own socket — LiveKit only ever sees audio/video bytes). The free-tier
+shape is **LiveKit Cloud's free tier** as the media server:
+
+- Backend (Render dashboard → Environment): `LIVEKIT_URL`
+  (e.g. `wss://<your-project>.livekit.cloud`), `LIVEKIT_API_KEY`,
+  `LIVEKIT_API_SECRET`. All three or none: unset → the backend answers
+  `404 SFU_DISABLED` on the credential endpoint and every call stays on mesh.
+- Frontend (Vercel → Environment): `VITE_LIVEKIT_URL` — the same `wss://…`
+  URL. Unset → the client never asks for the relay. Like the other
+  `VITE_*` values this bakes in at build time, so redeploy after setting it.
+
+Migration is one-way per room and fail-open: rooms start on mesh, the first
+client that needs the relay mints a credential (which marks the room
+SFU-active for later joiners), and any relay failure falls back to mesh with
+a toast — a broken or missing relay never strands a working call. Verified
+in the browser rig against a real LiveKit server
+(`frontend/e2e/specs/sfu.spec.ts`); managed Cloud itself is configured, not
+run, here.
+
 ## 2. Frontend on Vercel
 
 1. Vercel dashboard → **Add New → Project**, import the repo, set **Root
@@ -103,6 +127,8 @@ connect, but symmetric-NAT peers never will.
    - `VITE_API_URL=https://<your-render-service>.onrender.com`
    - `VITE_WS_URL=wss://<your-render-service>.onrender.com/ws`
    - Optional: `VITE_DEEPGRAM_LIVE_CAPTIONS`, `VITE_API_TIMEOUT_MS`.
+   - Optional: `VITE_LIVEKIT_URL` (same `wss://…` as the backend's
+     `LIVEKIT_URL`) — enables the SFU path for large rooms; see § SFU relay.
    - These bake in at **build time** — redeploy after changing them.
 3. Deploy. `VITE_API_URL` missing in production fails the build fast instead
    of silently pointing at localhost.
@@ -119,7 +145,20 @@ require an exact match, no trailing slash).
 - **Lazy Redis client** (`config/redis.ts`): missing Upstash env gives a clear
   error at first use instead of an import-time crash; `/health` still answers.
 - **Degraded rate limits** (`lib/rate-limiters.ts`): in-memory store when
-  Redis is unconfigured, fail-open on transient Redis errors.
+  Redis is unconfigured, fail-open on transient Redis errors — including the
+  boot window, where the store's fire-and-forget script loads used to reject
+  before any process handler was attached and take the whole server down.
+- **Fail-open login/session/auth** (`config/redis.ts` `redisFailOpen`,
+  `routes/auth/*`, `services/session.ts`): Postgres is the source of truth
+  for sessions, locks, and counters; Redis only accelerates them. Login,
+  `/me`, session validation, 2FA pending-token writes, and account-lock
+  checks degrade to "slower" instead of 500ing when Upstash is unreachable —
+  except where Redis *is* the control (refresh-hash lookup, pending-token
+  single-use), which fails closed with a tell-the-user rejection, never a 500.
+- **Process safety net first** (`lib/process-handlers.ts`, imported before
+  everything else in `server.ts`): `unhandledRejection` logs and keeps
+  serving; `uncaughtException` shuts down (1001 to sockets, platform
+  restarts) instead of serving on undefined state.
 - **No Lua over REST** (`websocket/handler.ts`): chat buffer drain uses
   `LRANGE` + `DEL` (dedup by entry id makes the race harmless); Redis Streams
   writes are best-effort (`lib/redis-streams.ts`) so recording never breaks.

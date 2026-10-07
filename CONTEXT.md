@@ -13,7 +13,17 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
     offer/answer/ICE go to `handleSignal` (`lib/signal-handler.ts`), which runs
     `createPeer → setRemoteDescription → answer` in an `await`ed async IIFE
     (ordering matters — parallel `void` calls break negotiation).
-  - Cleanup: `WSManager.disconnect`, **`RTCManager.disconnectAll()`**, `MediaManager.stop`, clear atoms.
+  - Cleanup: `WSManager.disconnect`, **`RTCManager.disconnectAll()`**, `disconnectSfu()`, `MediaManager.stop`, clear atoms.
+  - **Transport (2026-10-07): mesh by default, SFU past scale.** At join and
+    on every roster growth the page checks the server's SFU-active flag and the
+    room size past `MESH_WARN_THRESHOLD`: if either says relay, it mints a
+    LiveKit credential (`POST /api/rooms/:id/sfu-token`, room-token auth),
+    connects `lib/sfu.ts`, then tears the mesh down. No down-migration; any
+    relay failure pins the session to mesh with a toast. While relayed,
+    mesh offer creation, `handleSignal`, ICE refresh, adaptive quality, and
+    the mesh-size warning all stand down (exact-`true` guards on
+    `sfuActiveAtom`, so test doubles answering truthy don't trip them) —
+    LiveKit runs its own layers (dynacast).
 
 ### WebRTC (`lib/rtc-manager.ts`)
 
@@ -33,6 +43,15 @@ Quick map of the codebase plus **non-obvious behavior** that affects WebRTC, Web
 > selected ICE pair, live media in both directions, and the `ontrack` merge
 > landing in the store. jsdom cannot check any of it. Run `cd frontend && bun run e2e`
 > after touching this file.
+
+- **SFU (`lib/sfu.ts`): unwrap LiveKit tracks.** The SDK emits *wrapper*
+  objects (`RemoteVideoTrack`), not `MediaStreamTrack`s. The merged stream
+  needs `track.mediaStreamTrack` — `addTrack(wrapper)` throws in a real
+  browser, the attach path swallows it as a skip, and the peer silently never
+  appears (signaling all green, `remoteParticipants` populated, zero tiles).
+  Unit fakes emit wrappers and the fake `MediaStream` rejects them, so the
+  regression test fails against the un-unwrapped code. Proven end to end in
+  `frontend/e2e/specs/sfu.spec.ts` (both peers decoding, zero mesh legs).
 
 ### Tests
 

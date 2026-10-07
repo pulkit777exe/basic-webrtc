@@ -19,9 +19,10 @@
 import { RTCManager } from '../src/lib/rtc-manager';
 import { extractAvailableOutgoingBitrate } from '../src/lib/webrtc-stats';
 import { applySimulcastLayer } from '../src/lib/simulcast';
+import { connectSfu, disconnectSfu, getActiveSfuSession } from '../src/lib/sfu';
 import { store } from '../src/store';
-import { peerAtomFamily, peerIdsAtom } from '../src/store/atoms';
-import type { E2EStats, HarnessApi, SimulcastReport } from './harness-api';
+import { localMediaAtom, peerAtomFamily, peerIdsAtom } from '../src/store/atoms';
+import type { E2EStats, HarnessApi, SfuStats, SimulcastReport } from './harness-api';
 
 const params = new URLSearchParams(location.search);
 const PEER_ID = params.get('peerId') ?? 'alpha';
@@ -33,6 +34,13 @@ const WS_URL = params.get('ws') ?? 'ws://127.0.0.1:8787';
 const TURN_URL = params.get('turn');
 const TURN_USER = params.get('turnUser') ?? 'e2e';
 const TURN_PASS = params.get('turnPass') ?? 'e2e-pass';
+// SFU mode for the relay spec: skip mesh entirely and drive the production
+// sfu module against a LiveKit server. The token is minted by the spec
+// (devkey/devsecret of the rig server), because the stub relay stands in for
+// the backend here and there is no token endpoint to call.
+const SFU_MODE = params.get('sfu') === '1';
+const SFU_URL = params.get('sfuUrl') ?? '';
+const SFU_TOKEN = params.get('sfuToken') ?? '';
 
 type Signal = { type: string; peerId?: string; from?: string; [key: string]: unknown };
 
@@ -318,8 +326,132 @@ async function forceSimulcastLayer(peerId: string, index: number): Promise<Simul
 function stop(): void {
   socket?.close();
   for (const peerId of [...connections.keys()]) removePeer(peerId);
+  disconnectSfu();
+  for (const el of videoElements.values()) {
+    el.srcObject = null;
+    el.remove();
+  }
+  videoElements.clear();
   localStream?.getTracks().forEach((track) => track.stop());
   localStream = null;
+}
+
+/** Hidden video elements, one per remote SFU peer: binding the merged stream
+ * and reading readyState is the only in-page proof frames really decoded. */
+const videoElements = new Map<string, HTMLVideoElement>();
+
+async function sfuStats(): Promise<SfuStats | null> {
+  if (!SFU_MODE) return null;
+  const peers: SfuStats['peers'] = [];
+  for (const userId of store.get(peerIdsAtom)) {
+    const peer = store.get(peerAtomFamily(userId));
+    const tracks = peer?.stream?.getTracks() ?? [];
+    let el = videoElements.get(userId);
+    if (!el) {
+      el = document.createElement('video');
+      el.muted = true;
+      el.playsInline = true;
+      el.style.display = 'none';
+      document.body.appendChild(el);
+      videoElements.set(userId, el);
+    }
+    if (peer?.stream && el.srcObject !== peer.stream) {
+      el.srcObject = peer.stream;
+      await el.play().catch(() => {
+        // Autoplay races the first frame; the next poll retries.
+      });
+    }
+    peers.push({
+      userId,
+      tracks: tracks.length,
+      liveVideo: tracks.some((t) => t.kind === 'video' && t.readyState === 'live'),
+      videoReadyState: el.readyState,
+    });
+  }
+  const session = getActiveSfuSession();
+  const localPublications: string[] = [];
+  try {
+    session?.room.localParticipant.trackPublications.forEach((pub, source) => {
+      if (pub.track) localPublications.push(String(source));
+    });
+  } catch {
+    // Reporting only: a stats call must never throw into the spec's evaluate.
+  }
+  let remoteParticipants: string[] = [];
+  try {
+    remoteParticipants = [...(session?.room.remoteParticipants.keys() ?? [])];
+  } catch {
+    // Same as above.
+  }
+  // Per-publication subscription state: tells a "server never offered the
+  // track" failure apart from an "offered but media stuck" one.
+  const remotePublications: Array<{
+    participant: string;
+    source: string;
+    subscribed: boolean;
+    hasTrack: boolean;
+  }> = [];
+  try {
+    for (const [identity, participant] of session?.room.remoteParticipants ?? []) {
+      for (const publication of participant.trackPublications.values()) {
+        const pub = publication as {
+          source?: unknown;
+          isSubscribed?: boolean;
+          track?: unknown;
+        };
+        remotePublications.push({
+          participant: identity,
+          source: String(pub.source),
+          subscribed: pub.isSubscribed === true,
+          hasTrack: pub.track != null,
+        });
+      }
+    }
+  } catch {
+    // Reporting only.
+  }
+  // Subscriber PeerConnection state off the engine (no public accessor in
+  // livekit-client v2): null when the media path never got that far.
+  let subscriberPcState: string | null = null;
+  try {
+    const engine = session?.room as unknown as {
+      engine?: { pcManager?: { subscriber?: { pc?: { connectionState?: unknown } } } };
+    };
+    const pcState = engine?.engine?.pcManager?.subscriber?.pc?.connectionState;
+    subscriberPcState = typeof pcState === 'string' ? pcState : null;
+  } catch {
+    // Reporting only.
+  }
+  return {
+    sfuConnected: session !== null,
+    peers,
+    localPublications,
+    remoteParticipants,
+    remotePublications,
+    subscriberPcState,
+    error: failure,
+  };
+}
+
+async function startSfu(): Promise<void> {
+  // The sfu module reads the live stream from the store, like the mesh
+  // adaptive controller does — the harness seeds it the same way RoomPage
+  // (via MediaManager) does.
+  store.set(localMediaAtom, {
+    stream: localStream,
+    video: true,
+    audio: true,
+    screen: false,
+  });
+  const session = await connectSfu({
+    url: SFU_URL,
+    token: SFU_TOKEN,
+    getLiveStream: () => store.get(localMediaAtom).stream,
+    onDisconnected: () => {
+      failure = failure ?? 'sfu disconnected unexpectedly';
+    },
+  });
+  if (!session) throw new Error('sfu connect failed (see console for the logged reason)');
 }
 
 async function start(): Promise<void> {
@@ -327,6 +459,10 @@ async function start(): Promise<void> {
     audio: true,
     video: { width: 320, height: 240, frameRate: 15 },
   });
+  if (SFU_MODE) {
+    await startSfu();
+    return;
+  }
   RTCManager.setLocalStream(localStream);
   if (TURN_URL) {
     await RTCManager.init({
@@ -356,6 +492,7 @@ Object.defineProperty(window, '__e2e', {
       return peerIds.length > 0 ? collectSimulcast(peerIds[0]!) : null;
     },
     stop,
+    ...(SFU_MODE ? { sfuStats } : {}),
   } satisfies HarnessApi,
   writable: false,
 });
