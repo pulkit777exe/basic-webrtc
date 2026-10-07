@@ -313,7 +313,19 @@ function queueAttachTracks(connection: RTCPeerConnection, stream: MediaStream | 
 }
 
 export const RTCManager = {
-  async init() {
+  /**
+   * Load the ICE configuration before creating peer connections.
+   *
+   * The optional override is the rig seam: the browser harness points the
+   * production peer module at rig infrastructure (a rig TURN server)
+   * without a backend round trip. Production callers pass nothing and get the
+   * fetched-then-fallback behaviour below.
+   */
+  async init(override?: RTCConfiguration) {
+    if (override) {
+      peerConfiguration = override;
+      return;
+    }
     try {
       peerConfiguration = buildIceConfiguration(await api.getIceServers());
     } catch {

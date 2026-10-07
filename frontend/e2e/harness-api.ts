@@ -14,6 +14,17 @@ export interface E2EStats {
   bytesReceived: number;
   framesDecoded: number;
   candidatePairsSucceeded: number;
+  /**
+   * The nominated, succeeded ICE pair, if one exists yet. The relay spec
+   * asserts on this rather than on raw candidate counts: gathering a relay
+   * candidate proves the TURN server answered Allocate, but only a nominated
+   * relay pair proves media actually flows through it.
+   */
+  selectedPair: {
+    localType: string | null;
+    remoteType: string | null;
+    relayProtocol: string | null;
+  } | null;
   /** Remote tracks as merged by the production ontrack handler into the store. */
   storeRemoteTracks: number;
   storeHasLiveVideo: boolean;

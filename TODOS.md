@@ -35,8 +35,9 @@ room and total encoded streams grow quadratically. `maxParticipants` defaults to
 **A browser rig now exists** — `frontend/e2e/` runs two real Chromium peers through the
 production peer module (`RTCManager`), covering real SDP, ICE, encoders, and live
 media. That closes the gap that previously justified the line below; the
-remaining coverage gaps (TURN, non-loopback networks, Safari/Firefox) are listed
-in `frontend/e2e/README.md`.
+remaining coverage gaps (non-loopback networks, Safari/Firefox) are listed
+in `frontend/e2e/README.md`. Relay connectivity is covered too, via the rig's
+own TURN server (`specs/turn.spec.ts`).
 
 **Simulcast is now on, and verified in real browsers** — it was the last item
 this branch deliberately deferred. What it took:
@@ -68,10 +69,13 @@ the actual answer past ~6 peers.
    ladder rung alongside `updateSimulcastLayers(maxLayerForBudget(...))`. Capture
    resolution bounds pixels, the encoder cap bounds the stream congestion control
    reacts to. What remains below is rig coverage and the SFU.
-2. **Extend the rig** — add TURN (a local coturn), a bandwidth-constrained
-   scenario, and the per-layer `media-source` stats that simulcast layer
-   selection needs. This is the prerequisite for enabling simulcast with
-   confidence.
+2. **Extend the rig** — TURN is done (2026-10-07): no coturn dependency, the
+   rig owns a minimal TURN/UDP server (`frontend/e2e/turn-server.ts`) and
+   `specs/turn.spec.ts` proves relay-only pair formation plus media both ways.
+   Still open: a bandwidth-constrained scenario (CDP throttling was tried and
+   does not reach the bandwidth estimator, so this needs another mechanism),
+   and the per-layer `media-source` stats that simulcast layer selection
+   needs. These remain prerequisites for simulcast confidence at size.
 3. **SFU** (mediasoup or LiveKit) — the real fix. One uplink per participant,
    fan-out downstream. Backward-compatible plan: keep mesh for 1-to-1, move to
    the SFU above a threshold. Weeks of work, tracked separately.

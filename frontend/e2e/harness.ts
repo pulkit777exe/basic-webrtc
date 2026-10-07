@@ -27,6 +27,12 @@ const params = new URLSearchParams(location.search);
 const PEER_ID = params.get('peerId') ?? 'alpha';
 const ROOM_ID = params.get('roomId') ?? 'e2e';
 const WS_URL = params.get('ws') ?? 'ws://127.0.0.1:8787';
+// Relay mode for the TURN spec: point the production peer module at the rig's
+// own TURN server and allow only relayed pairs, so a passing run proves media
+// crossed the relay rather than the loopback path.
+const TURN_URL = params.get('turn');
+const TURN_USER = params.get('turnUser') ?? 'e2e';
+const TURN_PASS = params.get('turnPass') ?? 'e2e-pass';
 
 type Signal = { type: string; peerId?: string; from?: string; [key: string]: unknown };
 
@@ -166,16 +172,30 @@ async function collectStats(): Promise<E2EStats> {
     bytesReceived: 0,
     framesDecoded: 0,
     candidatePairsSucceeded: 0,
+    selectedPair: null,
     storeRemoteTracks: 0,
     storeHasLiveVideo: false,
     signals: { ...signals },
     error: failure,
   };
 
+  const localCandidates = new Map<string, Record<string, unknown>>();
+  const remoteCandidates = new Map<string, Record<string, unknown>>();
+
   for (const pc of connections.values()) {
     if (pc.connectionState === 'connected') stats.connected += 1;
     if (pc.connectionState === 'failed') stats.failed += 1;
     const report = await pc.getStats();
+    // Two passes: candidate entries can come after the pair that references
+    // them, and resolving too early reports a null pair on a healthy relay.
+    report.forEach((entry: Record<string, unknown>) => {
+      if (entry.type === 'local-candidate' && typeof entry.id === 'string') {
+        localCandidates.set(entry.id, entry);
+      }
+      if (entry.type === 'remote-candidate' && typeof entry.id === 'string') {
+        remoteCandidates.set(entry.id, entry);
+      }
+    });
     report.forEach((entry: Record<string, unknown>) => {
       if (entry.type === 'outbound-rtp' && !entry.isRemote) {
         stats.bytesSent += Number(entry.bytesSent ?? 0);
@@ -186,6 +206,22 @@ async function collectStats(): Promise<E2EStats> {
       }
       if (entry.type === 'candidate-pair' && entry.state === 'succeeded') {
         stats.candidatePairsSucceeded += 1;
+        // The selected pair is the one the browser nominated. Reading the
+        // types off the pair's own candidates — not off getParameters or the
+        // SDP — is what distinguishes "a relay candidate was gathered" from
+        // "media is flowing through the relay".
+        if (entry.nominated === true && stats.selectedPair === null) {
+          const localId = typeof entry.localCandidateId === 'string' ? entry.localCandidateId : null;
+          const remoteId =
+            typeof entry.remoteCandidateId === 'string' ? entry.remoteCandidateId : null;
+          const local = localId ? localCandidates.get(localId) : undefined;
+          const remote = remoteId ? remoteCandidates.get(remoteId) : undefined;
+          stats.selectedPair = {
+            localType: typeof local?.candidateType === 'string' ? local.candidateType : null,
+            remoteType: typeof remote?.candidateType === 'string' ? remote.candidateType : null,
+            relayProtocol: typeof local?.relayProtocol === 'string' ? local.relayProtocol : null,
+          };
+        }
       }
     });
   }
@@ -292,7 +328,14 @@ async function start(): Promise<void> {
     video: { width: 320, height: 240, frameRate: 15 },
   });
   RTCManager.setLocalStream(localStream);
-  await RTCManager.init();
+  if (TURN_URL) {
+    await RTCManager.init({
+      iceServers: [{ urls: TURN_URL, username: TURN_USER, credential: TURN_PASS }],
+      iceTransportPolicy: 'relay',
+    });
+  } else {
+    await RTCManager.init();
+  }
   connectSignaling();
 }
 

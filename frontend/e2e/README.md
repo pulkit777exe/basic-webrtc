@@ -66,12 +66,25 @@ answer to the third peer in the room, which fails as a confusing
 
 - **Signaling against the real backend** (auth, rooms, invites, host controls).
   That path is covered by backend unit tests; it just is not end-to-end here.
-- **TURN and real network conditions.** Chromium runs with fake devices and
-  loopback ICE, so relay-only connectivity and weak-network behavior are not
-  covered.
+- **Real network conditions.** Chromium runs with fake devices and loopback
+  ICE, so weak-network behavior is not covered — and deliberately so: CDP
+  throttling was tried and does not reach the bandwidth estimator (the reported
+  uplink sits frozen), so the adaptive ladder stays unit-tested with injected
+  bandwidth, where it is deterministic.
 - **Safari/Firefox.** The project matrix is Chromium-only; cross-browser
   quirks (notably the Safari double-`ontrack` that `seenTrackIds` guards) are
   unverified here.
+
+Relay connectivity **is** covered: `turn-server.ts` is a minimal TURN/UDP
+server (Allocate with long-term-credential 401, Refresh, CreatePermission,
+ChannelBind, Send/Data indications, ChannelData relay — no TCP, no IPv6, no
+quotas; test rig only, never production), and `specs/turn.spec.ts` runs two
+peers through it under `iceTransportPolicy: 'relay'`, asserting nominated
+`relay`/`udp` pairs on both ends plus decoded media both ways. The server
+binds all interfaces and advertises the machine's LAN IPv4 in
+XOR-RELAYED-ADDRESS: browsers on the same host reliably reach the LAN
+address, while loopback-targeted UDP from a Chromium sandbox has been
+observed to never arrive.
 
 ## Files
 
@@ -79,8 +92,10 @@ answer to the third peer in the room, which fails as a confusing
 |---|---|
 | `playwright.config.ts` | Chromium launch flags, web servers, reporters |
 | `signaling-server.ts` | Minimal addressed WebSocket relay |
+| `turn-server.ts` | Minimal TURN/UDP server for the relay spec (test-only) |
 | `harness.html` | Page the browsers load |
 | `harness.ts` | Drives the production peer module |
 | `harness-api.ts` | The `window.__e2e` contract, shared by the page and the specs |
 | `specs/webrtc.spec.ts` | Two-peer media, teardown, three-peer mesh |
 | `specs/simulcast.spec.ts` | Layers negotiated, promoted, demoted, held under a ceiling |
+| `specs/turn.spec.ts` | Relay-only pair formation and media through the rig TURN server |
