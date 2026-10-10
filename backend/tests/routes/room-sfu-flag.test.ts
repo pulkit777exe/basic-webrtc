@@ -9,13 +9,20 @@ import { AddressInfo } from 'node:net';
 
 const flags = new Map<string, { value: string; expiresAt: number }>();
 let lastTtl: number | null = null;
+// Hang switches for the fail-open bound tests below. Same pattern as the
+// map above: the factory runs when the mocked module is first imported,
+// after these bindings are initialised.
+let hangWrites = false;
+let hangReads = false;
 
 vi.mock('../../src/lib/redis-rooms', () => ({
   markRoomSfuActive: async (roomId: string, ttlSec: number) => {
+    if (hangWrites) await new Promise<never>(() => {});
     lastTtl = ttlSec;
     flags.set(`room:${roomId}:sfu`, { value: '1', expiresAt: Date.now() + ttlSec * 1000 });
   },
   isRoomSfuActive: async (roomId: string) => {
+    if (hangReads) await new Promise<never>(() => {});
     const entry = flags.get(`room:${roomId}:sfu`);
     if (!entry || entry.expiresAt <= Date.now()) return false;
     return true;
@@ -84,5 +91,35 @@ describe('SFU-active flag lifecycle', () => {
     await mint('room-flag-3', 'user-9');
     expect((await status('room-flag-4', 'user-9')).body).toEqual({ active: false });
     expect((await status('room-flag-3', 'user-9')).body).toEqual({ active: true });
+  });
+
+  it('mints within the flag bound when the active-flag write hangs', async () => {
+    // A sick Redis (retries with backoff) must not hold the mint hostage:
+    // the token is minted and answered, the flag write is abandoned. Without
+    // the bound this test dies at the 5s vitest timeout; the elapsed
+    // assertion pins the ~1s cap with CI slack.
+    hangWrites = true;
+    try {
+      const started = Date.now();
+      const minted = await mint('room-hang-1');
+      expect(minted.status).toBe(200);
+      expect(typeof minted.body.token).toBe('string');
+      expect(Date.now() - started).toBeLessThan(4500);
+    } finally {
+      hangWrites = false;
+    }
+  });
+
+  it('status fails open to mesh when the flag read hangs', async () => {
+    hangReads = true;
+    try {
+      const started = Date.now();
+      const res = await status('room-hang-2');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ active: false });
+      expect(Date.now() - started).toBeLessThan(4500);
+    } finally {
+      hangReads = false;
+    }
   });
 });

@@ -27,6 +27,44 @@ const router = Router();
 /** Matches the room token lifetime: an SFU credential never outlives admission. */
 const SFU_TOKEN_TTL_SEC = 2 * 60 * 60;
 
+/**
+ * Bound for the best-effort SFU-active flag ops. Upstash answers in the low
+ * hundreds of ms when healthy; when it is sick (free-tier cold start, dead
+ * hostname) its client retries with backoff for seconds per command, which
+ * would hold a token mint — or a join-time status check — hostage. The flag
+ * is advisory (the room converges on the next mint; a false-negative status
+ * only delays SFU uptake), so past this bound we stop waiting and take the
+ * fail-open path. Without it, two mints in a row exceed the 5s test budget
+ * against a dead endpoint — and in production they stall call setup the same
+ * way.
+ */
+const SFU_FLAG_TIMEOUT_MS = 1_000;
+
+type FlagResult<T> = { ok: true; value: T } | { ok: false; reason: string };
+
+/**
+ * Settle a best-effort flag op, giving up after the bound. Never throws: a
+ * timeout and a rejection both report `{ ok: false }` and the caller takes
+ * its fail-open path. `Promise.race` subscribes to the op, so a late
+ * rejection is handled and cannot surface as an unhandled rejection.
+ */
+async function settleFlag<T>(op: Promise<T>): Promise<FlagResult<T>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const value = await Promise.race([
+      op,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('sfu-flag-timeout')), SFU_FLAG_TIMEOUT_MS);
+      }),
+    ]);
+    return { ok: true, value };
+  } catch (err) {
+    return { ok: false, reason: String(err) };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 interface SfuIdentity {
   userId: string;
   roomId: string;
@@ -97,13 +135,13 @@ router.post('/:id/sfu-token', async (req: Request<{ id: string }>, res: Response
     });
     const token = await at.toJwt();
     // Mark active before responding so a concurrent joiner sees it. Best
-    // effort: if Redis is down the client still gets a working token and the
-    // room simply converges on the next mint — mesh remains the fallback.
-    try {
-      await markRoomSfuActive(identity.roomId, SFU_TOKEN_TTL_SEC);
-    } catch (err) {
+    // effort: if Redis is down (or just slow — see SFU_FLAG_TIMEOUT_MS) the
+    // client still gets a working token and the room simply converges on the
+    // next mint — mesh remains the fallback.
+    const marked = await settleFlag(markRoomSfuActive(identity.roomId, SFU_TOKEN_TTL_SEC));
+    if (!marked.ok) {
       logger.warn('[sfu] could not mark room active; mesh fallback continues', {
-        err: String(err),
+        err: marked.reason,
       });
     }
     res.json({ url: cfg.url, token });
@@ -121,14 +159,13 @@ router.get('/:id/sfu-status', async (req: Request<{ id: string }>, res: Response
   }
   // Fail open to mesh: an unknown status must never strand a client waiting
   // for a relay that may not exist. A false negative only delays SFU uptake
-  // until the next participants change re-checks.
-  let active = false;
-  try {
-    active = await isRoomSfuActive(identity.roomId);
-  } catch (err) {
-    logger.warn('[sfu] status check failed, assuming mesh', { err: String(err) });
+  // until the next participants change re-checks. A sick Redis is bounded by
+  // the same flag timeout so a join-time check cannot stall call setup.
+  const read = await settleFlag(isRoomSfuActive(identity.roomId));
+  if (!read.ok) {
+    logger.warn('[sfu] status check failed, assuming mesh', { err: read.reason });
   }
-  res.json({ active });
+  res.json({ active: read.ok ? read.value : false });
 });
 
 export default router;
