@@ -281,6 +281,37 @@ describe('sfu migration controller', () => {
     expect(calls.signalingReconnects).toBe(1);
   });
 
+  it('still rebuilds the mesh when the loss toast itself throws', async () => {
+    // The toast is courtesy; the reconnect is load-bearing. A throwing
+    // notify must not cancel the mesh rebuild — or reject, since this runs
+    // detached from the SDK callback where a rejection is unhandled.
+    const { controller, calls, deps } = setup({ participantCount: 9, statusActive: true });
+    await controller.ensure();
+    deps.fetchSfuToken = async () => {
+      calls.tokenCalls += 1;
+      return null;
+    };
+    deps.notifyError = () => {
+      throw new Error('toast exploded');
+    };
+    await expect(controller.handleLoss()).resolves.toBeUndefined();
+    expect(calls.signalingReconnects).toBe(1);
+  });
+
+  it('never rejects when the signaling reconnect throws', async () => {
+    const { controller, calls, deps } = setup({ participantCount: 9, statusActive: true });
+    await controller.ensure();
+    deps.fetchSfuToken = async () => {
+      calls.tokenCalls += 1;
+      return null;
+    };
+    deps.reconnectSignaling = () => {
+      throw new Error('ws exploded');
+    };
+    await expect(controller.handleLoss()).resolves.toBeUndefined();
+    expect(calls.errors).toEqual([SFU_LOSS_MESSAGE]);
+  });
+
   it('skips the re-mint and falls back directly without a room id', async () => {
     const { controller, calls, deps } = setup({ participantCount: 9, statusActive: true });
     await controller.ensure();

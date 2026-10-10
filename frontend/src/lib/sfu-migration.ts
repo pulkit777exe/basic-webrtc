@@ -145,8 +145,20 @@ export function createSfuMigrationController(deps: SfuMigrationDeps): SfuMigrati
     }
     if (deps.isCleanedUp()) return;
     failed = true;
-    deps.notifyError(SFU_LOSS_MESSAGE);
-    deps.reconnectSignaling();
+    // Each step is independent: a toast that throws must not cancel the mesh
+    // rebuild, and the contract is never-throw (this runs detached via
+    // `void` from the SDK callback, so a rejection would be unhandled).
+    try {
+      deps.notifyError(SFU_LOSS_MESSAGE);
+    } catch {
+      // The reconnect below is the load-bearing step; a dead toast is not.
+    }
+    try {
+      deps.reconnectSignaling();
+    } catch {
+      // Nothing further to fall back to. The pin above already prevents
+      // refire loops; if the toast sent, it explains the state.
+    }
   }
 
   function reset(): void {
