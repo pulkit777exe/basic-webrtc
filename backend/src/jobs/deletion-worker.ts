@@ -9,7 +9,6 @@ import {
   otpCodes,
   passwordResetTokens,
   recordingSessions,
-  recordingTracks,
   roomParticipants,
   rooms,
   userSessions,
@@ -70,11 +69,6 @@ export async function runDeletionJob(userId: string, deletionRequestId: string):
 
   await db.transaction(async (tx) => {
     await tx.update(messages).set({ userId: deletedUserId }).where(eq(messages.userId, userId));
-
-    await tx
-      .update(recordingTracks)
-      .set({ participantId: null })
-      .where(eq(recordingTracks.participantId, userId));
 
     await tx
       .update(recordingSessions)

@@ -1,6 +1,35 @@
 import { store } from '@/store';
-import { audioOutputDeviceIdAtom, localMediaAtom, mutedByHostAtom } from '@/store/atoms';
+import { audioOutputDeviceIdAtom, localMediaAtom, mutedByHostAtom, sfuActiveAtom } from '@/store/atoms';
 import { RTCManager } from '@/lib/rtc-manager';
+import { getActiveSfuSession } from '@/lib/sfu';
+import type { QualityLevel } from '@/lib/bandwidth';
+import { scopedLogger } from '@/lib/logger';
+
+const log = scopedLogger('MediaManager');
+
+/**
+ * Mirror a local track change onto the live transport. Mesh re-points one
+ * sender per peer; the relay (un)publishes the current capture track. The
+ * `track` argument mirrors replaceTrack's contract — null means "take it
+ * down" — and mute/enabled flips need no call on either path: they propagate
+ * through the already-live track.
+ */
+async function replaceOutgoingTrack(kind: 'audio' | 'video', track: MediaStreamTrack | null): Promise<void> {
+  if (!store.get(sfuActiveAtom)) {
+    RTCManager.replaceTrack(kind, track);
+    return;
+  }
+  const session = getActiveSfuSession();
+  if (!session) {
+    // sfuActive implies a session (set together, cleared together); reaching
+    // here means that invariant broke. Mesh fallback is unavailable mid-call,
+    // so log and keep the local preview working.
+    log.warn(`no relay session for ${kind} track change; media not sent`);
+    return;
+  }
+  if (kind === 'video') await session.setCameraPublished(track !== null);
+  else await session.setMicrophonePublished(track !== null);
+}
 
 let localStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
@@ -65,7 +94,9 @@ export async function negotiateBestVideoTrack(
   }
 
   if (failures.length > 0) {
-    console.debug('[MediaManager] Video ladder failures:', failures);
+    // Which rungs of the ladder the browser rejected is a local diagnostic;
+    // debug-level, so it never reaches a production console.
+    log.debug('Video ladder failures:', failures);
   }
 
   // Last resort: let the browser pick anything
@@ -105,7 +136,7 @@ export async function negotiateBestAudioTrack(
     return stream.getAudioTracks()[0] ?? null;
   } catch (err) {
     // DSP constraints rejected — collect the error before the plain fallback attempt
-    console.debug('[MediaManager] Audio DSP constraints rejected:', err instanceof Error ? err.message : String(err), '— falling back to plain audio');
+    log.debug('Audio DSP constraints rejected — falling back to plain audio', err instanceof Error ? err.message : String(err));
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: deviceId ? { deviceId: { exact: deviceId } } : true,
@@ -183,7 +214,7 @@ export const MediaManager = {
         RTCManager.setLocalStream(stream);
         return;
       } catch (error) {
-        console.error('[MediaManager] Unable to enable camera', error);
+        log.error('Unable to enable camera', error);
         return;
       }
     }
@@ -197,7 +228,7 @@ export const MediaManager = {
         videoTrack.stop();
       }
       store.set(localMediaAtom, { ...current, stream: current.stream, video: false });
-      if (!current.screen) RTCManager.replaceTrack('video', null);
+      if (!current.screen) void replaceOutgoingTrack('video', null);
       return;
     }
 
@@ -210,7 +241,7 @@ export const MediaManager = {
       const latest = store.get(localMediaAtom);
       const stream = latest.stream;
       if (!stream || stream.id !== capturedStreamId) {
-        console.warn('[MediaManager] toggleVideo: stream changed during async, aborting');
+        log.warn('toggleVideo: stream changed during async, aborting');
         nextTrack.stop();
         return;
       }
@@ -223,7 +254,7 @@ export const MediaManager = {
       const tracks = stream.getTracks();
       let finalTracks: MediaStreamTrack[];
       if (!tracks.includes(nextTrack)) {
-        console.warn('[MediaManager] toggleVideo: nextTrack not in stream.getTracks() after addTrack, using explicit track list');
+        log.warn('toggleVideo: nextTrack not in stream.getTracks() after addTrack, using explicit track list');
         finalTracks = [...stream.getAudioTracks(), nextTrack];
       } else {
         finalTracks = tracks;
@@ -231,7 +262,7 @@ export const MediaManager = {
 
       // Guard: if resulting track list is empty, stop the track and return early
       if (finalTracks.length === 0) {
-        console.warn('[MediaManager] toggleVideo: resulting track list is empty, cleaning up');
+        log.warn('toggleVideo: resulting track list is empty, cleaning up');
         nextTrack.stop();
         return;
       }
@@ -239,11 +270,13 @@ export const MediaManager = {
       // Create a new stream reference to trigger React re-render
       const newStream = new MediaStream(finalTracks);
 
-      if (!latest.screen) RTCManager.replaceTrack('video', nextTrack);
       RTCManager.setLocalMediaStreamRef(newStream);
       store.set(localMediaAtom, { ...latest, stream: newStream, video: true });
+      // After the atom update: the relay publishes the *current* live track,
+      // which is only nextTrack once the store above has landed.
+      if (!latest.screen) void replaceOutgoingTrack('video', nextTrack);
     } catch (error) {
-      console.error('[MediaManager] Unable to enable camera', error);
+      log.error('Unable to enable camera', error);
     }
   },
 
@@ -258,7 +291,7 @@ export const MediaManager = {
       try {
         const newTrack = await negotiateBestAudioTrack();
         if (!newTrack) {
-          console.error('[MediaManager] No audio track available');
+          log.error('No audio track available');
           return;
         }
         newTrack.enabled = true;
@@ -268,10 +301,10 @@ export const MediaManager = {
         const newStream = new MediaStream(tracks);
 
         store.set(localMediaAtom, { ...current, stream: newStream, audio: true });
-        RTCManager.replaceTrack('audio', newTrack);
+        void replaceOutgoingTrack('audio', newTrack);
         return;
       } catch (error) {
-        console.error('[MediaManager] Unable to enable microphone', error);
+        log.error('Unable to enable microphone', error);
         return;
       }
     }
@@ -281,7 +314,7 @@ export const MediaManager = {
     audioTrack.enabled = next;
     store.set(localMediaAtom, { ...current, audio: next });
     if (next) store.set(mutedByHostAtom, false);
-    RTCManager.replaceTrack('audio', audioTrack);
+    void replaceOutgoingTrack('audio', audioTrack);
   },
 
   muteAudio(byHost = false) {
@@ -292,7 +325,7 @@ export const MediaManager = {
     audioTrack.enabled = false;
     store.set(localMediaAtom, { ...current, audio: false });
     if (byHost) store.set(mutedByHostAtom, true);
-    RTCManager.replaceTrack('audio', audioTrack);
+    void replaceOutgoingTrack('audio', audioTrack);
   },
 
   unmuteAudio() {
@@ -303,7 +336,7 @@ export const MediaManager = {
     audioTrack.enabled = true;
     store.set(localMediaAtom, { ...current, audio: true });
     store.set(mutedByHostAtom, false);
-    RTCManager.replaceTrack('audio', audioTrack);
+    void replaceOutgoingTrack('audio', audioTrack);
   },
 
   async startScreenShare(audio = false) {
@@ -315,15 +348,32 @@ export const MediaManager = {
     videoTrack.onended = () => MediaManager.stopScreenShare();
     const current = store.get(localMediaAtom);
     store.set(localMediaAtom, { ...current, screen: true });
-    RTCManager.addScreenTrack(videoTrack, screenStream);
+    // Transport-specific publish of identically-acquired tracks: mesh adds a
+    // sender per peer, the relay publishes once. Acquisition (picker,
+    // onended) stays common so the UX cannot diverge.
+    if (store.get(sfuActiveAtom)) {
+      const session = getActiveSfuSession();
+      if (session && videoTrack) await session.publishScreenTrack(videoTrack);
+      else log.warn('screen share started with no relay session; mesh fallback unavailable mid-share');
+    } else {
+      RTCManager.addScreenTrack(videoTrack, screenStream);
+    }
   },
 
   stopScreenShare() {
+    const wasRelayed = store.get(sfuActiveAtom);
     screenStream?.getTracks().forEach((t) => t.stop());
     screenStream = null;
     const current = store.get(localMediaAtom);
     store.set(localMediaAtom, { ...current, screen: false });
-    RTCManager.removeScreenTrack();
+    if (wasRelayed) {
+      // Unpublish before MediaManager forgets the track: LiveKit must release
+      // its subscription, and the track itself is already stopped above.
+      const session = getActiveSfuSession();
+      if (session) void session.unpublishScreenTrack();
+    } else {
+      RTCManager.removeScreenTrack();
+    }
   },
 
   stop() {
@@ -350,7 +400,7 @@ export const MediaManager = {
     // Race condition guard
     const latest = store.get(localMediaAtom);
     if (!latest.stream || latest.stream.id !== capturedStreamId) {
-      console.warn('[MediaManager] switchAudioInput: stream changed during async, aborting');
+      log.warn('switchAudioInput: stream changed during async, aborting');
       nextTrack.stop();
       return;
     }
@@ -358,7 +408,7 @@ export const MediaManager = {
     const previousTrack = current.stream.getAudioTracks()[0];
     if (previousTrack) { current.stream.removeTrack(previousTrack); previousTrack.stop(); }
     current.stream.addTrack(nextTrack);
-    RTCManager.replaceTrack('audio', nextTrack);
+    void replaceOutgoingTrack('audio', nextTrack);
     store.set(localMediaAtom, { ...current, stream: current.stream });
   },
 
@@ -373,7 +423,7 @@ export const MediaManager = {
       const existingTrack = current.stream.getVideoTracks()[0];
       if (existingTrack) { current.stream.removeTrack(existingTrack); existingTrack.stop(); }
       store.set(localMediaAtom, { ...current, stream: current.stream, video: false });
-      if (!current.screen) RTCManager.replaceTrack('video', null);
+      if (!current.screen) void replaceOutgoingTrack('video', null);
       return;
     }
 
@@ -385,7 +435,7 @@ export const MediaManager = {
     const latest = store.get(localMediaAtom);
     const stream = latest.stream;
     if (!stream || stream.id !== capturedStreamId) {
-      console.warn('[MediaManager] switchVideoInput: stream changed during async, aborting');
+      log.warn('switchVideoInput: stream changed during async, aborting');
       nextTrack.stop();
       return;
     }
@@ -393,7 +443,7 @@ export const MediaManager = {
     const previousTrack = stream.getVideoTracks()[0];
     if (previousTrack) { stream.removeTrack(previousTrack); previousTrack.stop(); }
     stream.addTrack(nextTrack);
-    if (!latest.screen) RTCManager.replaceTrack('video', nextTrack);
+    if (!latest.screen) void replaceOutgoingTrack('video', nextTrack);
     store.set(localMediaAtom, { ...latest, stream });
   },
 
@@ -406,11 +456,41 @@ export const MediaManager = {
    * Useful for displaying in a settings panel.
    */
   getActiveVideoResolution(): { width: number; height: number } | null {
-    const track = localStream?.getVideoTracks()[0];
+    // From the store, not the module-level `localStream`: toggleVideo and
+    // switchVideoInput replace it, so the settings panel would otherwise report
+    // the pre-toggle resolution.
+    const track = store.get(localMediaAtom).stream?.getVideoTracks()[0];
     if (!track) return null;
     const settings = track.getSettings();
     return settings.width && settings.height
       ? { width: settings.width, height: settings.height }
       : null;
+  },
+
+  /**
+   * Apply a rung of the adaptive-quality ladder to the live camera track.
+   *
+   * Uses `ideal` constraints so the browser may land on a nearby supported
+   * resolution instead of failing outright. A rejected constraint leaves the
+   * stream at its current resolution, which is why this is not surfaced to the
+   * user — it is an optimisation, not a feature they toggled.
+   */
+  async applyVideoQuality(level: QualityLevel): Promise<void> {
+    // Read the stream from the store, not the module-level `localStream`:
+    // toggleVideo() and switchVideoInput() replace it, and a stale reference
+    // made adaptive quality silently skip the new track.
+    const stream = store.get(localMediaAtom).stream;
+    const track = stream?.getVideoTracks()[0];
+    if (!track) return;
+    if (track.readyState === 'ended') return;
+    try {
+      await track.applyConstraints({
+        width: { ideal: level.width },
+        height: { ideal: level.height },
+        frameRate: { ideal: 30 },
+      });
+    } catch (error) {
+      log.warn('could not apply video constraints', error);
+    }
   },
 };

@@ -15,6 +15,20 @@
       "when": 1789973628668,
       "tag": "0001_sticky_morlun",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790514545053,
+      "tag": "0002_keen_blazing_skull",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790516604662,
+      "tag": "0003_magenta_rattler",
+      "breakpoints": true
     }
   ]
 }

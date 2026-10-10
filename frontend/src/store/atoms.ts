@@ -205,6 +205,14 @@ export type ConnectionStatus =
   | "offline"
   | "disconnected";
 export const connectionStatusAtom = atom<ConnectionStatus>("connecting");
+/**
+ * Which transport carries this call's media. Mesh by default; `true` once the
+ * client migrates to the SFU (room above threshold, relay configured and
+ * reachable). Lives in the store — not in the sfu module — so the WS layer
+ * (`ws-manager` join offers, `signal-handler` offer/answer/ICE) can ignore
+ * mesh signaling while it holds, without importing media code.
+ */
+export const sfuActiveAtom = atom<boolean>(false);
 /** Current reconnect attempt number (0 when connected/connecting). */
 export const reconnectAttemptAtom = atom<number>(0);
 export const reactionsEnabledAtom = atom<boolean>(true);
@@ -252,15 +260,31 @@ interface HandRaisedEntry {
   timestamp: number;
 }
 
-/** Derived atom family that only tracks handRaised state per peer,
- *  avoiding full peer state recomputation on every change. */
-const handRaisedStateFamily = atomFamily((userId: string) =>
-  atom((get) => {
+/**
+ * Derived atom family that only tracks handRaised state per peer, avoiding full
+ * peer state recomputation on every change.
+ *
+ * The returned object keeps a stable identity while the hand-relevant fields are
+ * unchanged. Peers are replaced wholesale on unrelated updates (media state,
+ * connection chip, name edits), and a fresh object each time would make Jotai
+ * treat this atom as changed and rebuild the hand-raise queue for a panel that
+ * only cares about hands.
+ */
+const handRaisedStateFamily = atomFamily((userId: string) => {
+  let previous: { raised: true; at: number; name: string } | null = null;
+  return atom((get) => {
     const peer = get(peerAtomFamily(userId));
-    if (!peer?.handRaised || peer.handRaisedAt == null) return null;
-    return { raised: true, at: peer.handRaisedAt, name: peer.user.name };
-  })
-);
+    if (!peer?.handRaised || peer.handRaisedAt == null) {
+      previous = null;
+      return null;
+    }
+    if (previous && previous.at === peer.handRaisedAt && previous.name === peer.user.name) {
+      return previous;
+    }
+    previous = { raised: true, at: peer.handRaisedAt, name: peer.user.name };
+    return previous;
+  });
+});
 
 export const handRaisedQueueAtom = atom((get) => {
   const ids = get(peerIdsAtom);

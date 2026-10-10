@@ -11,6 +11,14 @@ RUN bun install --frozen-lockfile
 COPY index.html vite.config.ts tsconfig*.json components.json ./
 COPY public ./public
 COPY src ./src
+# Vite inlines VITE_* at BUILD time — passing them only to the running container
+# (docker-compose `environment:`) is too late, and the production config throws
+# when VITE_API_URL is missing, so the build must fail loudly instead of
+# shipping a bundle with no backend URL.
+ARG VITE_API_URL
+ARG VITE_WS_URL
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_WS_URL=$VITE_WS_URL
 RUN bun run build
 
 FROM nginx:alpine AS production

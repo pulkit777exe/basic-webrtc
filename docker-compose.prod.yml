@@ -63,6 +63,10 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # Vite bakes these into the bundle at build time (see frontend/Dockerfile).
+        VITE_API_URL: ${VITE_API_URL}
+        VITE_WS_URL: ${VITE_WS_URL}
     container_name: webrtc_frontend
     restart: unless-stopped
     environment:

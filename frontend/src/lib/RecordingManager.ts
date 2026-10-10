@@ -1,6 +1,10 @@
+import { scopedLogger } from '@/lib/logger';
+
 const DB_NAME = 'webrtc-recordings';
 const DB_VERSION = 1;
 const STORE_NAME = 'recordings';
+
+const log = scopedLogger('RecordingManager');
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -142,7 +146,7 @@ export class RecordingManager {
           await saveRecording(key, blob);
           resolve(result);
         } catch (error) {
-          console.error('Failed to save recording:', error);
+          log.error('Failed to save recording:', error);
           resolve(null);
         } finally {
           this.recordingPromise = null;

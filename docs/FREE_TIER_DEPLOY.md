@@ -94,6 +94,39 @@ signed with the secret; `TURN_TTL_SEC` default 300 s), so the shared secret
 itself never reaches a browser. Left unset → STUN-only ICE: most calls
 connect, but symmetric-NAT peers never will.
 
+### SFU relay (optional — rooms past ~6 peers)
+
+Mesh costs every client one uplink per peer; past ~6 participants modest
+hardware starts dropping frames. The app can move large rooms to an SFU
+without changing anything else (chat, roles, recording, and auth stay on the
+app's own socket — LiveKit only ever sees audio/video bytes). The free-tier
+shape is **LiveKit Cloud's free tier** as the media server:
+
+- Backend (Render dashboard → Environment): `LIVEKIT_URL`
+  (e.g. `wss://<your-project>.livekit.cloud`), `LIVEKIT_API_KEY`,
+  `LIVEKIT_API_SECRET`. All three or none: unset → the backend answers
+  `404 SFU_DISABLED` on the credential endpoint and every call stays on mesh.
+  Paste the **wss:// endpoint**, not the https:// dashboard URL — a non-`ws(s)`
+  scheme is rejected with the same 404 (and a server log line) instead of
+  minting credentials no browser can dial.
+- Frontend (Vercel → Environment): `VITE_LIVEKIT_URL` — the same `wss://…`
+  URL. Unset → the client never asks for the relay. Like the other
+  `VITE_*` values this bakes in at build time, so redeploy after setting it.
+- First-call smoke test (managed Cloud is configured here, not run — the rig
+  verifies against self-hosted 1.13.8): grow a room past 6 and confirm both
+  sides show relayed video with chat/controls unchanged, i.e. the same
+  assertions as `frontend/e2e/specs/sfu.spec.ts`. Any relay failure falls
+  back to mesh with a toast, so the worst case is a small-room experience,
+  never a dead call.
+
+Migration is one-way per room and fail-open: rooms start on mesh, the first
+client that needs the relay mints a credential (which marks the room
+SFU-active for later joiners), and any relay failure falls back to mesh with
+a toast — a broken or missing relay never strands a working call. Verified
+in the browser rig against a real LiveKit server
+(`frontend/e2e/specs/sfu.spec.ts`); managed Cloud itself is configured, not
+run, here.
+
 ## 2. Frontend on Vercel
 
 1. Vercel dashboard → **Add New → Project**, import the repo, set **Root
@@ -103,6 +136,8 @@ connect, but symmetric-NAT peers never will.
    - `VITE_API_URL=https://<your-render-service>.onrender.com`
    - `VITE_WS_URL=wss://<your-render-service>.onrender.com/ws`
    - Optional: `VITE_DEEPGRAM_LIVE_CAPTIONS`, `VITE_API_TIMEOUT_MS`.
+   - Optional: `VITE_LIVEKIT_URL` (same `wss://…` as the backend's
+     `LIVEKIT_URL`) — enables the SFU path for large rooms; see § SFU relay.
    - These bake in at **build time** — redeploy after changing them.
 3. Deploy. `VITE_API_URL` missing in production fails the build fast instead
    of silently pointing at localhost.
@@ -110,7 +145,25 @@ connect, but symmetric-NAT peers never will.
 Then add the Vercel URL to the backend's `ALLOWED_ORIGINS` (CORS + cookies
 require an exact match, no trailing slash).
 
-## 3. How the code stays free-tier safe
+## 3. Verify the deploy
+
+`scripts/verify-deploy.sh` checks a live stack without needing anything
+secret — all endpoints it touches are public or correctly rejected without
+credentials:
+
+```sh
+scripts/verify-deploy.sh https://<your-render-service>.onrender.com https://<your-app>.vercel.app
+```
+
+It asserts liveness (`/health` 200 even with Redis down), readiness shape
+(200, or 503 with a JSON body saying what is degraded), the public API
+serving (`/api/ice-servers`), the SFU route mounted and gated (403 without
+a token — never 404 or 500), and the SPA fallback (unknown routes serve the
+app, so room deep-links and refreshes don't 404). `... --static` runs the
+repo-side half (render.yaml paths, vercel.json agreement) and also runs in
+CI after the frontend build.
+
+## 4. How the code stays free-tier safe
 
 - **Jobs without BullMQ** (`backend/src/jobs/account-jobs.ts`): exports run
   in-process; account deletions are scheduled via the `scheduledFor` column
@@ -119,7 +172,20 @@ require an exact match, no trailing slash).
 - **Lazy Redis client** (`config/redis.ts`): missing Upstash env gives a clear
   error at first use instead of an import-time crash; `/health` still answers.
 - **Degraded rate limits** (`lib/rate-limiters.ts`): in-memory store when
-  Redis is unconfigured, fail-open on transient Redis errors.
+  Redis is unconfigured, fail-open on transient Redis errors — including the
+  boot window, where the store's fire-and-forget script loads used to reject
+  before any process handler was attached and take the whole server down.
+- **Fail-open login/session/auth** (`config/redis.ts` `redisFailOpen`,
+  `routes/auth/*`, `services/session.ts`): Postgres is the source of truth
+  for sessions, locks, and counters; Redis only accelerates them. Login,
+  `/me`, session validation, 2FA pending-token writes, and account-lock
+  checks degrade to "slower" instead of 500ing when Upstash is unreachable —
+  except where Redis *is* the control (refresh-hash lookup, pending-token
+  single-use), which fails closed with a tell-the-user rejection, never a 500.
+- **Process safety net first** (`lib/process-handlers.ts`, imported before
+  everything else in `server.ts`): `unhandledRejection` logs and keeps
+  serving; `uncaughtException` shuts down (1001 to sockets, platform
+  restarts) instead of serving on undefined state.
 - **No Lua over REST** (`websocket/handler.ts`): chat buffer drain uses
   `LRANGE` + `DEL` (dedup by entry id makes the race harmless); Redis Streams
   writes are best-effort (`lib/redis-streams.ts`) so recording never breaks.
@@ -127,7 +193,7 @@ require an exact match, no trailing slash).
   `/health/ready` is 503 only when Postgres is down; Redis reports
   `ok` / `error` / `disabled`.
 
-## 4. Local dev (unchanged)
+## 5. Local dev (unchanged)
 
 `docker-compose.yml` still provides local Postgres + TCP Redis + hot-reload
 for development. `docker-compose.prod.yml` mirrors the single-instance

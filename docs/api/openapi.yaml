@@ -1060,6 +1060,22 @@ paths:
       summary: Create a new room
       security:
         - BearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: >-
+            Optional client-generated UUID. When present, a retried request with
+            the same key and identical body replays the stored response
+            (identical status and body) with an `Idempotent-Replayed: true`
+            header instead of creating a second room. Same key with a different
+            body returns 422 (IDEMPOTENCY_KEY_REUSE); a still-executing key
+            returns 409 (IDEMPOTENCY_CONFLICT). Records expire after 24h, and
+            keys are scoped per user and per endpoint. Without the header,
+            behavior is unchanged.
       requestBody:
         required: true
         content:
@@ -1075,6 +1091,10 @@ paths:
       responses:
         "201":
           description: Room created
+        "409":
+          description: IDEMPOTENCY_CONFLICT — the same key is still executing; retry with backoff
+        "422":
+          description: IDEMPOTENCY_KEY_REUSE — the key was already used with a different body
 
   /api/rooms/{id}:
     get:
@@ -1374,14 +1394,31 @@ paths:
       tags: [Rooms]
       summary: Transcribe a short audio clip for live captions
       description: >-
-        Authenticates with a room token (Bearer) rather than an account token.
+        Authenticates with a room token (Bearer) rather than an account token:
+        this route is mounted outside the account-authenticated rooms router.
         Requires OPENAI_API_KEY or DEEPGRAM_API_KEY; returns 503 when neither is set.
+      security:
+        - RoomTokenAuth: []
       parameters:
         - name: id
           in: path
           required: true
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: >-
+            Optional client-generated UUID. The fingerprint hashes the uploaded
+            file bytes (not the JSON body) and the scope is the room-token
+            identity (room + user). A duplicate upload replays the stored
+            transcript with `Idempotent-Replayed: true` without calling the
+            paid upstream again. Same key with different bytes returns 422
+            (IDEMPOTENCY_KEY_REUSE); a still-executing key returns 409.
+            Records expire after 24h.
       requestBody:
         required: true
         content:
@@ -1408,10 +1445,85 @@ paths:
           description: MISSING_FILE
         "403":
           description: INVALID_TOKEN — room token missing or for another room
+        "409":
+          description: IDEMPOTENCY_CONFLICT — the same key is still executing; retry with backoff
+        "422":
+          description: IDEMPOTENCY_KEY_REUSE — the key was already used with different bytes
         "502":
           description: TRANSCRIBE_FAILED — upstream provider error
         "503":
           description: TRANSCRIBE_DISABLED — no provider configured
+
+  /api/rooms/{id}/sfu-token:
+    post:
+      tags: [Rooms]
+      summary: Mint a LiveKit credential for this room and user
+      description: >-
+        Authenticates with a room token (Bearer) rather than an account token:
+        an in-call client holds a room token, and the room token proves live
+        admission to exactly this room — the authority needed for a media
+        credential scoped to the same room and user. Waiting-room tokens are
+        rejected. Deliberately outside the idempotency middleware: every call
+        mints a fresh full-lifetime token, so replaying a stored response
+        would hand out an expiring credential. Minting also marks the room
+        SFU-active (best effort) so later joiners converge on the relay.
+      security:
+        - RoomTokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Relay URL and JWT scoped to this room and user
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, token]
+                properties:
+                  url:
+                    type: string
+                  token:
+                    type: string
+        "403":
+          description: INVALID_TOKEN — room token missing, expired, waiting, or for another room
+        "404":
+          description: SFU_DISABLED — LiveKit is not configured; stay on mesh
+        "500":
+          description: INTERNAL_ERROR
+
+  /api/rooms/{id}/sfu-status:
+    get:
+      tags: [Rooms]
+      summary: Whether this room's media has moved to the SFU
+      description: >-
+        Same room-token auth as sfu-token. Fails open to `{ active: false }`
+        when Redis is unavailable — an unknown status must never strand a
+        client waiting on a relay that may not exist.
+      security:
+        - RoomTokenAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Relay-active flag
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [active]
+                properties:
+                  active:
+                    type: boolean
+        "403":
+          description: INVALID_TOKEN — room token missing, expired, waiting, or for another room
 
   /api/rooms/{id}/state:
     get:
@@ -1507,6 +1619,42 @@ paths:
           description: Joined room, returns room token
         "403":
           description: Room locked or passcode required
+
+  /api/rooms/{id}/refresh-token:
+    post:
+      tags: [Rooms]
+      summary: Mint a replacement room token for a call in progress
+      description: >-
+        Room tokens expire (JWT_ROOM_EXPIRY, 2h by default) and the server
+        re-verifies them on every WebSocket message, so a long call renews here
+        instead of being dropped at the deadline. Requires LIVE admission —
+        current peer role or host, existing room, not kicked. Historical
+        membership is intentionally insufficient: it admits past participants so
+        they can read a recap, which is not permission to hold a live-call token.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Replacement room token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  roomToken:
+                    type: string
+        "400":
+          description: INVALID_ROOM_ID
+        "403":
+          description: KICKED or NOT_IN_CALL — removed from, or not currently in, this call
+        "404":
+          description: ROOM_NOT_FOUND
 
   /api/ice-servers:
     get:
@@ -1622,6 +1770,19 @@ paths:
           required: true
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: >-
+            Optional client-generated UUID. A retried request with the same key
+            and identical body replays the stored notes with
+            `Idempotent-Replayed: true` instead of inserting a duplicate notes
+            row. Same key with a different body returns 422
+            (IDEMPOTENCY_KEY_REUSE); a still-executing key returns 409.
+            Records expire after 24h; keys are scoped per user and per endpoint.
       requestBody:
         required: false
         content:
@@ -1648,6 +1809,10 @@ paths:
           description: No transcript yet (captions were never on)
         "403":
           description: Not a room participant
+        "409":
+          description: IDEMPOTENCY_CONFLICT — the same key is still executing; retry with backoff
+        "422":
+          description: IDEMPOTENCY_KEY_REUSE — the key was already used with a different body
 
   /api/account/export:
     post:
@@ -1815,6 +1980,13 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    RoomTokenAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Room-scoped JWT (the same token used for the WebSocket upgrade), not an
+        account access token. Used by the in-call caption upload.
 
   schemas:
     AuthResponse:

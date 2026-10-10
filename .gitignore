@@ -1,0 +1,58 @@
+# Cross-cutting ignores. Each package (backend/, frontend/, e2e/) also has its
+# own .gitignore; this file catches what spans them, so a new package or a
+# script run from the repo root cannot leak artifacts in.
+#
+# Coverage output is here on purpose: backend/coverage/ was committed once, in
+# the initial commit, and had to be removed again in 7b2676b. Generated reports
+# are large, churn on every run, and hide real changes in review.
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+build/
+*.tsbuildinfo
+
+# Test, coverage and rig artifacts
+coverage/
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
+# Environment files. The committed .env.example / .env.sample templates are the
+# documented contract for configuration, so they stay.
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.*.example
+!.env.*.sample
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor cruft (the tracked .vscode/ is deliberate shared config, so it is not
+# ignored here — only these per-developer leftovers are)
+.idea/
+*.sw?
+*.swo
+*~
+*.orig
+*.rej
+
+# Agent / scratch dirs
+.kilo/
+.kilocode/

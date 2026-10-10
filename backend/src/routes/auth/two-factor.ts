@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 import { hashToken } from '../../utils/crypto.js';
 import { Router, Request, Response } from 'express';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { redis } from '../../config/redis.js';
+import { redis, redisFailOpen } from '../../config/redis.js';
 import { authenticateToken, requireUser } from '../../middleware/auth.js';
 import { db } from '../../db/index.js';
 import { backupCodes, users } from '../../db/schema.js';
@@ -255,7 +255,14 @@ router.post('/2fa/validate', strictLimiter, async (req: Request, res: Response):
 
     const pendingHash = hashToken(pendingToken);
     const pendingKey = twoFactorPendingLoginKey(pendingHash);
-    const pendingUserId = await redis.get(pendingKey);
+    // Fail closed, not 500: the Redis copy is what makes the pending token
+    // single-use, so without it we reply "expired, try again" — a rejection the
+    // frontend can show — rather than trusting a token we can never invalidate.
+    const pendingUserId = await redisFailOpen<string | null>(
+      '2fa.pending.read',
+      () => redis.get<string>(pendingKey),
+      null,
+    );
     if (!pendingUserId || pendingUserId !== pendingPayload.userId) {
       res.status(401).json({ error: 'PENDING_TOKEN_EXPIRED' });
       return;
@@ -306,7 +313,15 @@ router.post('/2fa/validate', strictLimiter, async (req: Request, res: Response):
       }
 
       const replayKey = twoFactorUsedCodeKey(user.id, totp);
-      const replaySet = await redis.set(replayKey, '1', { ex: 60, nx: true });
+      // TOTP replay protection needs Redis; the pending-token check above has
+      // already established Redis is reachable, so this only guards a flaky
+      // mid-request failure — allow rather than lock the user out of a correct
+      // code (the code itself was verified against the secret above).
+      const replaySet = await redisFailOpen<string | null>(
+        '2fa.replay.set',
+        () => redis.set(replayKey, '1', { ex: 60, nx: true }),
+        'OK',
+      );
       if (!replaySet) {
         res.status(400).json({ error: 'CODE_ALREADY_USED' });
         return;
@@ -347,8 +362,12 @@ router.post('/2fa/validate', strictLimiter, async (req: Request, res: Response):
       return;
     }
 
-    await redis.del(pendingKey);
-    await redis.del(twoFactorValidateRateLimitKey(user.id));
+    await redisFailOpen('2fa.pending.clear', () => redis.del(pendingKey), undefined);
+    await redisFailOpen(
+      '2fa.rateLimit.clear',
+      () => redis.del(twoFactorValidateRateLimitKey(user.id)),
+      undefined,
+    );
 
     const loginResult = await completeSuccessfulLogin({
       req,

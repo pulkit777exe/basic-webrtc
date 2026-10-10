@@ -101,30 +101,6 @@ export const recordingSessions = pgTable("recording_sessions", {
 		}),
 ]);
 
-export const recordingTracks = pgTable("recording_tracks", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	sessionId: uuid("session_id"),
-	participantId: uuid("participant_id"),
-	status: varchar({ length: 20 }).default('pending').notNull(),
-	s3Key: varchar("s3_key", { length: 500 }),
-	durationMs: integer("duration_ms"),
-	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
-	fileSizeBytes: bigint("file_size_bytes", { mode: "number" }),
-	errorMessage: text("error_message"),
-	updatedAt: timestamp("updated_at", { mode: 'string' }).defaultNow(),
-}, (table) => [
-	foreignKey({
-			columns: [table.sessionId],
-			foreignColumns: [recordingSessions.id],
-			name: "recording_tracks_session_id_recording_sessions_id_fk"
-		}),
-	foreignKey({
-			columns: [table.participantId],
-			foreignColumns: [users.id],
-			name: "recording_tracks_participant_id_users_id_fk"
-		}),
-]);
-
 export const deletionRequests = pgTable("deletion_requests", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	userId: uuid("user_id"),

@@ -1,6 +1,9 @@
 import { store } from '@/store';
-import { localMediaAtom } from '@/store/atoms';
+import { localMediaAtom, sfuActiveAtom } from '@/store/atoms';
 import { RTCManager } from './rtc-manager';
+import { scopedLogger } from '@/lib/logger';
+
+const log = scopedLogger('RTC');
 
 type Signal = {
   type: string;
@@ -10,6 +13,13 @@ type Signal = {
 };
 
 export function handleSignal(signal: Signal): void {
+  // Relay mode: media travels over LiveKit, so mesh offers/answers/candidates
+  // — including stale in-flight ones from a just-completed migration — must
+  // not create peer connections. Roster/leave handling elsewhere is
+  // transport-agnostic and stays. Strict `=== true`: the atom is boolean, and
+  // strictness keeps this correct under test doubles that answer any atom
+  // with a truthy stub.
+  if (store.get(sfuActiveAtom) === true) return;
   if (signal.type === 'offer' && signal.from && signal.sdp) {
     const stream = store.get(localMediaAtom).stream;
     void (async () => {
@@ -18,7 +28,7 @@ export function handleSignal(signal: Signal): void {
         await RTCManager.setRemoteDescription(signal.from!, signal.sdp!);
         await RTCManager.answer(signal.from!);
       } catch (err) {
-        console.error('[RTC] offer handling failed', err);
+        log.error('offer handling failed', err);
       }
     })();
   } else if (signal.type === 'answer' && signal.from && signal.sdp) {
@@ -26,7 +36,7 @@ export function handleSignal(signal: Signal): void {
       try {
         await RTCManager.setRemoteDescription(signal.from!, signal.sdp!);
       } catch (err) {
-        console.error('[RTC] answer handling failed', err);
+        log.error('answer handling failed', err);
       }
     })();
   } else if (signal.type === 'ice' && signal.from && signal.candidate) {

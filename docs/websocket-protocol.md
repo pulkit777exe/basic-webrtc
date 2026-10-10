@@ -204,6 +204,8 @@ transcript/notes endpoints (`GET /api/rooms/:id/transcript`,
 |------|-----------|-------------|
 | `ping` | client→server | Keep-alive, refreshes participant TTL |
 | `pong` | server→client | Keep-alive response |
+| `token_refresh` | client→server | Replace this socket's room token (see below) |
+| `token_refresh_ack` | server→client | New room token accepted |
 | `join` | server→client | New participant joined |
 | `leave` | server→client | Participant left |
 | `error` | server→client | Error message |
@@ -258,8 +260,94 @@ Additional server-side throttles (independent of the burst limit):
 
 - `reaction` — max 1 per second per user (Redis `SET NX` key, validated against the emoji whitelist)
 - `caption` persistence — max 1 transcript insert per second per user
+- `waiting_room_status_check` — 5/second per connection (waiting sockets do not go through the admitted-socket path, and each check costs a Redis `ZRANGE`)
 
 When the limit is exceeded, the server sends `{ "type": "rate_limited" }` and drops the message.
+
+### What is never dropped
+
+`offer`, `answer`, `join`, `leave`, and the one-shot `admin_*` control messages
+are published to Redis directly rather than through the fan-out buffer. They are
+unrecoverable if lost — a dropped offer leaves a peer with no way to connect —
+and reordering them against the immediate local hop can hand a client newer
+state before older.
+
+Everything else is batched through a bounded queue that sheds the oldest entries
+under sustained pressure — on one of two lanes. Chat, captions, negotiation
+and remaining control share the signal lane; `media-state`, `audio-activity`
+and `active_speaker` ride a separate presence lane with its own queue and
+breaker, so a state burst cannot fill the buffer chat relies on. Durable
+content is persisted before it is published,
+so a shed message costs a live update rather than data. `ice` sits in the
+signal lane deliberately: candidates arrive continuously (up to 100/s per connection), the
+receiver tolerates losing one, and that volume would defeat the circuit
+breaker.
+
+### Per-connection limits
+
+Exempt signalling is metered per connection with token buckets so one noisy
+socket cannot starve the room:
+
+- `offer` / `answer` / `ice` — 100/second
+- `media-state`, `audio-activity` — 10/second
+- `ping` / `pong` — 10/second
+- **hard cap** — 500 messages/second across *all* types
+
+`ping`/`pong` are exempt from the *room* burst limit but are not free: each one
+costs a kick check plus a room-meta read, so an unmetered keep-alive turns into
+two Redis calls per message. 10/second is ~250x a real client heartbeat (1 per
+25s), so only deliberate flooding is dropped.
+
+All of the above is one table in `backend/src/websocket/handler.ts`
+(`MESSAGE_POLICY`), keyed by message type and holding all four decisions per type:
+the per-connection bucket, exemption from the room burst limit, whether the
+message bypasses the publish buffer, and which buffer lane it rides. This section summarises it; the code is the
+authority, and a test asserts every client-sendable type has an entry.
+
+Exceeding a per-type bucket drops the message silently (they are advisory).
+Exceeding the hard cap sends `rate_limited` and **closes the connection with
+4008** — the allowance refills once per second, so a legitimate client never
+gets near it.
+
+### Authorization
+
+The room token is verified on upgrade *and* re-verified on every inbound
+message (a local signature + expiry check, no Redis call). A socket therefore
+cannot outlive its token by simply omitting `ping`. The kick check also runs
+per message, and waiting-room sockets are subject to the same token check.
+
+On the heartbeat (`ping`, roughly every 25s) the server additionally checks that
+**the room still exists** and that **the account still has a live session** —
+a room token deliberately outlives the 15-minute access token, so without that
+check an account that logged out everywhere (or was revoked, changed its
+password, or reset 2FA) would keep its call open while its REST calls started
+failing. Losing every session closes the socket with 4005.
+
+**Renewing a token.** Because the token is checked per message, a call would end
+at the token's `exp` (`JWT_ROOM_EXPIRY`, 2h by default). The client therefore
+renews ahead of expiry:
+
+1. `POST /api/rooms/{id}/refresh-token` returns a new room token. It authenticates
+   with the **session access token** and requires **live** admission — current
+   peer role or host, room exists, not kicked. (Historical membership is
+   deliberately *not* enough: that admits past participants so they can read the
+   recap, which is not permission to hold a live-call token.)
+   The client refreshes its own access token first if it has expired, via
+   `POST /api/auth/refresh` (httpOnly cookie) — access tokens are short-lived
+   next to room tokens.
+2. The client sends `{"type":"token_refresh","roomToken":"…"}` on the live socket.
+3. The server accepts it only if the token is valid, unexpired, for the same user
+   and room, and is not a waiting-room token — then it becomes the socket's token
+   and replies `token_refresh_ack`. Anything else is rejected and the socket
+   keeps the token it had.
+
+If a tab sleeps through the renewal, the server closes with `token_expired` /
+4004. The client then fetches a replacement and reconnects with it, showing the
+"please rejoin" message only if that also fails.
+
+`token_refresh` is exempt from the per-room burst limit — a busy room must not
+be able to starve renewal, since the client would silently keep the old token
+and the call would still end at expiry.
 
 ---
 
@@ -271,4 +359,23 @@ When the limit is exceeded, the server sends `{ "type": "rate_limited" }` and dr
 | 4002 | Not authorized for this room |
 | 4003 | Kicked by host/co-host |
 | 4004 | Room token expired (rejoin to get a fresh token) |
+| 4005 | Account has no live session (logged out or revoked everywhere) |
+| 4008 | Rate limit exceeded (flooding; connection closed) |
+| 4009 | Room is full at connect time (`maxParticipants` reached) |
 | 1001 | Server shutting down |
+| 1011 | Connection setup aborted (internal error) |
+| 1000 | Normal closure. **Not** used for a refusal — see below. |
+
+**A refusal must name itself in the close code.** Every setup-time rejection
+(user not found, room ended, room full) used to be a bare `close()`, which sends
+1000 "Normal Closure". The client cannot tell that from a clean shutdown, so it
+entered its reconnect loop and eventually reported a network fault that never
+happened. `closeWith()` now attaches 4001 / 4002 / 4009 and marks the socket
+handled, so the close handler does not also run the disconnect path for a
+connection that never joined a room.
+
+The client classifies codes in `frontend/src/lib/connection.ts`
+(`classifyClose`): only `retry` burns a reconnect attempt, 4004 recovers a fresh
+room token, and 4001/4002/4003/4005/4009 are terminal with a message that says
+what happened. An unrecognised code defaults to `retry`, so a new server-side
+code strands nobody.

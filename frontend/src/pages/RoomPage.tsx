@@ -20,6 +20,7 @@ import {
   roomLockedAtom,
   roomTokenAtom,
   screenShareEnabledAtom,
+  sfuActiveAtom,
   userAtom,
   peerListAtom,
   pinnedParticipantsAtom,
@@ -41,6 +42,18 @@ import {
   startWhisperChunkCaptions,
 } from "@/lib/live-captions";
 import { RTCManager } from "@/lib/rtc-manager";
+import { AudioActivityMonitor } from "@/lib/audio-activity";
+import { startIceRefresh } from "@/lib/ice-refresh";
+import { AdaptiveQualityController } from "@/lib/adaptive-quality";
+import { MESH_WARN_THRESHOLD } from "@/lib/mesh-limits";
+import {
+  connectSfu,
+  disconnectSfu,
+  fetchSfuStatus,
+  fetchSfuToken,
+} from "@/lib/sfu";
+import { createSfuMigrationController, type SfuMigrationController } from "@/lib/sfu-migration";
+import { maxLayerForBudget } from "@/lib/simulcast";
 import { MediaManager } from "@/lib/media-manager";
 import { RoomVideoGrid } from "@/components/room/RoomVideoGrid";
 import { RoomControlBar } from "@/components/room/RoomControlBar";
@@ -120,6 +133,16 @@ export function RoomPage() {
   const chatUnread = useAtomValue(chatUnreadAtom);
   const participants = useAtomValue(participantsAtom);
   const setParticipants = useSetAtom(participantsAtom);
+  const sfuActive = useAtomValue(sfuActiveAtom);
+  // SFU migration choreography (guards, ordering, fallback pins) lives in
+  // lib/sfu-migration.ts with 14 unit tests; the page only owns *when* it
+  // runs. Created in the join effect (effects, never render), fresh per room.
+  const sfuMigrationRef = useRef<SfuMigrationController | null>(null);
+  // Thin trigger: the join effect creates the controller (effects, never
+  // render — its deps close over refs), and join + growth call through here.
+  const ensureSfuTransport = useCallback(() => {
+    void sfuMigrationRef.current?.ensure();
+  }, []);
   const setChat = useSetAtom(chatAtom);
   const setChatUnread = useSetAtom(chatUnreadAtom);
   const setChatReactions = useSetAtom(chatReactionsAtom);
@@ -172,6 +195,26 @@ export function RoomPage() {
 
     cleanedUpRef.current = false;
     muteOnJoinCheckedRef.current = false;
+    // Fresh controller per session (created here, in an effect — its deps
+    // close over refs, which render may not touch).
+    sfuMigrationRef.current = createSfuMigrationController({
+      getRoomId: () => roomId,
+      isCleanedUp: () => cleanedUpRef.current,
+      isSfuActive: () => store.get(sfuActiveAtom),
+      getParticipantCount: () => store.get(participantsAtom).length,
+      getLiveStream: () => store.get(localMediaAtom).stream,
+      fetchSfuStatus,
+      fetchSfuToken,
+      connectSfu,
+      teardownMesh: () => RTCManager.disconnectAll(),
+      reconnectSignaling: () => {
+        WSManager.disconnect();
+        const token = WSManager.getRoomToken();
+        if (token) WSManager.connect(token);
+      },
+      notifyInfo: (message) => toast.info(message),
+      notifyError: (message) => toast.error(message),
+    });
 
     RTCManager.init().then(async () => {
       if (cleanedUpRef.current) return;
@@ -215,6 +258,12 @@ export function RoomPage() {
           handRaised: false,
         },
       ]);
+      // Transport decision for this session, after the roster reset above so
+      // the count reflects this room (not the previous one): a room already
+      // relayed (flag set by an earlier occupant) takes us straight to the
+      // SFU; otherwise the roster-growth effect below migrates us if the room
+      // crosses scale.
+      void ensureSfuTransport();
     });
     setChat([]);
     setChatUnread(false);
@@ -226,6 +275,7 @@ export function RoomPage() {
     return () => {
       cleanedUpRef.current = true;
       WSManager.disconnect();
+      disconnectSfu();
       RTCManager.disconnectAll();
       MediaManager.stop();
       setPinnedParticipants(new Set());
@@ -258,6 +308,7 @@ export function RoomPage() {
     setPinnedChatMessage,
     setPinnedParticipants,
     setRecording,
+    ensureSfuTransport,
   ]);
 
   useEffect(() => {
@@ -349,71 +400,94 @@ export function RoomPage() {
     });
   }, [localMedia.audio, localMedia.screen, localMedia.video]);
 
-  const audioActivityRef = useRef<{
-    context: AudioContext;
-    analyser: AnalyserNode;
-    source: MediaStreamAudioSourceNode | null;
-    animationFrame: number;
-  } | null>(null);
+  /**
+   * Speaking detection. One AudioContext per call session; the monitor keeps
+   * its run state in sync with the *current* mic state. The previous version
+   * suspended/resumed from the effect cleanup, which closed over the previous
+   * render's `localMedia.audio` — so muting resumed the context and unmuting
+   * suspended it, silently killing speaking detection after the first toggle.
+   *
+   * The create effect is declared first so `audioActivityRef` is populated
+   * before the stream/enabled effects below run on mount.
+   */
+  const audioActivityRef = useRef<AudioActivityMonitor | null>(null);
 
   useEffect(() => {
-    if (!localMedia.stream) return;
-    const audioTrack = localMedia.stream.getAudioTracks()[0];
-    if (!audioTrack) return;
-
-    // Create AudioContext and AnalyserNode once per session
-    if (!audioActivityRef.current) {
-      const context = new AudioContext();
-      const analyser = context.createAnalyser();
-      analyser.fftSize = 256;
-      audioActivityRef.current = { context, analyser, source: null, animationFrame: 0 };
-    }
-
-    const { context, analyser } = audioActivityRef.current;
-
-    // Disconnect previous source if any
-    if (audioActivityRef.current.source) {
-      audioActivityRef.current.source.disconnect();
-    }
-
-    const activityStream = new MediaStream([audioTrack]);
-    const source = context.createMediaStreamSource(activityStream);
-    source.connect(analyser);
-    audioActivityRef.current.source = source;
-
-    const levels = new Uint8Array(analyser.frequencyBinCount);
-    let previous = 0;
-
-    const tick = () => {
-      if (!localMedia.audio) {
-        audioActivityRef.current!.animationFrame = requestAnimationFrame(tick);
-        return;
-      }
-      analyser.getByteFrequencyData(levels);
-      const total = levels.reduce((acc, value) => acc + value, 0);
-      const level = Math.min(1, total / levels.length / 120);
-      const speaking = level > 0.11;
-      const now = performance.now();
-      if (now - previous >= 250) {
-        previous = now;
-        WSManager.send({ type: "audio-activity", level, speaking });
-      }
-      audioActivityRef.current!.animationFrame = requestAnimationFrame(tick);
-    };
-
-    audioActivityRef.current.animationFrame = requestAnimationFrame(tick);
-
+    const monitor = new AudioActivityMonitor({
+      send: (message) => WSManager.send(message),
+    });
+    audioActivityRef.current = monitor;
     return () => {
-      cancelAnimationFrame(audioActivityRef.current!.animationFrame);
-      source.disconnect();
-      // Suspend when muted, resume when unmuted — don't close the context
-      if (!localMedia.audio) {
-        context.suspend().catch(() => {});
-      } else {
-        context.resume().catch(() => {});
-      }
+      monitor.dispose();
+      audioActivityRef.current = null;
     };
-  }, [localMedia.audio, localMedia.stream]);
+  }, []);
+
+  useEffect(() => {
+    audioActivityRef.current?.setStream(localMedia.stream ?? null);
+  }, [localMedia.stream]);
+
+  useEffect(() => {
+    audioActivityRef.current?.setEnabled(localMedia.audio);
+  }, [localMedia.audio]);
+
+  // Roster growth converges the room onto one transport: whoever crosses the
+  // threshold first mints (marking the room), and everyone else follows on
+  // their next roster change. No down-migration by design.
+  useEffect(() => {
+    if (!roomId || participants.length <= 0) return;
+    void ensureSfuTransport();
+  }, [participants.length, roomId, ensureSfuTransport]);
+
+  // TURN credentials are short-lived (300s) and are invalidated outright by a
+  // network change, so renew them for as long as this call is open.
+  useEffect(() => {
+    // Mesh-only: the relay manages its own ICE/TURN server-side.
+    if (sfuActive) return;
+    const handle = startIceRefresh(() => RTCManager.refreshIceConfiguration());
+    return () => handle.stop();
+  }, [sfuActive]);
+
+  // Mesh calls send the same camera stream to every peer, so uplink grows with
+  // the room. Step the capture resolution down when the link cannot carry it,
+  // and back up when it can. Mesh-only: the relay runs its own layers.
+  useEffect(() => {
+    if (sfuActive) return;
+    const controller = new AdaptiveQualityController({
+      getSamples: () => RTCManager.sampleOutgoingBitrate(),
+      getSenderCount: () => Math.max(1, RTCManager.getVideoSenderCount()),
+      applyLevel: async (level) => {
+        // Capture resolution bounds the pixels; the encoder cap bounds the
+        // stream congestion control reacts to. Both, together.
+        await MediaManager.applyVideoQuality(level);
+        await RTCManager.setVideoMaxBitrate(level.maxBitrateKbps * 1000);
+        // Simulcast sends one layer, and only the one the app activates. The
+        // budget this level settled on is also the ceiling on which layer is
+        // worth encoding — sending a 1080p layer out of a 360p capture spends
+        // uplink on a resolution nobody can see.
+        await RTCManager.updateSimulcastLayers(maxLayerForBudget(level.maxBitrateKbps));
+      },
+      getCap: () => MediaManager.getVideoQualityCap(),
+      isScreenSharing: () => store.get(localMediaAtom).screen,
+    });
+    controller.start();
+    return () => controller.stop();
+  }, [sfuActive]);
+
+  // Mesh topology warning. Every participant encodes and uploads a separate
+  // stream to every other one, so CPU and uplink climb steeply past ~6 people;
+  // warn once per call rather than pretending the room is fine. Skipped on the
+  // relay, where uplink is flat by construction.
+  const meshWarningShownRef = useRef(false);
+  useEffect(() => {
+    if (meshWarningShownRef.current) return;
+    if (sfuActive) return;
+    if (participants.length <= MESH_WARN_THRESHOLD) return;
+    meshWarningShownRef.current = true;
+    toast.warning(
+      `${participants.length} people in this call — video may stutter above ${MESH_WARN_THRESHOLD}.`
+    );
+  }, [participants.length, sfuActive]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -564,6 +638,7 @@ export function RoomPage() {
           stream: localMedia.stream,
           roomId,
           roomToken,
+          getRoomToken: () => WSManager.getRoomToken(),
           shouldRun: () => captionsEnabledRef.current,
           onFinalText: sendCaption,
         }) ?? undefined;

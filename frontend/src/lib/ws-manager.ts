@@ -22,6 +22,7 @@ import {
   roomAtom,
   roomLockedAtom,
   screenShareEnabledAtom,
+  sfuActiveAtom,
   speakingPeersAtom,
   uiAtom,
   userAtom,
@@ -33,7 +34,12 @@ import { handleSignal } from "./signal-handler";
 import { playHandRaiseSound } from "./hand-raise-sound";
 import { appendFloatingReaction } from "./reactions";
 import { signalingWsUrl } from "@/config/api";
-import { MAX_RECONNECT, nextReconnectDelay } from "./connection";
+import { MAX_RECONNECT, classifyClose, nextReconnectDelay } from "./connection";
+import { scopedLogger } from "@/lib/logger";
+
+const log = scopedLogger("WS");
+import { refreshDelayMs, decodeRoomToken } from "./room-token";
+import { api } from "@/lib/api";
 
 type Signal =
   | { type: "offer"; to: string; sdp: RTCSessionDescriptionInit; from?: string }
@@ -103,6 +109,8 @@ type Signal =
   | { type: "hand_raise"; raised: boolean; from?: string; timestamp?: number | null }
   | { type: "ping" }
   | { type: "pong" }
+  | { type: "token_refresh"; roomToken: string }
+  | { type: "token_refresh_ack" }
   | { type: "token_expired" }
   | { type: "error"; message: string }
   | { type: "kicked" }
@@ -120,6 +128,133 @@ let intentionalDisconnect = false;
 let recordingNoticeShown = false;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let lastRoomToken: string | null = null;
+let tokenRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let tokenRefreshInFlight = false;
+
+/**
+ * Bumped on every explicit connect and on disconnect.
+ *
+ * Token renewal and expiry recovery are async: without a generation check, a
+ * request started for room A could resolve after the user left and overwrite
+ * `lastRoomToken` with room A's token, or reconnect a call they already left.
+ * Every async token path captures this before awaiting and verifies it after.
+ */
+let sessionGeneration = 0;
+
+/**
+ * Renew the room token before it expires.
+ *
+ * The server re-verifies the token on every message, so at `exp` it closes the
+ * socket. Fetching a replacement and handing it to the live socket keeps a long
+ * call connected; the server only accepts a new token that is valid, unexpired,
+ * and scoped to the same user and room.
+ */
+function scheduleTokenRefresh(roomToken: string): void {
+  if (tokenRefreshTimer) { clearTimeout(tokenRefreshTimer); tokenRefreshTimer = null; }
+  const delay = refreshDelayMs(roomToken);
+  if (delay === null) return; // unparseable: nothing sensible to schedule
+  tokenRefreshTimer = setTimeout(() => {
+    tokenRefreshTimer = null;
+    void renewRoomToken(roomToken);
+  }, delay);
+}
+
+/**
+ * Adopt a freshly minted room token, if the session it belongs to is still live.
+ *
+ * Single-sourced because it is the guard that matters most and the easiest to get
+ * subtly wrong in one copy: a token minted for room A must never be handed to room
+ * B's socket, and a token fetched for a call the user has left must never be
+ * adopted at all. `renewRoomToken` and `recoverFromExpiredToken` both reach here
+ * from an async gap, and both were repeating the check.
+ *
+ * Returns false when the token was discarded, so callers stop rather than
+ * continue with a token that belongs to a dead session.
+ */
+function adoptRoomToken(roomToken: string, generation: number): boolean {
+  if (generation !== sessionGeneration || intentionalDisconnect) return false;
+  lastRoomToken = roomToken;
+  scheduleTokenRefresh(roomToken);
+  return true;
+}
+
+async function renewRoomToken(currentToken: string): Promise<void> {
+  if (tokenRefreshInFlight) return;
+  const roomId = decodeRoomToken(currentToken)?.roomId;
+  if (!roomId) return;
+  const generation = sessionGeneration;
+
+  tokenRefreshInFlight = true;
+  try {
+    const { roomToken } = await api.refreshRoomToken(roomId);
+    if (!roomToken) throw new Error("no roomToken in response");
+    // The user may have left or switched rooms while this was in flight.
+    if (!adoptRoomToken(roomToken, generation)) return;
+    // Hand it to the live socket when connected; otherwise the next connect()
+    // picks it up from lastRoomToken.
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "token_refresh", roomToken }));
+    }
+  } catch (error) {
+    if (generation !== sessionGeneration || intentionalDisconnect) return;
+    log.warn("room token refresh failed, retrying shortly", error);
+    // Back off rather than spin: the current token is still valid for a while.
+    if (tokenRefreshTimer) clearTimeout(tokenRefreshTimer);
+    tokenRefreshTimer = setTimeout(() => {
+      tokenRefreshTimer = null;
+      void renewRoomToken(currentToken);
+    }, 30_000);
+  } finally {
+    tokenRefreshInFlight = false;
+  }
+}
+
+let expiryRecoveryInFlight = false;
+/** Fresh token waiting for the close handler to reconnect with it. */
+let pendingReconnectToken: string | null = null;
+
+/**
+ * Last-resort recovery when the server says the room token is no longer valid
+ * (a suspended tab can sleep through the proactive refresh). Fetch a fresh one
+ * and reconnect; only surface the "please rejoin" message if that fails too.
+ */
+async function recoverFromExpiredToken(): Promise<void> {
+  if (expiryRecoveryInFlight || intentionalDisconnect) return;
+  const roomId = lastRoomToken ? decodeRoomToken(lastRoomToken)?.roomId : null;
+  if (!roomId) {
+    store.set(roomAtom, null);
+    toast.error("Your session has expired. Please rejoin the room.");
+    return;
+  }
+
+  expiryRecoveryInFlight = true;
+  const generation = sessionGeneration;
+  try {
+    const { roomToken } = await api.refreshRoomToken(roomId);
+    if (!roomToken) throw new Error("no roomToken in response");
+    // Never resurrect a call the user left, and never hand room A's token to
+    // room B's socket.
+    if (!adoptRoomToken(roomToken, generation)) return;
+    pendingReconnectToken = roomToken;
+    // Only close if it is actually open: a socket that already closed would make
+    // close() a no-op, no event would fire, and the pending token would sit
+    // there for some later 4004 to pick up — potentially long expired.
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      // Let onclose do the reconnect so the close and the new socket are ordered.
+      ws.close(4004, "token expired");
+    } else {
+      pendingReconnectToken = null;
+      WSManager.connect(roomToken);
+    }
+  } catch (error) {
+    if (generation !== sessionGeneration || intentionalDisconnect) return;
+    log.error("could not renew expired room token", error);
+    store.set(roomAtom, null);
+    toast.error("Your session has expired. Please rejoin the room.");
+  } finally {
+    expiryRecoveryInFlight = false;
+  }
+}
 
 // Pending subscriptions for role assignment when roomAtom is not yet available
 // Map<userId, unsubscribe>
@@ -220,9 +355,18 @@ let pongTimeout: ReturnType<typeof setTimeout> | null = null;
 let lastPongReceived = true;
 
 export const WSManager = {
-  connect(roomToken: string) {
+  connect(roomToken: string, options: { isRetry?: boolean } = {}) {
     intentionalDisconnect = false;
     lastRoomToken = roomToken;
+    // A new session invalidates any token work still in flight for a previous
+    // room. A retry of the *same* session does not bump, so a slow renewal
+    // issued before a dropped connection is not thrown away.
+    if (!options.isRetry) sessionGeneration += 1;
+    // Only an explicit connect starts a fresh retry budget. Without this, a
+    // disconnect left reconnectAttempts at MAX_RECONNECT and a brand new room
+    // got no retries at all if its first connection failed.
+    if (!options.isRetry) reconnectAttempts = 0;
+    scheduleTokenRefresh(roomToken);
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -249,7 +393,7 @@ export const WSManager = {
       pingInterval = setInterval(() => {
         if (!lastPongReceived) {
           // Previous ping was never answered — connection is dead
-          console.warn("[WS] no pong received, connection considered dead");
+          log.warn("no pong received, connection considered dead");
           if (ws) ws.close(4000, "pong timeout");
           return;
         }
@@ -259,7 +403,7 @@ export const WSManager = {
         }
         pongTimeout = setTimeout(() => {
           if (!lastPongReceived && ws?.readyState === WebSocket.OPEN) {
-            console.warn("[WS] pong timeout after ping, closing");
+            log.warn("pong timeout after ping, closing");
             ws.close(4000, "pong timeout");
           }
         }, 10000);
@@ -281,8 +425,13 @@ export const WSManager = {
         }
 
         if (data.type === "token_expired") {
-          store.set(roomAtom, null);
-          toast.error("Your session has expired. Please rejoin the room.");
+          // The server rejected our token. Try to recover transparently before
+          // bothering the user: fetch a replacement and reconnect with it.
+          void recoverFromExpiredToken();
+          return;
+        }
+
+        if (data.type === "token_refresh_ack") {
           return;
         }
 
@@ -342,12 +491,16 @@ export const WSManager = {
           // Resolve participant role (handles both sync and async cases)
           resolveParticipantRole(data.user.id);
           
-          // Only the peer with lexicographically greater userId creates the offer
+          // Only the peer with lexicographically greater userId creates the offer.
+          // Skipped entirely in relay mode: media travels over LiveKit, so a
+          // mesh offer here would build a parallel connection to nowhere.
+          // Strict comparison for the same reason as in signal-handler.
           const currentUserId = store.get(userAtom)?.id;
           if (
             data.user.id !== currentUserId &&
             currentUserId != null &&
-            currentUserId > data.user.id
+            currentUserId > data.user.id &&
+            store.get(sfuActiveAtom) !== true
           ) {
             const localMedia = store.get(localMediaAtom);
             const stream = localMedia?.stream ?? null;
@@ -356,7 +509,7 @@ export const WSManager = {
                 const { created } = await RTCManager.createPeer(data.user.id, stream);
                 if (created) await RTCManager.offer(data.user.id);
               } catch (err) {
-                console.error("[RTC] initial offer failed", err);
+                log.error("initial offer failed", err);
               }
             })();
           }
@@ -602,7 +755,7 @@ export const WSManager = {
           // Full list refresh (after admit/reject/admit-all)
           store.set(waitingRoomParticipantsAtom, data.waitingRoom);
         } else if (data.type === "error") {
-          console.error("[WS]", data.message);
+          log.error("server error message", data.message);
         } else if (data.type === "kicked") {
           store.set(roomAtom, null);
           store.set(uiAtom, (ui) => ({
@@ -617,7 +770,7 @@ export const WSManager = {
 
         handleSignal(data as Signal);
       } catch (error) {
-        console.error("[WS] parse", error);
+        log.error("parse", error);
       }
     };
 
@@ -628,7 +781,7 @@ export const WSManager = {
       if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
       if (pongTimeout) { clearTimeout(pongTimeout); pongTimeout = null; }
       if (event.code !== 1000 || !event.wasClean) {
-        console.error("[WS] socket closed", {
+        log.error("socket closed", {
           code: event.code,
           reason: event.reason || "(none)",
           wasClean: event.wasClean,
@@ -636,7 +789,35 @@ export const WSManager = {
         });
       }
       if (intentionalDisconnect) return;
+      const outcome = classifyClose(event.code);
+      if (outcome.kind === "terminal") {
+        // Nothing about retrying can clear this: the room ended, the host removed
+        // this user, the account's session ended, or the room is full. Retrying
+        // only delays the one message that explains what happened, and then
+        // reports a network problem that did not occur.
+        pendingReconnectToken = null;
+        store.set(connectionStatusAtom, outcome.status);
+        toast.error(outcome.reason);
+        return;
+      }
+      if (outcome.kind === "recover-token") {
+        // The server rejected our room token. Reconnect with a fresh one if
+        // recovery already fetched it; otherwise start recovery. Either way, do
+        // NOT run the normal backoff loop here: it would replay the same
+        // expired token and bounce straight back to 4004.
+        const pending = pendingReconnectToken;
+        pendingReconnectToken = null;
+        if (pending) {
+          WSManager.connect(pending);
+        } else {
+          void recoverFromExpiredToken();
+        }
+        return;
+      }
       const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+      // Any other close path abandons a pending recovery token: it was set for
+      // this specific 4004 and must not be reused by a later one.
+      pendingReconnectToken = null;
       if (reconnectAttempts >= MAX_RECONNECT) {
         store.set(connectionStatusAtom, "disconnected");
         toast.error(
@@ -663,12 +844,14 @@ export const WSManager = {
       const delay = nextReconnectDelay(reconnectAttempts - 1);
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
-        WSManager.connect(roomToken);
+        // Use the latest token: a refresh may have replaced the one this socket
+        // was opened with, and replaying a stale token would 4004 straight back.
+        WSManager.connect(lastRoomToken ?? roomToken, { isRetry: true });
       }, delay);
     };
 
     ws.onerror = () => {
-      console.error("[WS] connection error", { url });
+      log.error("connection error", { url });
     };
   },
 
@@ -680,9 +863,31 @@ export const WSManager = {
     return false;
   },
 
+  /**
+   * The token this session is currently authorized by.
+   *
+   * Anything that authenticates against the backend *during* a call must read
+   * this rather than capture a token at setup: room tokens are renewed
+   * mid-call, and a long-lived uploader holding the original string would keep
+   * presenting an expired one.
+   */
+  getRoomToken(): string | null {
+    return lastRoomToken;
+  },
+
+  /** True when the signaling socket can actually deliver a message right now. */
+  isConnected(): boolean {
+    return ws?.readyState === WebSocket.OPEN;
+  },
+
   disconnect() {
     intentionalDisconnect = true;
     recordingNoticeShown = false;
+    pendingReconnectToken = null;
+    // Invalidate any token renewal/expiry recovery still in flight, so it
+    // cannot reconnect a call the user just left.
+    sessionGeneration += 1;
+    if (tokenRefreshTimer) { clearTimeout(tokenRefreshTimer); tokenRefreshTimer = null; }
     // Reset connection state so the next join starts from a clean "connecting".
     store.set(connectionStatusAtom, "connecting");
     store.set(reconnectAttemptAtom, 0);
@@ -724,6 +929,6 @@ if (typeof window !== "undefined") {
     }
     reconnectAttempts = 0;
     store.set(reconnectAttemptAtom, 0);
-    WSManager.connect(lastRoomToken);
+    WSManager.connect(lastRoomToken, { isRetry: true });
   });
 }

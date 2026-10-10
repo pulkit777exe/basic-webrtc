@@ -6,7 +6,7 @@ import sharp from 'sharp';
 import { Router, Request, Response } from 'express';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { createAndSendOtp, verifyOtp } from '../../services/otp.js';
-import { redis } from '../../config/redis.js';
+import { redis, redisFailOpen } from '../../config/redis.js';
 import { authenticateToken, requireUser } from '../../middleware/auth.js';
 import { db } from '../../db/index.js';
 import { backupCodes, users } from '../../db/schema.js';
@@ -51,7 +51,14 @@ router.get('/me', authenticateToken, async (req: Request, res: Response): Promis
       .select({ count: sql<number>`count(*)` })
       .from(backupCodes)
       .where(and(eq(backupCodes.userId, userId), isNull(backupCodes.usedAt)));
-    const pendingEmail = await redis.get(`email:pending:${userId}`);
+    // /me is what the frontend calls to verify a freshly issued token: it must
+    // answer with the user even when Redis is down, so the pending-email lookup
+    // degrades to "none" instead of failing the request.
+    const pendingEmail = await redisFailOpen<string | null>(
+      'me.pendingEmail',
+      () => redis.get<string>(`email:pending:${userId}`),
+      null,
+    );
 
     res.json({
       user: {

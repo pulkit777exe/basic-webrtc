@@ -10,6 +10,7 @@ import {
   bigint,
   index,
   jsonb,
+  primaryKey,
 } from 'drizzle-orm/pg-core';
 import { InferSelectModel, InferInsertModel, desc } from 'drizzle-orm';
 
@@ -116,18 +117,6 @@ export const recordingSessions = pgTable('recording_sessions', {
   participantCount: integer('participant_count').notNull(),
   outputPath: varchar('output_path', { length: 500 }),
   createdAt: timestamp('created_at').defaultNow(),
-});
-
-export const recordingTracks = pgTable('recording_tracks', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  sessionId: uuid('session_id').references(() => recordingSessions.id),
-  participantId: uuid('participant_id').references(() => users.id),
-  status: varchar('status', { length: 20 }).notNull().default('pending'),
-  s3Key: varchar('s3_key', { length: 500 }),
-  durationMs: integer('duration_ms'),
-  fileSizeBytes: bigint('file_size_bytes', { mode: 'number' }),
-  errorMessage: text('error_message'),
-  updatedAt: timestamp('updated_at').defaultNow(),
 });
 
 // Caption finals persisted per room; feeds the local meeting-notes engine.
@@ -313,6 +302,32 @@ export const deletionRequests = pgTable(
   }),
 );
 
+// Idempotency records for REST POST writes. `userId` holds a *scoped* identity,
+// not necessarily a users.id: `user:<uuid>` for session-authenticated routes,
+// `room:<roomId>:<userId>` for room-token routes (transcribe). The composite PK
+// on (user_id, endpoint, key) means two users sharing one key UUID never
+// collide. `endpoint` is the route template (e.g. `POST /api/rooms/:id/...`),
+// and the request hash additionally covers route params, so the same key used
+// against two different rooms is a hash mismatch (422), not a false replay.
+export const idempotencyKeys = pgTable(
+  'idempotency_keys',
+  {
+    userId: text('user_id').notNull(),
+    endpoint: varchar('endpoint', { length: 255 }).notNull(),
+    key: varchar('key', { length: 128 }).notNull(),
+    requestHash: varchar('request_hash', { length: 64 }).notNull(),
+    status: varchar('status', { length: 16 }).notNull().default('pending'),
+    responseStatus: integer('response_status'),
+    responseBody: jsonb('response_body').$type<unknown>(),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    expiresAt: timestamp('expires_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.endpoint, table.key], name: 'idempotency_keys_pkey' }),
+    index('idempotency_keys_expires_at_idx').on(table.expiresAt),
+  ],
+);
+
 export type User = InferSelectModel<typeof users>;
 export type InsertUser = InferInsertModel<typeof users>;
 export type Room = InferSelectModel<typeof rooms>;
@@ -335,3 +350,5 @@ export type PasswordResetToken = InferSelectModel<typeof passwordResetTokens>;
 export type InsertPasswordResetToken = InferInsertModel<typeof passwordResetTokens>;
 export type DeletionRequest = InferSelectModel<typeof deletionRequests>;
 export type InsertDeletionRequest = InferInsertModel<typeof deletionRequests>;
+export type IdempotencyKey = InferSelectModel<typeof idempotencyKeys>;
+export type InsertIdempotencyKey = InferInsertModel<typeof idempotencyKeys>;

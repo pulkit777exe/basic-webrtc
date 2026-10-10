@@ -3,7 +3,7 @@ import type { Request } from 'express';
 import { and, desc, eq, gt, inArray, isNull } from 'drizzle-orm';
 import geoip from 'geoip-lite';
 import { UAParser } from 'ua-parser-js';
-import { redis, deleteRefreshSession } from '../config/redis.js';
+import { redis, redisFailOpen, deleteRefreshSession } from '../config/redis.js';
 import { db } from '../db/index.js';
 import { userSessions } from '../db/schema.js';
 
@@ -230,11 +230,27 @@ export async function createSessionForAccessToken(
     })
     .returning({ id: userSessions.id });
 
-  await redis.set(sessionRedisKey(tokenHash), userId, { ex: DEFAULT_SESSION_TTL_SECONDS });
+  // The Postgres row written above is the session of record; these two keys
+  // only make the check and the restricted flag cheap. If Redis is down the
+  // session still exists — validation below falls back to the database — so a
+  // cache write must not fail an otherwise successful login.
+  await redisFailOpen(
+    'session.cacheWrite',
+    () => redis.set(sessionRedisKey(tokenHash), userId, { ex: DEFAULT_SESSION_TTL_SECONDS }),
+    undefined,
+  );
   if (suspiciousVerifiedAt) {
-    await redis.del(sessionRestrictedRedisKey(tokenHash));
+    await redisFailOpen(
+      'session.restricted.clear',
+      () => redis.del(sessionRestrictedRedisKey(tokenHash)),
+      undefined,
+    );
   } else {
-    await redis.set(sessionRestrictedRedisKey(tokenHash), '1', { ex: DEFAULT_SESSION_TTL_SECONDS });
+    await redisFailOpen(
+      'session.restricted.set',
+      () => redis.set(sessionRestrictedRedisKey(tokenHash), '1', { ex: DEFAULT_SESSION_TTL_SECONDS }),
+      undefined,
+    );
   }
 
   return {
@@ -246,7 +262,11 @@ export async function createSessionForAccessToken(
 }
 
 export async function validateSessionToken(userId: string, tokenHash: string): Promise<boolean> {
-  const cachedUserId = await redis.get(sessionRedisKey(tokenHash));
+  const cachedUserId = await redisFailOpen<string | null>(
+    'session.cacheRead',
+    () => redis.get<string>(sessionRedisKey(tokenHash)),
+    null,
+  );
   if (cachedUserId) {
     return cachedUserId === userId;
   }
@@ -274,16 +294,35 @@ export async function validateSessionToken(userId: string, tokenHash: string): P
     return false;
   }
 
-  await redis.set(sessionRedisKey(tokenHash), userId, { ex: ttlFromExpiry(session.expiresAt) });
+  // Cache the DB answer. A failure here only costs the next request the same
+  // lookup — it must not turn a valid session into a 401.
+  await redisFailOpen(
+    'session.cacheWrite',
+    () => redis.set(sessionRedisKey(tokenHash), userId, { ex: ttlFromExpiry(session.expiresAt) }),
+    undefined,
+  );
   return true;
 }
 
 export async function touchSessionActivity(tokenHash: string): Promise<void> {
-  await redis.expire(sessionRedisKey(tokenHash), DEFAULT_SESSION_TTL_SECONDS);
-  const shouldUpdate = await redis.set(
-    lastActiveDebounceKey(tokenHash),
-    '1',
-    { ex: LAST_ACTIVE_DEBOUNCE_SECONDS, nx: true }
+  // Both Redis calls are cache/debounce work: the expiry keeps the cached
+  // session alive, the NX key stops every request from rewriting Postgres. If
+  // Redis is unavailable we skip the update rather than drop the debounce and
+  // hammer the database — `lastActiveAt` going stale for an outage is cosmetic,
+  // while a session losing its validity would not be.
+  await redisFailOpen(
+    'session.touchExpire',
+    () => redis.expire(sessionRedisKey(tokenHash), DEFAULT_SESSION_TTL_SECONDS),
+    undefined,
+  );
+  const shouldUpdate = await redisFailOpen<string | null>(
+    'session.touchDebounce',
+    () =>
+      redis.set(lastActiveDebounceKey(tokenHash), '1', {
+        ex: LAST_ACTIVE_DEBOUNCE_SECONDS,
+        nx: true,
+      }),
+    null,
   );
   if (shouldUpdate !== 'OK') {
     return;
@@ -301,10 +340,14 @@ export async function revokeSessionByTokenHash(tokenHash: string): Promise<void>
     .update(userSessions)
     .set({ revokedAt: now, isCurrent: false })
     .where(and(eq(userSessions.tokenHash, tokenHash), isNull(userSessions.revokedAt)));
+  // Cache cleanup only — the row is already revoked. A logout that throws here
+  // would leave the user unable to sign out at all; the cost of a failed delete
+  // is a cache entry that outlives the revocation until its TTL runs out, which
+  // is logged rather than silent.
   await Promise.all([
-    redis.del(sessionRedisKey(tokenHash)),
-    redis.del(sessionRestrictedRedisKey(tokenHash)),
-    redis.del(lastActiveDebounceKey(tokenHash)),
+    redisFailOpen('session.del', () => redis.del(sessionRedisKey(tokenHash)), undefined),
+    redisFailOpen('session.del', () => redis.del(sessionRestrictedRedisKey(tokenHash)), undefined),
+    redisFailOpen('session.del', () => redis.del(lastActiveDebounceKey(tokenHash)), undefined),
   ]);
 }
 
@@ -375,9 +418,17 @@ export async function revokeAllSessionsForUser(
 
   await Promise.all(
     targets.flatMap((session) => [
-      redis.del(sessionRedisKey(session.tokenHash)),
-      redis.del(sessionRestrictedRedisKey(session.tokenHash)),
-      redis.del(lastActiveDebounceKey(session.tokenHash)),
+      redisFailOpen('session.del', () => redis.del(sessionRedisKey(session.tokenHash)), undefined),
+      redisFailOpen(
+        'session.del',
+        () => redis.del(sessionRestrictedRedisKey(session.tokenHash)),
+        undefined,
+      ),
+      redisFailOpen(
+        'session.del',
+        () => redis.del(lastActiveDebounceKey(session.tokenHash)),
+        undefined,
+      ),
     ]),
   );
 
@@ -387,6 +438,43 @@ export async function revokeAllSessionsForUser(
 export async function invalidateAllSessionsForUser(userId: string): Promise<number> {
   await deleteRefreshSession(userId);
   return revokeAllSessionsForUser(userId);
+}
+
+/**
+ * Whether the user still has at least one live session.
+ *
+ * The WebSocket layer authorizes a *room* token, which is a capability
+ * independent of the 15-minute access token — so an account that logged out
+ * everywhere (or was hit by "revoke all sessions", a password change, or a 2FA
+ * reset) kept its call open while every REST call it made started failing. A
+ * room token is minted from a session-authenticated request, so the account's
+ * sessions remain the security root it is re-checked against.
+ *
+ * Sessions live 24h, so "no active session" means an explicit logout or
+ * revocation, not a routine token refresh. Side-effect free, unlike
+ * `listActiveSessionsForUser`, which rewrites `isCurrent` flags.
+ */
+export async function hasActiveSession(userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: userSessions.id })
+    .from(userSessions)
+    .where(activeSessionFilter(userId))
+    .limit(1);
+  return Boolean(row);
+}
+
+/**
+ * The predicate behind `hasActiveSession`, exported so it can be exercised
+ * against a real Postgres (PGlite) rather than only asserted about: the failure
+ * modes here are a wrong column or an inverted comparison, which unit tests with
+ * a mocked db cannot catch.
+ */
+export function activeSessionFilter(userId: string, now: Date = new Date()) {
+  return and(
+    eq(userSessions.userId, userId),
+    isNull(userSessions.revokedAt),
+    gt(userSessions.expiresAt, now),
+  );
 }
 
 export async function listActiveSessionsForUser(
@@ -440,7 +528,14 @@ export async function listActiveSessionsForUser(
 }
 
 export async function isSessionRestricted(tokenHash: string): Promise<boolean> {
-  const cached = await redis.get(sessionRestrictedRedisKey(tokenHash));
+  // Cache read only: a Redis miss falls through to the `suspiciousVerifiedAt`
+  // column below, which is what actually decides whether the session is
+  // restricted. An outage must not open or close that door by accident.
+  const cached = await redisFailOpen<string | null>(
+    'session.restricted.read',
+    () => redis.get<string>(sessionRestrictedRedisKey(tokenHash)),
+    null,
+  );
   if (cached === '1') {
     return true;
   }
@@ -463,7 +558,11 @@ export async function isSessionRestricted(tokenHash: string): Promise<boolean> {
   }
 
   const ttl = ttlFromExpiry(session.expiresAt);
-  await redis.set(sessionRestrictedRedisKey(tokenHash), '1', { ex: ttl });
+  await redisFailOpen(
+    'session.restricted.set',
+    () => redis.set(sessionRestrictedRedisKey(tokenHash), '1', { ex: ttl }),
+    undefined,
+  );
   return true;
 }
 
@@ -472,5 +571,10 @@ export async function markSessionSuspiciousVerified(tokenHash: string): Promise<
     .update(userSessions)
     .set({ suspiciousVerifiedAt: new Date() })
     .where(eq(userSessions.tokenHash, tokenHash));
-  await redis.del(sessionRestrictedRedisKey(tokenHash));
+  // The DB column above is the source of truth; only the cache is cleared here.
+  await redisFailOpen(
+    'session.restricted.clear',
+    () => redis.del(sessionRestrictedRedisKey(tokenHash)),
+    undefined,
+  );
 }

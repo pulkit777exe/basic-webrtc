@@ -25,6 +25,7 @@ import { getRoomSettings, setRoomSetting } from '../../lib/room-settings';
 import { normalizeAudienceReaction } from '../../lib/audience';
 import { redis } from '../../config/redis';
 import { sanitizeText } from '../../utils/sanitize';
+import { verifyRoomToken } from '../../utils/jwt';
 import { logger } from '../../lib/logger';
 import type { MessageHandler } from './types';
 import { requireRole } from './types';
@@ -46,6 +47,37 @@ const handleIce: MessageHandler = async (ctx) => {
 const handlePing: MessageHandler = async (ctx) => {
   await refreshParticipantTTL(ctx.roomId);
   ctx.handler.send(ctx.ws, { type: 'pong' });
+};
+
+/**
+ * Swap in a freshly minted room token so a long call outlives the original
+ * token's `exp`. The per-message token check runs *before* dispatch, so this
+ * only works while the current token is still valid — the client is expected to
+ * renew ahead of expiry (see `refreshDelayMs` in the frontend).
+ *
+ * The new token is verified independently: valid signature, unexpired, same
+ * user and room, and not a waiting-room token. Anything else is rejected and the
+ * socket keeps the token it had.
+ */
+const handleTokenRefresh: MessageHandler = async (ctx) => {
+  const presented = String(ctx.signal.roomToken ?? '');
+  if (!presented) {
+    ctx.handler.sendError(ctx.ws, 'Missing room token');
+    return;
+  }
+  const claims = verifyRoomToken(presented);
+  const valid =
+    claims !== null &&
+    claims.userId === ctx.userId &&
+    claims.roomId === ctx.roomId &&
+    claims.waiting !== true;
+  if (!valid) {
+    logger.warn('[WS] rejected room token refresh', { roomId: ctx.roomId, userId: ctx.userId });
+    ctx.handler.sendError(ctx.ws, 'Invalid room token');
+    return;
+  }
+  ctx.ws.roomToken = presented;
+  ctx.handler.send(ctx.ws, { type: 'token_refresh_ack' });
 };
 
 // ── Chat ─────────────────────────────────────────────────────────
@@ -346,6 +378,10 @@ const handleAdminKick: MessageHandler = async (ctx) => {
   });
   const target = ctx.handler.getRoomSocket(ctx.roomId, targetId);
   if (target && ctx.handler.isOpen(target)) {
+    // Tell the socket *before* closing it: `publishSignal` above only writes the
+    // Redis stream log, which the WS layer does not forward, so without this the
+    // kicked client just sees a bare close and never clears its room state.
+    ctx.handler.send(target, { type: 'kicked' });
     target.close(4003);
   }
   ctx.handler.removeFromMap(ctx.roomId, targetId);
@@ -495,6 +531,7 @@ export const handlerRegistry = new Map<string, MessageHandler>([
   ['answer', handleAnswer],
   ['ice', handleIce],
   ['ping', handlePing],
+  ['token_refresh', handleTokenRefresh],
   // Chat
   ['chat', handleChat],
   ['chat_pin', handleChatPin],

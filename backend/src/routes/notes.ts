@@ -8,6 +8,7 @@ import { roomSignalChannel } from '../lib/redis-rooms';
 import { generateMeetingNotes, type MeetingNotes } from '../lib/meeting-notes';
 import { redis } from '../config/redis';
 import { logger } from '../lib/logger';
+import { idempotency } from '../middleware/idempotency';
 
 const router = Router();
 
@@ -88,6 +89,7 @@ function normalizeScreenshots(raw: unknown): ScreenshotRef[] {
  */
 router.post(
   '/:roomId/notes',
+  idempotency({ identity: 'session' }),
   async (req: Request<{ roomId: string }>, res: Response): Promise<void> => {
     try {
       const { roomId } = req.params;

@@ -26,6 +26,12 @@ function roomRecordingKey(roomId: string): string {
   return `room:${roomId}:recording`;
 }
 
+/** Whether this room's media has moved to the SFU. Under `room:{id}:*`, so
+ * room teardown deletes it with everything else. */
+export function roomSfuKey(roomId: string): string {
+  return `room:${roomId}:sfu`;
+}
+
 function roomKickedKey(roomId: string): string {
   return `room:${roomId}:kicked`;
 }
@@ -143,6 +149,21 @@ export async function addToKickedList(roomId: string, participantId: string): Pr
 export async function isKicked(roomId: string, participantId: string): Promise<boolean> {
   const result = await redis.sismember(roomKickedKey(roomId), participantId);
   return result === 1;
+}
+
+/**
+ * Mark a room as SFU-carried. Set when the first SFU token is minted; read by
+ * newcomers deciding their transport before they spend anything on mesh.
+ * Strict (throws when Redis is down) — callers fail open to mesh, which always
+ * works, and converge later. TTL matches the SFU token lifetime so a dead
+ * room's flag cannot outlive the credentials issued under it.
+ */
+export async function markRoomSfuActive(roomId: string, ttlSec: number): Promise<void> {
+  await redis.setex(roomSfuKey(roomId), ttlSec, '1');
+}
+
+export async function isRoomSfuActive(roomId: string): Promise<boolean> {
+  return (await redis.get(roomSfuKey(roomId))) === '1';
 }
 
 export async function setForceMuted(roomId: string, muted: boolean): Promise<void> {

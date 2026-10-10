@@ -31,25 +31,148 @@ import { isSignal } from '../lib/signals';
 import { logger } from '../lib/logger';
 import { parseRoomSettings } from '../lib/room-settings';
 import { publishSignal } from '../lib/redis-streams';
+import { takeToken, type TokenBucket } from '../lib/rate-limit';
+import { retry } from '../lib/retry';
+import { authorizeInbound } from '../lib/ws-authz';
+import { hasActiveSession } from '../services/session';
+import { PublishBuffer } from '../lib/publish-buffer';
+import { createPresenceFanoutBuffer, createRoomFanoutBuffer } from '../lib/room-fanout';
 import { generateRoomToken, verifyRoomToken } from '../utils/jwt';
 import { nanoid } from 'nanoid';
 import { WS_MAX_MESSAGE_BYTES } from '../config/scaling';
 import { handlerRegistry } from './handlers';
+import type { ExtendedWebSocket } from './handlers/types';
 
 const HEARTBEAT_INTERVAL_MS = 30000;
 const CHAT_FLUSH_INTERVAL_MS = 2000;
 const CHAT_BUFFER_SIZE = 50;
 const CHAT_REDIS_KEY_PREFIX = 'room:chatBuffer:';
-const serverInstanceId = nanoid();
 
-interface ExtendedWebSocket extends WebSocket {
-  userId?: string;
-  roomId?: string;
-  isAlive?: boolean;
-  isWaiting?: boolean;
-  user?: PublicUser;
-  roomToken?: string;
+/**
+ * Run a lookup that decides whether a live call continues, treating a failure as
+ * "unknown" rather than as an answer.
+ *
+ * The authorization policy denies only on an explicit `false`, so returning
+ * `null` here is what makes a Redis or Postgres blip unable to end a call. That
+ * is the intended trade: during an outage a kicked user may get a message
+ * through, which is recoverable; ending every call in the room is not.
+ */
+async function failOpen<T>(lookup: Promise<T>): Promise<T | null> {
+  try {
+    return await lookup;
+  } catch (error) {
+    logger.warn('Authorization lookup failed, treating as unknown', { err: String(error) });
+    return null;
+  }
 }
+/**
+ * Per-message-type traffic policy, in one place.
+ *
+ * This used to be spread across an exempt set, a must-deliver set, and four
+ * inline `takeToken` calls, then described a fifth time in
+ * `docs/websocket-protocol.md` and a sixth in `CONTEXT.md`. Six places to keep in
+ * agreement is six chances to drift, and the failure is silent: a type can end
+ * up rate limited in a way nobody documented, or documented at a limit the code
+ * does not apply.
+ *
+ * Four independent questions per type, so they are answered together:
+ *
+ * - `bucket` — this connection's per-second allowance, and which bucket it draws
+ *   from. Types sharing a bucket share the refill. Absent means no per-type cap,
+ *   only the room burst limit and the hard cap.
+ * - `exemptFromRoomBurst` — the per-room allowance is a shared budget, so a busy
+ *   room can starve a type that must keep flowing: negotiation, keep-alives,
+ *   media state, and token renewal (if that is dropped the client keeps the old
+ *   token and the call dies at its expiry).
+ * - `mustDeliver` — bypasses the publish buffer. For one-shot control messages
+ *   and roster changes, where losing one is unrecoverable (an offer with no peer
+ *   to receive it is a call that never connects) and reordering against the
+ *   immediate local hop can hand a client newer state before older.
+ * - `lane` — which publish buffer carries cross-node fan-out: `signal` (chat,
+ *   captions, negotiation, control) or `presence` (high-frequency advisory a
+ *   client reconstructs from the next tick). mustDeliver traffic never reaches
+ *   a buffer, so its lane is documentation only.
+ *
+ * `ice` is deliberately bucketed but NOT must-deliver: candidates arrive
+ * continuously (up to 100/s per connection) and the receiver tolerates losing
+ * one, so buffering them is both cheaper and better behaved under a Redis outage.
+ * They are also the volume that would otherwise defeat the circuit breaker.
+ */
+interface MessagePolicy {
+  bucket?: { key: string; perSecond: number };
+  exemptFromRoomBurst: boolean;
+  mustDeliver: boolean;
+  lane: 'signal' | 'presence';
+}
+
+const NO_POLICY: MessagePolicy = { exemptFromRoomBurst: false, mustDeliver: false, lane: 'signal' };
+/** Roster/host control: must not be dropped, but is not high-volume enough to meter. */
+const CONTROL_ONLY: MessagePolicy = { exemptFromRoomBurst: false, mustDeliver: true, lane: 'signal' };
+/** Self-correcting advisory: the next update repairs a drop, so it rides alone. */
+const PRESENCE: MessagePolicy = { exemptFromRoomBurst: true, mustDeliver: false, lane: 'presence' };
+
+/** Exported so a test can assert every signal type has an entry. */
+export const MESSAGE_POLICY: Readonly<Record<string, MessagePolicy>> = {
+  // Negotiation. Must reach the peer or the call never connects. offer/answer/ice
+  // deliberately share one bucket: they are the same traffic in shape (a burst at
+  // connection setup, then trickle), and a separate allowance for each would let a
+  // client spend 3x the intended setup burst.
+  offer: { bucket: { key: 'ice', perSecond: 100 }, exemptFromRoomBurst: true, mustDeliver: true, lane: 'signal' },
+  answer: { bucket: { key: 'ice', perSecond: 100 }, exemptFromRoomBurst: true, mustDeliver: true, lane: 'signal' },
+  ice: { bucket: { key: 'ice', perSecond: 100 }, exemptFromRoomBurst: true, mustDeliver: false, lane: 'signal' },
+  join: { ...CONTROL_ONLY },
+  leave: { ...CONTROL_ONLY },
+  // Keep-alives are exempt from the room burst limit but not free: each one costs
+  // a kick check plus a room-meta read. 10/s is ~250x a real client heartbeat
+  // (1 per 25s), so only deliberate flooding is dropped.
+  ping: { bucket: { key: 'ping', perSecond: 10 }, exemptFromRoomBurst: true, mustDeliver: false, lane: 'signal' },
+  pong: { bucket: { key: 'ping', perSecond: 10 }, exemptFromRoomBurst: true, mustDeliver: false, lane: 'signal' },
+  // Media state changes continuously and a dropped one self-corrects on the next.
+  'media-state': { bucket: { key: 'media', perSecond: 10 }, ...PRESENCE },
+  'audio-activity': { bucket: { key: 'audio', perSecond: 10 }, ...PRESENCE },
+  active_speaker: { ...PRESENCE },
+  // Renewal must not be starved by a busy room.
+  token_refresh: { exemptFromRoomBurst: true, mustDeliver: false, lane: 'signal' },
+  // Chat and reactions are the traffic the per-room limit exists for.
+  chat: { ...NO_POLICY },
+  chat_pin: { ...NO_POLICY },
+  chat_reaction: { ...NO_POLICY },
+  reaction: { ...NO_POLICY },
+  caption: { ...NO_POLICY },
+  // Roster and host controls: one-shot, and the UI must not disagree.
+  admin_mute: { ...CONTROL_ONLY },
+  admin_mute_all: { ...CONTROL_ONLY },
+  admin_unmute_all: { ...CONTROL_ONLY },
+  admin_kick: { ...CONTROL_ONLY },
+  admin_promote: { ...CONTROL_ONLY },
+  admin_pin_message: { ...CONTROL_ONLY },
+  admin_lock: { ...CONTROL_ONLY },
+  room_locked: { ...CONTROL_ONLY },
+  admin_reactions_toggle: { ...CONTROL_ONLY },
+  admin_chat_toggle: { ...CONTROL_ONLY },
+  admin_screen_toggle: { ...CONTROL_ONLY },
+  // Recording state is durable (Redis plus a DB row), and a dropped signal leaves
+  // clients showing a recording that did not start.
+  recording_start: { ...CONTROL_ONLY },
+  recording_stop: { ...CONTROL_ONLY },
+  // The admission request itself: drop it and a waiting client never gets a
+  // position or an admission.
+  waiting: { ...CONTROL_ONLY },
+  // `hand_raise` and `waiting_room_status_check` deliberately take the default:
+  // a hand raise is a toggle the room converges on without, and the status check
+  // is a poll whose next tick re-asks.
+  hand_raise: { ...NO_POLICY },
+  waiting_room_status_check: { ...NO_POLICY },
+};
+
+function policyFor(type: unknown): MessagePolicy {
+  return (typeof type === 'string' && MESSAGE_POLICY[type]) || NO_POLICY;
+}
+
+function isMustDeliver(type: unknown): boolean {
+  return policyFor(type).mustDeliver;
+}
+const serverInstanceId = nanoid();
 
 interface ChatBufferEntry {
   roomId: string;
@@ -65,15 +188,23 @@ export class WebSocketHandler {
   private signalSubscriber: ReturnType<Redis['psubscribe']> | null = null;
   private endedSubscriber: ReturnType<Redis['subscribe']> | null = null;
   private chatBuffer: ChatBufferEntry[] = [];
-  /** Per-user token buckets for exempt message types: { userId: { tokens: number, lastRefill: number } } */
-  private exemptRateLimits: Map<string, { tokens: number; lastRefill: number }> = new Map();
+  private chatFlushInFlight: Promise<void> | null = null;
+  private readonly publishBuffer: PublishBuffer;
+  private readonly presenceBuffer: PublishBuffer;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private chatFlushTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private wss: WebSocketServer) {
+  constructor(
+    private wss: WebSocketServer,
+    buffers?: { signal?: PublishBuffer; presence?: PublishBuffer },
+  ) {
+    this.publishBuffer = buffers?.signal ?? createRoomFanoutBuffer();
+    this.presenceBuffer = buffers?.presence ?? createPresenceFanoutBuffer();
     this.initialize();
   }
 
   private initialize(): void {
-    setInterval(() => {
+    this.heartbeatTimer = setInterval(() => {
       this.wss.clients.forEach((ws: WebSocket) => {
         const ext = ws as ExtendedWebSocket;
         if (ext.isAlive === false) {
@@ -85,13 +216,36 @@ export class WebSocketHandler {
           return ws.terminate();
         }
         ext.isAlive = false;
+
+        // Server-driven revalidation, every 30s, independent of the client.
+        //
+        // The engineering review asked for a `ws-heartbeat` message here. A new
+        // client message would be the wrong shape: the per-message token check
+        // in `handleMessage` is strictly stronger (it runs on *every* message,
+        // not on a cadence the client controls), and what the review actually
+        // wanted — the server noticing a dead token without the client
+        // cooperating — only needs the local HMAC verify, which is free. So the
+        // sweep does it here instead of adding a message type.
+        //
+        // Waiting sockets are covered too: they never reach handleMessage.
+        if (!this.hasValidRoomToken(ext)) {
+          this.send(ext, { type: 'token_expired' });
+          if (ext.isWaiting) this.handleWaitingDisconnect(ext);
+          else this.handleDisconnect(ext);
+          return ws.terminate();
+        }
+
         ws.ping();
       });
     }, HEARTBEAT_INTERVAL_MS);
 
-    setInterval(() => {
-      this.flushChatBuffer();
+    this.chatFlushTimer = setInterval(() => {
+      // fire-and-forget: an unhandled rejection here would otherwise be silent
+      this.flushChatBuffer().catch((e) => logger.error('Chat flush failed', { err: String(e) }));
     }, CHAT_FLUSH_INTERVAL_MS);
+
+    this.publishBuffer.start();
+    this.presenceBuffer.start();
 
     const redisSub = getRedisSub();
     if (!redisSub) {
@@ -127,12 +281,48 @@ export class WebSocketHandler {
         return;
       }
 
-      // Check if user is kicked
-      isKicked(roomId, userId).then(async (kicked) => {
-        if (kicked) {
-          ws.close(4003);
-          return;
+      // The client can disconnect while setup awaits Redis/DB, and a Redis
+      // failure before the try/catch below rejects this chain. Either way the
+      // socket must not be left half-initialised in the room map.
+      let setupFailed = false;
+      const failSetup = (reason: string) => {
+        if (setupFailed) return;
+        setupFailed = true;
+        logger.error('[WS] Connection setup aborted', { roomId, userId, reason });
+        try {
+          ws.close(1011);
+        } catch {
+          // Socket already gone.
         }
+      };
+      ws.once('close', () => {
+        setupFailed = true;
+      });
+
+      // Check if user is kicked
+      isKicked(roomId, userId)
+        .then(async (kicked) => {
+          if (setupFailed) return;
+          if (kicked) {
+            ws.close(4003);
+            return;
+          }
+
+        // Wire cleanup BEFORE any awaited work. Setup below does several
+        // sequential Redis/DB round trips, and a failure (or the client simply
+        // leaving) after `addPeerToRoom` would otherwise leave a peer in Redis
+        // and, once added to the map, a socket no later event could reap — the
+        // heartbeat sweep only walks `wss.clients`, which a closed socket has
+        // already left. The one-shot and superseded-socket guards in
+        // handleDisconnect make early attachment safe.
+        ws.on('close', () =>
+          ext.isWaiting ? this.handleWaitingDisconnect(ext) : this.handleDisconnect(ext),
+        );
+        ws.on('error', (err) => {
+          logger.error('[WS] Error', { err: err });
+          if (ext.isWaiting) this.handleWaitingDisconnect(ext);
+          else this.handleDisconnect(ext);
+        });
 
         // --- Waiting-room branch: waiting participants connect before being admitted ---
         if (ext.isWaiting) {
@@ -152,8 +342,6 @@ export class WebSocketHandler {
           // included) and routes dead ones through handleWaitingDisconnect.
           this.addToWaitingMap(roomId, userId, ext);
           ws.on('message', (data: Buffer) => void this.handleWaitingMessage(ext, data));
-          ws.on('close', () => this.handleWaitingDisconnect(ext));
-          ws.on('error', () => this.handleWaitingDisconnect(ext));
           logger.info('WS waiting', { roomId, userId });
           return;
         }
@@ -183,8 +371,11 @@ export class WebSocketHandler {
             .limit(1);
 
           if (!u) {
+            // 4001, not a bare close(): a bare close is 1000 "Normal Closure",
+            // which reads as a clean shutdown and sends the client into the
+            // reconnect loop for a room it can never be admitted to.
             this.sendError(ext, 'User not found');
-            ws.close();
+            this.closeWith(ext, 4001);
             return;
           }
 
@@ -198,7 +389,9 @@ export class WebSocketHandler {
           const meta = await getRoomMeta(roomId);
           if (!meta) {
             this.sendError(ext, 'Room not found or ended');
-            ws.close();
+            // Same code the inbound policy uses for `room_gone`, so the client
+            // classifies both the same way.
+            this.closeWith(ext, 4002);
             return;
           }
 
@@ -206,7 +399,10 @@ export class WebSocketHandler {
           const max = parseInt(meta.maxParticipants, 10) || 10;
           if (count >= max) {
             this.sendError(ext, 'Room is full');
-            ws.close();
+            // 4009: distinct from "not authorized" so the client can say the
+            // room is full rather than that it may not enter, and terminal so it
+            // does not spend ten retries on a full room.
+            this.closeWith(ext, 4009);
             return;
           }
 
@@ -272,21 +468,28 @@ export class WebSocketHandler {
           }
 
           logger.info('WS join', { roomId, userId, name: publicUser.name });
+          // The client may have gone away while we awaited Redis/DB above; adding
+          // it now would leave a ghost entry no later event can clean up.
+          if (setupFailed) {
+            logger.info('WS setup abandoned, client already closed', { roomId, userId });
+            // Identity-checked: a newer socket for the same user may already be
+            // the map entry, and this dead one must not evict it.
+            if (this.rooms.get(roomId)?.get(userId) === ext) {
+              this.removeFromMap(roomId, userId);
+            }
+            return;
+          }
           const joinSignal: Signal = { type: 'join', roomId, user: publicUser };
           this.publish(roomId, { ...joinSignal, from: userId });
 
           ws.on('message', (data: Buffer) => this.handleMessage(ext, data));
-          ws.on('close', () => this.handleDisconnect(ext));
-          ws.on('error', (err) => {
-            logger.error('[WS] Error', { err: err });
-            this.handleDisconnect(ext);
-          });
         } catch (err) {
-          logger.error('[WS] Connection setup error', { err: err });
-          this.sendError(ext, 'Server error');
-          ws.close();
+          failSetup(String(err));
         }
-      });
+        })
+        // A Redis failure before the try/catch above rejects this chain; without
+        // a terminal handler the socket sat open and uninitialised forever.
+        .catch((err) => failSetup(String(err)));
     });
   }
 
@@ -364,11 +567,37 @@ export class WebSocketHandler {
     // 1. Immediately broadcast to all WebSockets connected to this exact node
     this.forwardFromRedis(channel, fullPayload as Record<string, unknown>);
 
-    // 2. Publish to Redis for any OTHER nodes
-    const redisPayload = { ...fullPayload, __senderInstanceId: serverInstanceId };
-    redis
-      .publish(channel, JSON.stringify(redisPayload))
-      .catch((e) => logger.error('[WS] Publish', { err: e }));
+    // 2. Publish to Redis for any OTHER nodes.
+    const redisPayload = { ...payload, roomId, __senderInstanceId: serverInstanceId };
+    const serialized = JSON.stringify(redisPayload);
+
+    if (isMustDeliver(payload.type)) {
+      // Negotiation and one-shot control traffic cannot be batched: losing an
+      // offer leaves a peer with no way to connect, and a reordering between
+      // the immediate local hop and a buffered Redis hop can hand a client
+      // newer state before older. Low volume and already rate-limited.
+      //
+      // `redis` is a lazy Proxy that throws synchronously when Upstash is
+      // unconfigured, and this runs from close handlers, so the call is
+      // wrapped: publish() must never throw into an event emitter.
+      try {
+        void redis.publish(channel, serialized).catch((e) => logger.error('[WS] Publish', { err: e }));
+      } catch (e) {
+        logger.error('[WS] Publish unavailable', { err: e });
+      }
+      return;
+    }
+
+    // Everything else is ephemeral fan-out: reactions, captions, media state,
+    // chat notifications. Buffered, batched, and bounded — durable content is
+    // persisted before it is published, so a drop costs a live update, not data.
+    //
+    // Advisory traffic rides the presence lane: same Redis channels, separate
+    // queue and breaker, so a media-state burst cannot fill the buffer chat
+    // relies on or trip chat's breaker with it.
+    const lane =
+      policyFor(payload.type).lane === 'presence' ? this.presenceBuffer : this.publishBuffer;
+    lane.publish(channel, serialized);
   }
 
   private forwardFromRedis(
@@ -434,22 +663,23 @@ export class WebSocketHandler {
         return;
       }
       const signal = raw as Signal;
+      const policy = policyFor(signal.type);
       const userId = ws.userId!;
       const roomId = ws.roomId!;
 
-      // Hard cap: 500 msg/sec total per WebSocket
-      if (!this.checkHardRateLimit(userId)) {
+      // Hard cap: 500 msg/sec per connection. A connection that keeps flooding
+      // gets closed — previously it was only told to slow down, so it could
+      // flood (and spend Redis calls) indefinitely.
+      if (!this.takeToken(ws, 'hard', 500)) {
+        logger.warn('WS hard rate limit exceeded', { roomId, userId });
         this.send(ws, { type: 'rate_limited' });
+        ws.close(4008, 'rate limit exceeded');
         return;
       }
 
       // Rate-limit only low-volume messages. ICE + audio-activity + media-state
       // easily exceed 50/s/room and were starving chat/captions.
-      const exemptFromRoomBurstLimit = new Set<string>([
-        'offer', 'answer', 'ice', 'ping', 'pong',
-        'media-state', 'audio-activity', 'active_speaker',
-      ]);
-      if (!exemptFromRoomBurstLimit.has(signal.type)) {
+      if (!policy.exemptFromRoomBurst) {
         const count = await redis.incr(`ratelimit:room:${roomId}:messages`);
         await redis.expire(`ratelimit:room:${roomId}:messages`, 1);
         if (count > 80) {
@@ -458,46 +688,40 @@ export class WebSocketHandler {
         }
       }
 
-      // Check if user is kicked on every message
-      if (await isKicked(roomId, userId)) {
-        ws.close(4003);
+      // Authorization, in one place: the order and the resulting close code are
+      // contract, and live in lib/ws-authz.ts so they are testable without
+      // Redis/Postgres. Checks 3 and 4 are heartbeat-only because they are the
+      // expensive ones.
+      const isHeartbeat = signal.type === 'ping';
+      const denial = authorizeInbound({
+        tokenValid: this.hasValidRoomToken(ws),
+        // Each lookup is fail-open: a Redis or Postgres blip yields "unknown"
+        // rather than propagating. `authorizeInbound` only denies on an explicit
+        // `false`, so a transient outage cannot end a live call — which is what
+        // its `null` contract promises. Letting these throw instead would also
+        // have reported an infrastructure failure to the client as a malformed
+        // message, and masked the outage.
+        kicked: (await failOpen(isKicked(roomId, userId))) ?? false,
+        roomExists: isHeartbeat ? await failOpen(getRoomMeta(roomId).then(Boolean)) : null,
+        // A room token outlives the 15-minute access token by design, so without
+        // this an account that logged out everywhere (or was revoked, or changed
+        // its password) kept its call open while its REST calls failed.
+        hasSession: isHeartbeat ? await failOpen(hasActiveSession(userId)) : null,
+        isHeartbeat,
+      });
+      if (denial) {
+        if (denial.signal) this.send(ws, { type: denial.signal });
+        else this.sendError(ws, denial.message ?? 'Unauthorized');
+        ws.close(denial.code);
         return;
       }
 
-      // ── Ping / heartbeat: token re-validation + room existence ──
-      if (signal.type === 'ping') {
-        if (ws.roomToken) {
-          const payload = verifyRoomToken(ws.roomToken);
-          if (!payload) {
-            this.send(ws, { type: 'token_expired' });
-            ws.close(4004);
-            return;
-          }
-          if (await isKicked(roomId, userId)) {
-            this.send(ws, { type: 'kicked' });
-            ws.close(4003);
-            return;
-          }
-          const meta = await getRoomMeta(roomId);
-          if (!meta) {
-            this.sendError(ws, 'Room not found or ended');
-            ws.close(4002);
-            return;
-          }
-        }
-      }
-
-      // ── ICE / WebRTC: per-user token bucket ──
-      if (signal.type === 'offer' || signal.type === 'answer' || signal.type === 'ice') {
-        if (!this.checkExemptRateLimit(`ice:${userId}`, 100)) {
-          return; // Drop silently — these are advisory
-        }
-      }
-      if (signal.type === 'media-state') {
-        if (!this.checkExemptRateLimit(`media:${userId}`, 10)) return;
-      }
-      if (signal.type === 'audio-activity') {
-        if (!this.checkExemptRateLimit(`audio:${userId}`, 10)) return;
+      // ── Per-connection bucket, from the table above ──
+      // Runs after authorization, so a rejected socket is never charged for the
+      // traffic it sent. Over the allowance is dropped silently: every bucketed
+      // type is advisory or self-correcting, so a `rate_limited` would be noise.
+      if (policy.bucket && !this.takeToken(ws, policy.bucket.key, policy.bucket.perSecond)) {
+        return;
       }
 
       // ── Dispatch to registered handler ──
@@ -539,12 +763,23 @@ export class WebSocketHandler {
         startRoomRecording: (roomId, userId) => this.startRoomRecording(roomId, userId),
         stopRoomRecording: (roomId) => this.stopRoomRecording(roomId),
         persistChatToRedis: (roomId, entry) => this.persistChatToRedis(roomId, entry),
-        drainChatRedisBuffer: (roomId) => this.drainChatRedisBuffer(roomId),
       },
     };
   }
 
   private async flushChatBuffer(): Promise<void> {
+    // Single-flight: the timer, the size threshold in handleChat, and startup
+    // recovery can all reach this. Two concurrent flushes would read the same
+    // Redis entries, publish them twice, and then each trim by its own stale
+    // count — which can delete an entry appended in between.
+    if (this.chatFlushInFlight) return this.chatFlushInFlight;
+    this.chatFlushInFlight = this.runChatFlush().finally(() => {
+      this.chatFlushInFlight = null;
+    });
+    return this.chatFlushInFlight;
+  }
+
+  private async runChatFlush(): Promise<void> {
     const inMemoryBatch = this.chatBuffer.splice(0);
 
     // Collect room IDs from both in-memory buffer and active rooms with Redis entries
@@ -553,15 +788,19 @@ export class WebSocketHandler {
       roomIds.add(roomId);
     }
 
-    // Drain Redis chat buffers for all known rooms
-    const redisBatches = await Promise.all(
-      Array.from(roomIds).map((roomId) => this.drainChatRedisBuffer(roomId)),
+    // Read (do not yet delete) Redis chat buffers for all known rooms
+    const redisEntries = new Map<string, ChatBufferEntry[]>();
+    await Promise.all(
+      Array.from(roomIds).map(async (roomId) => {
+        const entries = await this.readChatRedisBuffer(roomId);
+        if (entries.length > 0) redisEntries.set(roomId, entries);
+      }),
     );
 
     // Merge and deduplicate by entry ID
     const seen = new Set<string>();
     const allEntries: ChatBufferEntry[] = [];
-    for (const entry of [...inMemoryBatch, ...redisBatches.flat()]) {
+    for (const entry of [...inMemoryBatch, ...[...redisEntries.values()].flat()]) {
       if (!seen.has(entry.id)) {
         seen.add(entry.id);
         allEntries.push(entry);
@@ -570,7 +809,17 @@ export class WebSocketHandler {
     if (allEntries.length === 0) return;
 
     try {
-      await db
+      // `returning` is what makes the fan-out below safe. The insert is
+      // idempotent by primary key, so an entry that is already stored returns
+      // nothing -- and that is exactly the signal that it was already persisted,
+      // and (in the normal case) already delivered.
+      //
+      // Publishing unconditionally instead means a released-but-not-trimmed entry
+      // is re-published on every 2s flush for as long as the trim keeps failing,
+      // so a room watches the same messages scroll past forever. It also
+      // re-publishes after a crash between the insert and the trim, duplicating
+      // messages the client already has from history.
+      const inserted = await db
         .insert(messages)
         .values(
           allEntries.map((e) => ({
@@ -580,8 +829,30 @@ export class WebSocketHandler {
             content: e.content,
             type: 'text' as const,
           })),
-        );
+        )
+        // Idempotent by primary key: a batch that was persisted but not yet
+        // released from Redis is re-read after a crash, and a batch that hits an
+        // already-stored id must not fail forever and re-queue itself in a loop.
+        .onConflictDoNothing()
+        .returning({ id: messages.id });
+
+      const freshIds = new Set(inserted.map((row) => row.id));
+
+      // Persisted (or already present): release exactly the entries we read.
+      // LTRIM by count rather than DEL so a message pushed while the insert was
+      // in flight stays in the list for the next flush. A trim failure is logged
+      // and left to the next flush; because the fan-out is gated on `freshIds`,
+      // an untrimmed entry is harmless — it is simply re-read and skipped.
+      await Promise.all(
+        [...redisEntries].map(([roomId, entries]) =>
+          this.dropChatRedisEntries(roomId, entries.length).catch((e) =>
+            logger.error('Failed to release chat Redis buffer', { roomId, err: String(e) }),
+          ),
+        ),
+      );
+
       for (const e of allEntries) {
+        if (!freshIds.has(e.id)) continue;
         this.publish(e.roomId, {
           type: 'chat',
           id: e.id,
@@ -614,24 +885,29 @@ export class WebSocketHandler {
   }
 
   /**
-   * Read all entries from the Redis chat buffer for a room, then delete the key.
-   * Uses LRANGE + DEL instead of a Lua EVAL script: Upstash's REST interface
-   * has limited/fragile Lua support on the free tier, and the tiny
-   * double-flush race this allows is harmless here — `flushChatBuffer`
-   * deduplicates by entry id before inserting into Postgres, and this app runs
-   * a single instance on Render free so concurrent flushes don't happen.
+   * Read a room's buffered chat entries without removing them.
+   *
+   * The list is only trimmed *after* the Postgres insert succeeds (see
+   * `flushChatBuffer`), so a crash mid-insert leaves the entries in Redis for
+   * startup recovery instead of losing them. Uses LRANGE/LTRIM rather than a
+   * Lua EVAL: Upstash's REST interface has limited Lua support on the free tier.
    */
-  private async drainChatRedisBuffer(roomId: string): Promise<ChatBufferEntry[]> {
+  private async readChatRedisBuffer(roomId: string): Promise<ChatBufferEntry[]> {
     const key = `${CHAT_REDIS_KEY_PREFIX}${roomId}`;
     try {
       const items = await redis.lrange(key, 0, -1);
       if (!items || items.length === 0) return [];
-      await redis.del(key);
       return items.map((item) => JSON.parse(String(item)) as ChatBufferEntry);
     } catch (e) {
-      logger.error('Failed to drain chat Redis buffer', { roomId, err: String(e) });
+      logger.error('Failed to read chat Redis buffer', { roomId, err: String(e) });
       return [];
     }
+  }
+
+  /** Drop the first `count` entries of a room's buffer, keeping anything newer. */
+  private async dropChatRedisEntries(roomId: string, count: number): Promise<void> {
+    if (count <= 0) return;
+    await redis.ltrim(`${CHAT_REDIS_KEY_PREFIX}${roomId}`, count, -1);
   }
 
   /** On startup, drain leftover chat buffer entries from Redis and flush to Postgres. */
@@ -644,7 +920,7 @@ export class WebSocketHandler {
       const keys = result[1] as string[];
       for (const key of keys) {
         const roomId = key.replace(CHAT_REDIS_KEY_PREFIX, '');
-        const entries = await this.drainChatRedisBuffer(roomId);
+        const entries = await this.readChatRedisBuffer(roomId);
         if (entries.length === 0) continue;
         try {
           await db
@@ -657,32 +933,106 @@ export class WebSocketHandler {
                 content: e.content,
                 type: 'text' as const,
               })),
-            );
+            )
+            // Entries recovered twice (crash after insert, before trim) are
+            // already stored; skipping them keeps recovery idempotent.
+            .onConflictDoNothing();
+          await this.dropChatRedisEntries(roomId, entries.length);
           logger.info('Recovered chat buffer entries', { roomId, count: entries.length });
         } catch (e) {
           logger.error('Failed to recover chat buffer', { roomId, err: String(e) });
-          // Re-queue to Redis for next recovery attempt
-          for (const entry of entries) {
-            await redis.rpush(`${CHAT_REDIS_KEY_PREFIX}${roomId}`, JSON.stringify(entry));
-          }
+          // Left in Redis: recovery (or the next flush) retries them.
         }
       }
     } while (cursor !== 0);
+  }
+
+  /**
+   * Claim a socket's disconnect, once.
+   *
+   * Returns false when this socket must not touch shared state: either it has
+   * already been through cleanup (it fires from `close`, from `error`, *and*
+   * from the heartbeat sweep before it calls terminate(), so more than once per
+   * socket is normal), or a reconnect has already replaced it — cleaning up
+   * then would delete the *new* connection's room membership and announce a
+   * `leave` for a user still in the call.
+   */
+  private claimDisconnect(
+    ws: ExtendedWebSocket,
+    roomId: string,
+    userId: string,
+    currentMap: Map<string, Map<string, ExtendedWebSocket>>,
+  ): boolean {
+    if (ws.disconnectHandled) return false;
+    ws.disconnectHandled = true;
+    const current = currentMap.get(roomId)?.get(userId);
+    if (current && current !== ws) {
+      logger.debug('WS disconnect superseded by a newer socket', { roomId, userId });
+      return false;
+    }
+    return true;
   }
 
   private handleDisconnect(ws: ExtendedWebSocket): void {
     const userId = ws.userId;
     const roomId = ws.roomId;
     if (!userId || !roomId) return;
+    if (!this.claimDisconnect(ws, roomId, userId, this.rooms)) return;
+
     logger.info('WS leave', { roomId, userId });
     this.removeFromMap(roomId, userId);
-    removePeerFromRoom(roomId, userId).catch((e) =>
-      logger.error('removePeerFromRoom failed', { roomId, userId, err: String(e) }),
-    );
-    setHandRaised(roomId, userId, false).catch((e) =>
-      logger.error('setHandRaised failed', { roomId, userId, err: String(e) }),
-    );
+    // Retried: if Redis is briefly unavailable the peer would otherwise linger
+    // in the room's participant set and could be refused re-entry as "full".
+    // The superseded check is re-evaluated *inside* the retry: a reconnect lands
+    // while these attempts are in flight, and a late retry would delete the new
+    // socket's membership (and with it the live-admission check that authorizes
+    // its token renewal).
+    retry(
+      async () => {
+        if (this.rooms.get(roomId)?.has(userId)) return;
+        await removePeerFromRoom(roomId, userId);
+      },
+      {
+        delayMs: 200,
+        onRetry: (e) => logger.warn('removePeerFromRoom retrying', { roomId, userId, err: String(e) }),
+      },
+    )
+      .catch((e) => logger.error('removePeerFromRoom failed', { roomId, userId, err: String(e) }))
+      .finally(() => {
+        if (this.rooms.get(roomId)?.has(userId)) return;
+        retry(() => setHandRaised(roomId, userId, false), {
+          retries: 1,
+          onRetry: (e) => logger.warn('setHandRaised retrying', { roomId, userId, err: String(e) }),
+        }).catch((e) => logger.error('setHandRaised failed', { roomId, userId, err: String(e) }));
+      });
     this.publish(roomId, { type: 'leave', userId, roomId });
+  }
+
+  /**
+   * Stop background work on shutdown. Without this the heartbeat, chat-flush,
+   * and publish intervals kept running (and kept the process alive) after the
+   * server stopped accepting connections.
+   */
+  stop(): void {
+    this.stopBackgroundWork();
+    this.publishBuffer.stop();
+    this.presenceBuffer.stop();
+  }
+
+  /**
+   * Stop the heartbeat and chat-flush timers but leave the publish buffer
+   * running, so sockets closing as part of shutdown can still deliver their
+   * `leave` messages. `stop()` finishes the job.
+   */
+  stopBackgroundWork(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    if (this.chatFlushTimer) {
+      clearInterval(this.chatFlushTimer);
+      this.chatFlushTimer = null;
+    }
   }
 
   private async handleWaitingMessage(ws: ExtendedWebSocket, data: Buffer): Promise<void> {
@@ -695,12 +1045,24 @@ export class WebSocketHandler {
       const userId = ws.userId!;
       const roomId = ws.roomId!;
 
+      // Waiting sockets are authorized the same way as admitted ones: their
+      // waiting-room token is verified on upgrade, but can expire while queued.
+      if (!this.hasValidRoomToken(ws)) {
+        this.send(ws, { type: 'token_expired' });
+        ws.close(4004);
+        return;
+      }
+
       if (raw.type === 'ping') {
         this.send(ws, { type: 'pong' });
         return;
       }
 
       if (raw.type === 'waiting_room_status_check') {
+        // Waiting sockets never reach handleMessage, so they are unmetered
+        // without this — and each check costs a Redis ZRANGE. The client polls
+        // every few seconds, so 5/s is ~100x the legitimate rate.
+        if (!this.takeToken(ws, 'waiting', 5)) return;
         const inQueue = await isInWaitingRoom(roomId, userId);
         if (inQueue) {
           const queue = await getWaitingRoom(roomId);
@@ -740,6 +1102,11 @@ export class WebSocketHandler {
     const userId = ws.userId;
     const roomId = ws.roomId;
     if (!userId || !roomId) return;
+    // Same claim rules as handleDisconnect. Without them, a waiting socket that
+    // flaps (mobile network) has its delayed cleanup delete the *replacement*
+    // socket's queue entry, after which the admit notification is routed to an
+    // undefined socket and the user waits in silence until their token expires.
+    if (!this.claimDisconnect(ws, roomId, userId, this.waitingRooms)) return;
     logger.info('WS waiting disconnect', { roomId, userId });
     this.removeFromWaitingMap(roomId, userId);
   }
@@ -821,30 +1188,44 @@ export class WebSocketHandler {
     this.send(ws, { type: 'error', message });
   }
 
+  /**
+   * Close a socket with a code the client can act on.
+   *
+   * Every refusal during setup used to be a bare `close()`, which sends 1000
+   * "Normal Closure" -- indistinguishable from a clean shutdown, so the client
+   * entered its reconnect loop and eventually told the user to check their
+   * network. The code is the only channel that says *why* the socket ended, so
+   * each refusal names one. Also marks the socket handled, so the close handler
+   * cannot run the disconnect path for a connection that never joined a room.
+   */
+  private closeWith(ws: ExtendedWebSocket, code: number, reason?: string): void {
+    (ws as { disconnectHandled?: boolean }).disconnectHandled = true;
+    try {
+      ws.close(code, reason);
+    } catch {
+      // Already closing or closed; nothing to do.
+    }
+  }
+
   private isOpen(ws: WebSocket): boolean {
     return ws.readyState === WebSocket.OPEN;
   }
 
-  /** Per-user token bucket for exempt messages. Returns true if allowed. */
-  private checkExemptRateLimit(userId: string, maxTokensPerSec: number): boolean {
-    const now = Date.now();
-    let bucket = this.exemptRateLimits.get(userId);
-    if (!bucket) {
-      bucket = { tokens: maxTokensPerSec, lastRefill: now };
-      this.exemptRateLimits.set(userId, bucket);
-    }
-    const elapsed = now - bucket.lastRefill;
-    if (elapsed >= 1000) {
-      bucket.tokens = maxTokensPerSec;
-      bucket.lastRefill = now;
-    }
-    if (bucket.tokens <= 0) return false;
-    bucket.tokens--;
-    return true;
+  /**
+   * Take one token from this connection's bucket for `key`.
+   * Buckets hang off the socket, so there is no map to leak on disconnect.
+   */
+  private takeToken(ws: ExtendedWebSocket, key: string, maxTokensPerSec: number): boolean {
+    const buckets = (ws.rateBuckets ??= new Map<string, TokenBucket>());
+    return takeToken(buckets, key, maxTokensPerSec, Date.now());
   }
 
-  /** Hard cap: 500 msg/sec total per WebSocket. */
-  private checkHardRateLimit(userId: string): boolean {
-    return this.checkExemptRateLimit(userId, 500);
+  /**
+   * The room token is verified on upgrade, but a socket can outlive it. This is
+   * a local signature+expiry check (no Redis), safe to run per message.
+   */
+  private hasValidRoomToken(ws: ExtendedWebSocket): boolean {
+    if (!ws.roomToken) return false;
+    return verifyRoomToken(ws.roomToken) !== null;
   }
 }

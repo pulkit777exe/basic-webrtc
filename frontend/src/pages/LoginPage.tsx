@@ -3,7 +3,7 @@ import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-do
 import { useSetAtom } from 'jotai';
 import HCaptcha from '@hcaptcha/react-hcaptcha';
 import { userAtom } from '@/store/atoms';
-import { api, API_BASE_URL, ApiError, getAccessToken } from '@/lib/api';
+import { api, API_BASE_URL, ApiError, getAccessToken, setAccessToken } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
@@ -137,7 +137,21 @@ export function LoginPage() {
     }
 
     if (data.user) {
-      setUser(data.user as Parameters<typeof setUser>[0]);
+      // The login reply carries a user, but the promise we make next — "you are
+      // on the dashboard" — depends on the token actually being accepted by the
+      // backend. Verify it against /api/auth/me while still on the login page;
+      // if it isn't accepted, say so and let the user try again rather than
+      // dropping them into the AuthGuard, which would bounce them straight back
+      // here with no explanation.
+      const verifiedUser = await api
+        .getMe()
+        .then((me) => me?.user ?? null)
+        .catch(() => null);      if (!verifiedUser) {
+        setAccessToken(null);
+        setErrorMessage('Your sign-in could not be verified. Please try again.');
+        return;
+      }
+      setUser(verifiedUser as Parameters<typeof setUser>[0]);
       // Redirect to pending invite if present, otherwise to from
       if (pendingInvite) {
         sessionStorage.removeItem("pendingInvite");

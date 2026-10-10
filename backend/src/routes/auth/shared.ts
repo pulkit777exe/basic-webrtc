@@ -7,7 +7,7 @@ import path from 'path';
 import { Request, Response } from 'express';
 import { and, eq, isNull } from 'drizzle-orm';
 import { SignupPayload } from '../../types/index.js';
-import { redis, setRefreshSession } from '../../config/redis.js';
+import { redis, redisFailOpen, setRefreshSession } from '../../config/redis.js';
 import { db } from '../../db/index.js';
 import { backupCodes, loginEvents, passwordResetTokens, users } from '../../db/schema.js';
 import { queueEmail } from '../../services/email.js';
@@ -133,17 +133,27 @@ export function parseBoolean(value: unknown): boolean {
   return value === true || value === 'true';
 }
 
+/**
+ * Redis-backed attempt counters that sit directly on the login path. Every one
+ * fails open: the account lockout columns in Postgres are the control that
+ * actually matters, and a login that 500s because a counter could not be read
+ * is worse than one that skips a soft, IP-level nudge. Same stance as the rate
+ * limiters — see `lib/rate-limiters`.
+ */
 export async function applyRateLimit(
   key: string,
   maxAttempts: number,
   windowSeconds: number,
 ): Promise<{ limited: boolean; retryAfter: number }> {
-  const count = await redis.incr(key);
+  const count = await redisFailOpen('applyRateLimit.incr', () => redis.incr(key), 0);
   if (count === 1) {
-    await redis.expire(key, windowSeconds);
+    await redisFailOpen('applyRateLimit.expire', () => redis.expire(key, windowSeconds), undefined);
   }
   if (count > maxAttempts) {
-    const retryAfter = Math.max(0, await redis.ttl(key));
+    const retryAfter = Math.max(
+      0,
+      await redisFailOpen('applyRateLimit.ttl', () => redis.ttl(key), windowSeconds),
+    );
     return { limited: true, retryAfter };
   }
   return { limited: false, retryAfter: 0 };
@@ -252,19 +262,31 @@ export function reasonLabel(reason: string): string {
 
 export async function incrementLoginFailureIpCounter(ipAddress: string): Promise<number> {
   const key = loginFailureIpKey(ipAddress);
-  const count = await redis.incr(key);
+  const count = await redisFailOpen('login.ipFail.incr', () => redis.incr(key), 0);
   if (count === 1) {
-    await redis.expire(key, LOGIN_FAILURE_WINDOW_SECONDS);
+    await redisFailOpen(
+      'login.ipFail.expire',
+      () => redis.expire(key, LOGIN_FAILURE_WINDOW_SECONDS),
+      undefined,
+    );
   }
   return count;
 }
 
 export async function clearLoginFailureIpCounter(ipAddress: string): Promise<void> {
-  await redis.del(loginFailureIpKey(ipAddress));
+  await redisFailOpen(
+    'login.ipFail.clear',
+    () => redis.del(loginFailureIpKey(ipAddress)),
+    undefined,
+  );
 }
 
 export async function shouldRequireCaptcha(ipAddress: string): Promise<boolean> {
-  const raw = await redis.get(loginFailureIpKey(ipAddress));
+  const raw = await redisFailOpen<string | number | null>(
+    'login.ipFail.read',
+    () => redis.get<string | number>(loginFailureIpKey(ipAddress)),
+    null,
+  );
   const failures = raw ? Number(raw) : 0;
   return Number.isFinite(failures) && failures > LOGIN_FAILURE_CAPTCHA_THRESHOLD;
 }
@@ -329,18 +351,32 @@ export async function generateBackupCodesForUser(
 
 export async function markAccountLockInRedis(userId: string, lockedUntil: Date): Promise<void> {
   const remainingSeconds = Math.max(1, Math.ceil((lockedUntil.getTime() - Date.now()) / 1000));
-  await redis.set(accountLockRedisKey(userId), lockedUntil.toISOString(), {
-    ex: remainingSeconds,
-  });
+  // `users.lockedUntil` is what enforces the lock; this key only makes the
+  // check cheap across instances. Its failure must not fail the login attempt
+  // that is being locked out.
+  await redisFailOpen(
+    'login.lock.mark',
+    () =>
+      redis.set(accountLockRedisKey(userId), lockedUntil.toISOString(), {
+        ex: remainingSeconds,
+      }),
+    undefined,
+  );
 }
 
 export async function clearAccountLockState(userId: string): Promise<void> {
-  await redis.del(accountLockRedisKey(userId));
+  await redisFailOpen('login.lock.clear', () => redis.del(accountLockRedisKey(userId)), undefined);
 }
 
 export async function getActiveLockFromRedis(userId: string): Promise<Date | null> {
-  const lockedUntil = await redis.get(accountLockRedisKey(userId));
+  const lockedUntil = await redisFailOpen<string | null>(
+    'login.lock.read',
+    () => redis.get<string>(accountLockRedisKey(userId)),
+    null,
+  );
   if (!lockedUntil) {
+    // Null means "nothing cached" — including "Redis is down". The caller
+    // checks `users.lockedUntil` straight after, so the lock still holds.
     return null;
   }
   const parsed = new Date(String(lockedUntil));
